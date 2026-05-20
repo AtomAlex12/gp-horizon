@@ -17,7 +17,9 @@ fn_remove_ndm_interface() {
 # Stop entware service
 fn_service_stop
 
-# try create ndm interface and save system config
-fn_remove_ndm_interface
+if [ "${PKG_UPGRADE}" != "1" ]; then
+    # try remove ndm interface and save system config
+    fn_remove_ndm_interface
+fi
 
 exit 0
