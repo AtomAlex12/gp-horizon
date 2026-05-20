@@ -19,15 +19,15 @@ fn_install_binary() {
         esac
     fi
 
-    if [ -z $ARCH ]; then
+    if [ -z "$ARCH" ]; then
         ARCH=$(uname -m | grep -oE 'mips|mipsel|mips64|aarch64|armv7|i386|i686|x86_64|rlx')
-        if [ "$ARCH" == "rlx" ]; then
+        if [ "$ARCH" = "rlx" ]; then
             ARCH="lexra"
-        elif [ "$ARCH" == "mips" ]; then
+        elif [ "$ARCH" = "mips" ]; then
             if grep -qE 'system type.*MediaTek' /proc/cpuinfo; then
                 ARCH="mipsel"
             fi
-        elif [ "$ARCH" == "i386" ] || [ "$ARCH" == "i686" ]; then
+        elif [ "$ARCH" = "i386" ] || [ "$ARCH" = "i686" ]; then
             ARCH="x86"
         fi
     fi
