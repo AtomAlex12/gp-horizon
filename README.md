@@ -62,24 +62,27 @@
     <details>
       <summary>Или можете выбрать репозиторий под конкретную архитектуру</summary>
 
-      - `aarch64-3.10`
+      * `aarch64-3.10`
+
         ```bash
         mkdir -p /opt/etc/opkg
         echo "src/gz usque-keenetic https://side-effect-tm.github.io/usque-keenetic/aarch64" > /opt/etc/opkg/usque-keenetic.conf
         ```
 
-      - `mipsel-3.4`
+      * `mipsel-3.4`
+
         ```bash
         mkdir -p /opt/etc/opkg
         echo "src/gz usque-keenetic https://side-effect-tm.github.io/usque-keenetic/mipsel" > /opt/etc/opkg/usque-keenetic.conf
         ```
 
-      - `mips-3.4`
+      * `mips-3.4`
+
         ```sh
         mkdir -p /opt/etc/opkg
         echo "src/gz usque-keenetic https://side-effect-tm.github.io/usque-keenetic/mips" > /opt/etc/opkg/usque-keenetic.conf
         ```
-    
+
     </details>
 
 3. Установите пакет
@@ -115,6 +118,26 @@
     opkg remove --autoremove usque-keenetic
     ```
 
+## 🖥 Управление сервисом
+
+* Запуск
+
+    ```sh
+    /opt/etc/init.d/S51usque start
+    ```
+
+* Остановка
+
+    ```sh
+    /opt/etc/init.d/S51usque stop
+    ```
+
+* Перезапуск
+
+    ```sh
+    /opt/etc/init.d/S51usque restart
+    ```
+
 ## ⚙ Конфигурация
 
 Файл конфигурации расположен по пути `/opt/etc/usque/usque.conf`
@@ -136,6 +159,9 @@ IFACE="opkgtun0"
 # SNI для маскировки трафика
 SNI="ozon.ru"
 
+# Поддержка HTTP/2
+HTTP2_ENABLE=0
+
 # Версия конфигурации
 # !!! Не изменяйте это значение вручную !!!
 CONFIG_VERSION=1
@@ -150,6 +176,23 @@ CONFIG_VERSION=1
 Вы можете перенаправлять на него трафик любым доступным способом.
 Одним из вариантов является использование маршрутизации по IP/CIDR и DNS.
 [Подробнее в отдельной инструкции](doc/dns-routing.md)
+
+## Поддержка HTTP/2
+
+В usque реализована поддержка соединения по HTTP/2, но с некоторыми ограничениями.
+В частности, для подключения по ipv4 будет использоваться endpoint с адресом `162.159.198.2`,
+а для ipv6 адрес endpoint нужно указать вручную.
+
+Подробнее в оригинальном репозитории usque:
+
+* [Wiki](https://github.com/Diniboy1123/usque/wiki/HTTP-2-support)
+* [Раздел readme](https://github.com/Diniboy1123/usque/blob/main/README.md#http2-configuration)
+
+Для включения HTTP/2 добавьте опцию в конфиг:
+
+```sh
+HTTP2_ENABLE=1
+```
 
 ## Благодарности
 
