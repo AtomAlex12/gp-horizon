@@ -63,5 +63,9 @@ fn_daemon_args() {
         args="$args -s $SNI"
     fi
 
+    if [ "$HTTP2_ENABLE" == "1" ]; then
+        args="$args --http2"
+    fi
+
     echo "$args"
 }
