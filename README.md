@@ -118,7 +118,7 @@
     opkg remove --autoremove usque-keenetic
     ```
 
-## Управление сервисом
+## 🖥 Управление сервисом
 
 * Запуск
 
@@ -181,7 +181,12 @@ CONFIG_VERSION=1
 
 В usque реализована поддержка соединения по HTTP/2, но с некоторыми ограничениями.
 В частности, для подключения по ipv4 будет использоваться endpoint с адресом `162.159.198.2`,
-а для ipv6 адрес endpoint нужно указать вручную. [Подробнее в wiki оригинала](https://github.com/Diniboy1123/usque/wiki/HTTP-2-support)
+а для ipv6 адрес endpoint нужно указать вручную.
+
+Подробнее в оригинальном репозитории usque:
+
+* [Wiki](https://github.com/Diniboy1123/usque/wiki/HTTP-2-support)
+* [Раздел readme](https://github.com/Diniboy1123/usque/blob/main/README.md#http2-configuration)
 
 Для включения HTTP/2 добавьте опцию в конфиг:
 
