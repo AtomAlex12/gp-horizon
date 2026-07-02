@@ -62,24 +62,27 @@
     <details>
       <summary>Или можете выбрать репозиторий под конкретную архитектуру</summary>
 
-      - `aarch64-3.10`
+      * `aarch64-3.10`
+
         ```bash
         mkdir -p /opt/etc/opkg
         echo "src/gz usque-keenetic https://side-effect-tm.github.io/usque-keenetic/aarch64" > /opt/etc/opkg/usque-keenetic.conf
         ```
 
-      - `mipsel-3.4`
+      * `mipsel-3.4`
+
         ```bash
         mkdir -p /opt/etc/opkg
         echo "src/gz usque-keenetic https://side-effect-tm.github.io/usque-keenetic/mipsel" > /opt/etc/opkg/usque-keenetic.conf
         ```
 
-      - `mips-3.4`
+      * `mips-3.4`
+
         ```sh
         mkdir -p /opt/etc/opkg
         echo "src/gz usque-keenetic https://side-effect-tm.github.io/usque-keenetic/mips" > /opt/etc/opkg/usque-keenetic.conf
         ```
-    
+
     </details>
 
 3. Установите пакет
@@ -113,6 +116,26 @@
 
     ```sh
     opkg remove --autoremove usque-keenetic
+    ```
+
+## Управление сервисом
+
+* Запуск
+
+    ```sh
+    /opt/etc/init.d/S51usque start
+    ```
+
+* Остановка
+
+    ```sh
+    /opt/etc/init.d/S51usque stop
+    ```
+
+* Перезапуск
+
+    ```sh
+    /opt/etc/init.d/S51usque restart
     ```
 
 ## ⚙ Конфигурация
