@@ -21,7 +21,7 @@ _pkg-cleanup:
 _pkg-header:
 	echo "Package: usque-keenetic" > $(PKG_CONTROL_ROOT)/control
 	echo "Version: $(VERSION)" >> $(PKG_CONTROL_ROOT)/control
-	echo "Depends: busybox" >> $(PKG_CONTROL_ROOT)/control
+	# echo "Depends: busybox" >> $(PKG_CONTROL_ROOT)/control
 	# echo "Conflicts: package-id" >> $(PKG_CONTROL_ROOT)/control
 	echo "License: MIT" >> $(PKG_CONTROL_ROOT)/control
 	echo "Section: net" >> $(PKG_CONTROL_ROOT)/control
