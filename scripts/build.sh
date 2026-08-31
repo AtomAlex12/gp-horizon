@@ -33,6 +33,7 @@ build_web() {
     cp web/public/style.css   "$www/style.css"
     cp web/public/favicon.svg "$www/favicon.svg"
     cp web/backend/index.php  "$www/api/index.php"
+    cp web/openapi.yaml       "$www/openapi.yaml"
     printf '%s\n' "$VERSION" > "$www/version"
     cp web/lighttpd/81-usque.conf "$data/opt/etc/lighttpd/conf.d/81-usque.conf"
     cp web/conf/usque_web.conf    "$data/opt/etc/usque_web.conf"

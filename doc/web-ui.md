@@ -59,6 +59,11 @@ EVENT=on-connect       # последнее событие от usque
 
 ## Контракт API
 
+Формальная спецификация — [`web/openapi.yaml`](../web/openapi.yaml) (OpenAPI 3.1),
+она же ставится в пакет и доступна на роутере: `http://<router_ip>:91/openapi.yaml`.
+Открыть можно в [editor.swagger.io](https://editor.swagger.io/) или Redoc.
+Таблица ниже — краткая выжимка.
+
 `POST /api/index.php`, тело `application/x-www-form-urlencoded`, поле `cmd`.
 Ответ — `application/json`. При `auth.enabled=true` все команды кроме `login`
 требуют сессию (логин/пароль пользователя Entware, как в nfqws-keenetic-web).

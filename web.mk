@@ -28,6 +28,7 @@ web:
 	cp web/public/style.css    $(WEB_WWW)/style.css
 	cp web/public/favicon.svg  $(WEB_WWW)/favicon.svg
 	cp web/backend/index.php   $(WEB_WWW)/api/index.php
+	cp web/openapi.yaml        $(WEB_WWW)/openapi.yaml
 	echo "$(WEB_VERSION)" > $(WEB_WWW)/version
 	cp web/lighttpd/81-usque.conf $(WEB_DATA_ROOT)/opt/etc/lighttpd/conf.d/81-usque.conf
 	cp web/conf/usque_web.conf    $(WEB_DATA_ROOT)/opt/etc/usque_web.conf

@@ -230,7 +230,8 @@ opkg install usque-keenetic-web
   и доступно из консоли);
 * `S51usque reregister` — сброс device key.
 
-Подробности архитектуры — [`doc/web-ui.md`](doc/web-ui.md).
+API описан в OpenAPI 3.1: [`web/openapi.yaml`](web/openapi.yaml), на роутере —
+`http://<router_ip>:91/openapi.yaml`. Архитектура — [`doc/web-ui.md`](doc/web-ui.md).
 
 ## Поддержка HTTP/2
 

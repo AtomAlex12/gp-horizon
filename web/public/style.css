@@ -67,13 +67,14 @@ dt { color: var(--muted); }
 dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; word-break: break-all; }
 
 .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
-button {
+button, a.btn {
   font: inherit; padding: 7px 12px; border-radius: 8px; border: 1px solid var(--line);
   background: var(--accent); color: #fff; cursor: pointer; transition: filter .15s;
+  display: inline-block; text-decoration: none; line-height: 1.2;
 }
-button:hover { filter: brightness(1.06); }
+button:hover, a.btn:hover { filter: brightness(1.06); }
 button:disabled { opacity: .5; cursor: default; }
-button.ghost { background: transparent; color: var(--ink); }
+button.ghost, a.btn.ghost { background: transparent; color: var(--ink); }
 button.warn { background: var(--warn); }
 
 .badge {
