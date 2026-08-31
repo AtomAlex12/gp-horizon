@@ -68,6 +68,8 @@ _pkg-content:
 	#
 	echo "Write data files"
 	cp -r fs/* $(PKG_DATA_APP_ROOT)/
+	echo "$(VERSION)" > $(PKG_DATA_APP_ROOT)/etc/usque/version
+	cp USQUE_VERSION $(PKG_DATA_APP_ROOT)/etc/usque/usque-version
 	mkdir -p $(PKG_DATA_APP_ROOT)/var/log
 	mkdir -p $(PKG_DATA_APP_ROOT)/var/run
 	mkdir -p $(PKG_DATA_APP_ROOT)/etc/init.d

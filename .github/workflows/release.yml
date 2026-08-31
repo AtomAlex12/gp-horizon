@@ -23,10 +23,10 @@ jobs:
         id: get_version
         run: echo "version=$(cat VERSION | xargs)" >> $GITHUB_OUTPUT
 
-      - name: Build entware packages
-        run: make pkg-all
+      - name: Build entware packages (core + web)
+        run: make packages
 
-      - name: Build entware reposioty
+      - name: Build entware repository
         run: make repository
 
       - name: Create Release

@@ -13,10 +13,13 @@ fn_start() {
 
     fn_acquire_tun_inerface || return 1
 
+    fn_rotate_log
+    fn_ensure_hooks
+    fn_write_run_wrapper "$(fn_daemon_args)"
+
     echo "Starting $NAME service..."
-    # usque require root for creating tun interface
-    # start-stop-daemon -S -bmc "$USER" -p "$PIDFILE" -x "$USQUE_BIN" -- $(fn_daemon_args) || {
-    start-stop-daemon -S -bm -p "$PIDFILE" -x "$USQUE_BIN" -- $(fn_daemon_args) || {
+    # usque requires root for creating the tun interface
+    start-stop-daemon -S -b -m -p "$PIDFILE" -x "$RUN_WRAPPER" || {
         echo "Failed to start $NAME service" >&2
         rm -f "$PIDFILE"
         fn_stop_internal
@@ -28,6 +31,12 @@ fn_start() {
         return 1
     }
 
+    if fn_hooks_active; then
+        fn_write_state disconnected start
+    else
+        fn_write_state unknown start
+    fi
+
     fn_create_running_config
     echo "Started $NAME service"
 }
@@ -37,8 +46,9 @@ fn_stop_internal() {
     fn_release_tun_interface
     fn_remove_running_config
 
-    # kill -15 $(cat "$PIDFILE") && rm -f "$PIDFILE"
     start-stop-daemon -K -p "$PIDFILE" && rm -f "$PIDFILE"
+    rm -f "$RUN_WRAPPER"
+    fn_write_state stopped stop
 
     echo "Stopped $NAME service"
 }
@@ -50,6 +60,27 @@ fn_stop() {
     fi
 
     fn_stop_internal
+}
+
+fn_reregister() {
+    echo "Re-registering $NAME device key..."
+    local was_running=0
+    fn_is_running && was_running=1
+
+    [ "$was_running" = "1" ] && fn_stop_internal
+
+    fn_remove_session
+    fn_reset_state
+
+    fn_create_session || {
+        echo "Re-registration failed" >&2
+        return 1
+    }
+
+    if [ "$was_running" = "1" ]; then
+        fn_start
+    fi
+    echo "Re-registration done"
 }
 
 case "$1" in
@@ -66,7 +97,21 @@ restart)
     fn_stop
     fn_start
     ;;
+reregister)
+    fn_reregister
+    ;;
+info)
+    fn_info
+    ;;
+probe)
+    fn_probe
+    ;;
+_event)
+    # called by the usque --on-connect / --on-disconnect hooks
+    fn_write_state "${2:-unknown}" "${3:-}"
+    fn_rotate_log
+    ;;
 *)
-    echo "Usage: $0 {start|stop|restart|status}"
+    echo "Usage: $0 {start|stop|restart|status|reregister|info|probe}"
     ;;
 esac

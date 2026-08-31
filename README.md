@@ -138,6 +138,20 @@
     /opt/etc/init.d/S51usque restart
     ```
 
+* Статус / состояние / проверка связи
+
+    ```sh
+    /opt/etc/init.d/S51usque status       # человекочитаемо
+    /opt/etc/init.d/S51usque info          # машиночитаемо (key value)
+    /opt/etc/init.d/S51usque probe         # активная проверка через туннель
+    ```
+
+* Перерегистрация device key
+
+    ```sh
+    /opt/etc/init.d/S51usque reregister
+    ```
+
 ## ⚙ Конфигурация
 
 Файл конфигурации расположен по пути `/opt/etc/usque/usque.conf`
@@ -176,6 +190,47 @@ CONFIG_VERSION=1
 Вы можете перенаправлять на него трафик любым доступным способом.
 Одним из вариантов является использование маршрутизации по IP/CIDR и DNS.
 [Подробнее в отдельной инструкции](doc/dns-routing.md)
+
+## 🖥️ Веб-интерфейс
+
+Опциональный пакет `usque-keenetic-web` — панель мониторинга и управления
+(модель как у `nfqws`: ядро и веб — разные пакеты из одного репозитория,
+`usque-keenetic-web` зависит от `usque-keenetic`).
+
+Показывает: статус сервиса и туннеля (`connected since …`), активную проверку
+через интерфейс (внешний IP, PoP Cloudflare, `warp=on`, RTT), состояние
+интерфейса, трафик со спарклайном, маршруты, направленные в туннель, хвост лога;
+кнопки start / stop / restart / re-register; правку `SNI`, `HTTP2_ENABLE`,
+`IFACE_IP`.
+
+### Установка
+
+```sh
+opkg update
+opkg install ca-certificates curl
+
+mkdir -p /opt/etc/opkg
+echo "src/gz usque-keenetic-web https://side-effect-tm.github.io/usque-keenetic/web" \
+    > /opt/etc/opkg/usque-keenetic-web.conf
+
+opkg update
+opkg install usque-keenetic-web
+```
+
+Адрес: `http://<router_ip>:91` (nfqws-keenetic-web занимает `:90`).
+Вход — по пользователю Entware (по умолчанию `root` / `keenetic`).
+Отключить авторизацию: `enabled = false` в `/opt/etc/usque_web.conf`.
+
+### Что добавляется в ядро для интеграции
+
+* вывод демона пишется в `/opt/var/log/usque.log` (кольцевой, лимит 512 КБ);
+* хуки `usque --on-connect` / `--on-disconnect` пишут `/opt/var/run/usque.state`
+  (достоверное состояние туннеля);
+* `S51usque info` и `S51usque probe` — машиночитаемое состояние (используется вебом
+  и доступно из консоли);
+* `S51usque reregister` — сброс device key.
+
+Подробности архитектуры — [`doc/web-ui.md`](doc/web-ui.md).
 
 ## Поддержка HTTP/2
 

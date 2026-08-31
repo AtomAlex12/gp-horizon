@@ -1,0 +1,15 @@
+#!/bin/sh
+
+LIGHTTPD_INIT="/opt/etc/init.d/S80lighttpd"
+
+[ "${PKG_UPGRADE}" = "1" ] && exit 0
+
+# Drop the now-empty webroot and restart lighttpd so it stops listening on :91.
+rm -rf /opt/share/www/usque
+
+if [ -f "$LIGHTTPD_INIT" ]; then
+    "$LIGHTTPD_INIT" restart >/dev/null 2>&1
+fi
+
+echo "usque-keenetic-web removed"
+exit 0

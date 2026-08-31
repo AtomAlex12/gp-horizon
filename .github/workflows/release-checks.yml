@@ -27,8 +27,8 @@ jobs:
             exit 1
           fi
 
-      - name: Build entware packages
-        run: make pkg-all
+      - name: Build entware packages (core + web)
+        run: make packages
 
-      - name: Build entware reposioty
+      - name: Build entware repository
         run: make repository

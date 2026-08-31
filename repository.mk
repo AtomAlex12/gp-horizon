@@ -29,8 +29,33 @@ _repo-index:
 	echo '<a href="aarch64/">aarch64/</a>' >> out/_pages/index.html
 	echo '<a href="mips/">mips/</a>' >> out/_pages/index.html
 	echo '<a href="mipsel/">mipsel/</a>' >> out/_pages/index.html
+	echo '<a href="web/">web/</a>' >> out/_pages/index.html
 	echo '</pre>' >> out/_pages/index.html
 	echo '<hr></body></html>' >> out/_pages/index.html
+
+# web package (Architecture: all) — published under /web/
+repo-web:
+	rm -rf out/_pages/web
+	mkdir -p out/_pages/web
+	cp out/tmp/$(WEB_FILENAME) out/_pages/web/
+	echo "Package: usque-keenetic-web" > out/_pages/web/Packages
+	echo "Version: $(WEB_VERSION)" >> out/_pages/web/Packages
+	echo "Depends: $(WEB_DEPENDS)" >> out/_pages/web/Packages
+	echo "Section: net" >> out/_pages/web/Packages
+	echo "Architecture: all" >> out/_pages/web/Packages
+	echo "Filename: $(WEB_FILENAME)" >> out/_pages/web/Packages
+	echo "Size: $(shell wc -c out/tmp/$(WEB_FILENAME) | awk '{print $$1}')" >> out/_pages/web/Packages
+	echo "SHA256sum: $(shell sha256sum out/tmp/$(WEB_FILENAME) | awk '{print $$1}')" >> out/_pages/web/Packages
+	echo "Description:  usque-keenetic web interface" >> out/_pages/web/Packages
+	echo "" >> out/_pages/web/Packages
+	gzip -k out/_pages/web/Packages
+	echo '<html><head><title>usque-keenetic-web repository</title></head><body>' > out/_pages/web/index.html
+	echo '<h1>Index of /web/</h1><hr><pre>' >> out/_pages/web/index.html
+	echo '<a href="../">../</a>' >> out/_pages/web/index.html
+	echo '<a href="Packages">Packages</a>' >> out/_pages/web/index.html
+	echo '<a href="Packages.gz">Packages.gz</a>' >> out/_pages/web/index.html
+	echo '<a href="$(WEB_FILENAME)">$(WEB_FILENAME)</a>' >> out/_pages/web/index.html
+	echo '</pre><hr></body></html>' >> out/_pages/web/index.html
 
 _repository:
 	make _repo-clean
@@ -78,4 +103,4 @@ repo-multi:
 		FILENAME=usque-keenetic_$(VERSION)_all_entware.ipk \
 		_repository
 
-repository: repo-mipsel repo-mips repo-aarch64 repo-multi _repo-index
+repository: repo-mipsel repo-mips repo-aarch64 repo-multi repo-web _repo-index

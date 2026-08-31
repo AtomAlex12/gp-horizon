@@ -1,0 +1,9 @@
+#!/bin/sh
+
+# Clean up runtime files the web UI produced. The lighttpd fragment
+# (/opt/etc/lighttpd/conf.d/81-usque.conf) is a package file and is
+# removed by opkg; lighttpd is restarted in postrm.
+
+rm -f /opt/var/log/lighttpd-usque.log
+
+exit 0

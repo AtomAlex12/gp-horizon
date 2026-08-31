@@ -8,6 +8,7 @@ fn_remove_binary() {
 
 fn_remove_all_files() {
   rm -f $LOG_FILE
+  rm -f /opt/var/run/usque.state /opt/var/run/usque.run.sh /opt/var/run/usque.hooks_supported
   echo -e "\nRemove config? y/N"
   read yn
   case $yn in

@@ -55,16 +55,311 @@ fn_remove_running_config() {
     . "$CONFIG_FILE"
 }
 
+# ---------------------------------------------------------------------------
+# web-ui integration helpers
+# ---------------------------------------------------------------------------
+
+# Lowercase network interface name (opkgtun0)
+fn_iface_netname() {
+    echo "$IFACE" | tr '[:upper:]' '[:lower:]'
+}
+
+# NDM interface name (OpkgTun0)
+fn_iface_ndmname() {
+    echo "$IFACE" | sed 's/^opkg/Opkg/; s/tun/Tun/'
+}
+
+fn_pkg_version() {
+    if [ -f "$PKG_VERSION_FILE" ]; then
+        cat "$PKG_VERSION_FILE" 2>/dev/null
+    else
+        opkg status usque-keenetic 2>/dev/null | sed -n 's/^Version: //p'
+    fi
+}
+
+fn_usque_version() {
+    if [ -f "$USQUE_VERSION_FILE" ]; then
+        cat "$USQUE_VERSION_FILE" 2>/dev/null
+    elif [ -x "$USQUE_BIN" ]; then
+        "$USQUE_BIN" version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1
+    fi
+}
+
+fn_config_version() {
+    grep -E '^CONFIG_VERSION=' "$CONFIG_FILE" 2>/dev/null | grep -oE '[0-9]+$'
+}
+
+# Seconds since the daemon was started (pidfile mtime based)
+fn_uptime_s() {
+    [ -f "$PIDFILE" ] || { echo 0; return; }
+    local started now
+    started=$(stat -c %Y "$PIDFILE" 2>/dev/null) || started=0
+    now=$(date +%s 2>/dev/null) || now=0
+    if [ "$started" -gt 0 ] && [ "$now" -ge "$started" ]; then
+        echo $((now - started))
+    else
+        echo 0
+    fi
+}
+
+fn_rotate_log() {
+    [ -f "$LOG_FILE" ] || return 0
+    local sz
+    sz=$(wc -c <"$LOG_FILE" 2>/dev/null) || sz=0
+    [ "${sz:-0}" -gt "$LOG_MAX_BYTES" ] || return 0
+    tail -c $((LOG_MAX_BYTES / 2)) "$LOG_FILE" >"$LOG_FILE.tmp" 2>/dev/null &&
+        mv "$LOG_FILE.tmp" "$LOG_FILE"
+    rm -f "$LOG_FILE.tmp"
+}
+
+# Cache whether the installed usque supports the --on-connect/--on-disconnect hooks
+fn_supports_hooks() {
+    local cache="/opt/var/run/usque.hooks_supported"
+    if [ -f "$cache" ]; then
+        [ "$(cat "$cache" 2>/dev/null)" = "1" ]
+        return $?
+    fi
+    local ok=0
+    if "$USQUE_BIN" nativetun --help 2>&1 | grep -q -- '--on-connect'; then
+        ok=1
+    fi
+    echo "$ok" >"$cache" 2>/dev/null
+    [ "$ok" = "1" ]
+}
+
+# True when the connect/disconnect hooks are both supported and installed.
+fn_hooks_active() {
+    fn_supports_hooks && [ -x "$HOOK_CONNECT" ] && [ -x "$HOOK_DISCONNECT" ]
+}
+
+# Generate the run wrapper (adds logging) and the connect/disconnect hooks.
+fn_ensure_hooks() {
+    mkdir -p "$HOOK_DIR" "$(dirname "$RUN_WRAPPER")" "$(dirname "$LOG_FILE")"
+
+    cat >"$HOOK_CONNECT" <<EOF
+#!/bin/sh
+exec /opt/etc/init.d/S51usque _event connected on-connect
+EOF
+
+    cat >"$HOOK_DISCONNECT" <<EOF
+#!/bin/sh
+exec /opt/etc/init.d/S51usque _event disconnected on-disconnect
+EOF
+
+    chmod +x "$HOOK_CONNECT" "$HOOK_DISCONNECT"
+}
+
+fn_write_run_wrapper() {
+    local args="$1"
+    cat >"$RUN_WRAPPER" <<EOF
+#!/bin/sh
+exec "$USQUE_BIN" $args >>"$LOG_FILE" 2>&1
+EOF
+    chmod +x "$RUN_WRAPPER"
+}
+
+# $1 = state (connected|disconnected|unknown)  $2 = event label
+fn_write_state() {
+    local now prev since
+    now=$(date +%s 2>/dev/null) || now=0
+    prev=""
+    [ -f "$STATE_FILE" ] && prev=$(sed -n 's/^STATE=//p' "$STATE_FILE" 2>/dev/null)
+    since="$now"
+    if [ "$prev" = "$1" ] && [ -f "$STATE_FILE" ]; then
+        since=$(sed -n 's/^SINCE=//p' "$STATE_FILE" 2>/dev/null)
+        [ -n "$since" ] || since="$now"
+    fi
+    mkdir -p "$(dirname "$STATE_FILE")"
+    {
+        echo "STATE=$1"
+        echo "SINCE=$since"
+        echo "EVENT=${2:-}"
+        echo "UPDATED=$now"
+    } >"$STATE_FILE"
+}
+
+fn_reset_state() {
+    rm -f "$STATE_FILE"
+}
+
+# reads /sys/class/net/<netif>/statistics/<field>, prints 0 on miss
+fn_iface_stat() {
+    local netif f
+    netif=$(fn_iface_netname)
+    f="/sys/class/net/$netif/statistics/$1"
+    [ -f "$f" ] && cat "$f" 2>/dev/null || echo 0
+}
+
+fn_iface_operstate() {
+    local netif
+    netif=$(fn_iface_netname)
+    cat "/sys/class/net/$netif/operstate" 2>/dev/null || echo unknown
+}
+
+fn_iface_mtu_live() {
+    local netif
+    netif=$(fn_iface_netname)
+    cat "/sys/class/net/$netif/mtu" 2>/dev/null || echo ""
+}
+
+fn_iface_ip_live() {
+    local netif
+    netif=$(fn_iface_netname)
+    ip -o -4 addr show dev "$netif" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1
+}
+
+# Parse `ndmc -c "show interface X"` for a single field
+fn_ndm_field() {
+    ndmc -c "show interface $(fn_iface_ndmname)" 2>/dev/null |
+        sed -n "s/^[[:space:]]*$1:[[:space:]]*//p" | head -1
+}
+
+fn_routes_list() {
+    local netif
+    netif=$(fn_iface_netname)
+    ip route show dev "$netif" 2>/dev/null | awk '{print $1}' | grep -vE '^(default|unreachable)$' | sort -u
+}
+
+fn_detect_endpoint() {
+    local pid
+    pid=$(cat "$PIDFILE" 2>/dev/null)
+    [ -n "$pid" ] || { fn_endpoint_from_config; return; }
+
+    local ep
+    ep=$(ss -tunp 2>/dev/null | grep -w "pid=$pid" |
+        grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:[0-9]+' |
+        grep -vE '^(0\.0\.0\.0|127\.|172\.16\.1\.|::)' | tail -1)
+    if [ -z "$ep" ]; then
+        ep=$(netstat -tunp 2>/dev/null | grep -w "$pid/" | awk '{print $5}' |
+            grep -vE '^(0\.0\.0\.0|127\.|:::)' | tail -1)
+    fi
+    ep=$(echo "$ep" | cut -d: -f1)
+    [ -n "$ep" ] && echo "$ep" || fn_endpoint_from_config
+}
+
+fn_endpoint_from_config() {
+    if [ "$HTTP2_ENABLE" = "1" ]; then
+        echo "162.159.198.2"
+    else
+        echo ""
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# machine-readable state:  flat "key value" lines (parsed by the web backend)
+# ---------------------------------------------------------------------------
+fn_info() {
+    local running=0 pid="" uptime=0
+    if fn_is_running; then
+        running=1
+        pid=$(cat "$PIDFILE" 2>/dev/null)
+        uptime=$(fn_uptime_s)
+    fi
+
+    local tstate tsince tevent
+    tstate="unknown"; tsince=0; tevent=""
+    if [ -f "$STATE_FILE" ]; then
+        tstate=$(sed -n 's/^STATE=//p' "$STATE_FILE")
+        tsince=$(sed -n 's/^SINCE=//p' "$STATE_FILE")
+        tevent=$(sed -n 's/^EVENT=//p' "$STATE_FILE")
+    fi
+    [ "$running" = "1" ] || tstate="stopped"
+
+    echo "name $NAME"
+    echo "version.pkg $(fn_pkg_version)"
+    echo "version.usque $(fn_usque_version)"
+    echo "version.config $(fn_config_version)"
+    echo "service.running $running"
+    echo "service.pid ${pid:-}"
+    echo "service.uptime_s ${uptime:-0}"
+    echo "tunnel.state ${tstate:-unknown}"
+    echo "tunnel.since ${tsince:-0}"
+    echo "tunnel.event ${tevent:-}"
+    echo "tunnel.endpoint $(fn_detect_endpoint)"
+
+    echo "iface.name $(fn_iface_netname)"
+    echo "iface.ndm_name $(fn_iface_ndmname)"
+    echo "iface.label ${IFACE_NAME:-usque}"
+    echo "iface.ip $(fn_iface_ip_live)"
+    echo "iface.mtu $(fn_iface_mtu_live)"
+    echo "iface.link $(fn_iface_operstate)"
+    echo "iface.ndm_state $(fn_ndm_field state)"
+
+    echo "traffic.rx_bytes $(fn_iface_stat rx_bytes)"
+    echo "traffic.tx_bytes $(fn_iface_stat tx_bytes)"
+    echo "traffic.rx_packets $(fn_iface_stat rx_packets)"
+    echo "traffic.tx_packets $(fn_iface_stat tx_packets)"
+    echo "traffic.rx_errors $(fn_iface_stat rx_errors)"
+    echo "traffic.tx_errors $(fn_iface_stat tx_errors)"
+    echo "traffic.rx_dropped $(fn_iface_stat rx_dropped)"
+    echo "traffic.tx_dropped $(fn_iface_stat tx_dropped)"
+
+    echo "config.sni ${SNI:-}"
+    echo "config.http2 ${HTTP2_ENABLE:-0}"
+    echo "config.iface_ip ${IFACE_IP:-}"
+
+    local routes n
+    routes=$(fn_routes_list)
+    n=$(echo "$routes" | grep -c . 2>/dev/null || echo 0)
+    echo "routes.count $n"
+    echo "$routes" | grep . | head -300 | while read -r r; do
+        echo "route $r"
+    done
+}
+
+# ---------------------------------------------------------------------------
+# active connectivity probe through the tunnel interface
+# ---------------------------------------------------------------------------
+fn_probe() {
+    local netif trace okc rttc
+    netif=$(fn_iface_netname)
+    okc=0
+
+    if ! command -v curl >/dev/null 2>&1; then
+        echo "ok 0"
+        echo "reason no-curl"
+        echo "ts $(date +%s 2>/dev/null || echo 0)"
+        return
+    fi
+
+    trace=$(curl -s --max-time 8 --interface "$netif" \
+        "https://cloudflare.com/cdn-cgi/trace" 2>/dev/null)
+
+    if [ -n "$trace" ]; then
+        okc=1
+        echo "ok 1"
+        echo "egress_ip $(echo "$trace" | sed -n 's/^ip=//p')"
+        echo "warp $(echo "$trace" | sed -n 's/^warp=//p')"
+        echo "colo $(echo "$trace" | sed -n 's/^colo=//p')"
+        echo "loc $(echo "$trace" | sed -n 's/^loc=//p')"
+        echo "sni $(echo "$trace" | sed -n 's/^sni=//p')"
+    else
+        echo "ok 0"
+        echo "reason no-response"
+    fi
+
+    rttc=$(ping -c 1 -W 3 -I "$netif" 1.1.1.1 2>/dev/null |
+        sed -n 's/.*time=\([0-9.]*\).*/\1/p' | head -1)
+    [ -n "$rttc" ] && echo "rtt_ms $rttc"
+
+    echo "ts $(date +%s 2>/dev/null || echo 0)"
+}
+
 fn_daemon_args() {
-    local iface=$(echo "$IFACE" | tr '[:upper:]' '[:lower:]')
-    local args="nativetun --config "$SESSION_FILE" --interface-name $iface --no-iproute2"
+    local iface
+    iface=$(fn_iface_netname)
+    local args="nativetun --config \"$SESSION_FILE\" --interface-name $iface --no-iproute2"
 
     if [ -n "$SNI" ]; then
         args="$args -s $SNI"
     fi
 
-    if [ "$HTTP2_ENABLE" == "1" ]; then
+    if [ "$HTTP2_ENABLE" = "1" ]; then
         args="$args --http2"
+    fi
+
+    if fn_hooks_active; then
+        args="$args --on-connect \"$HOOK_CONNECT\" --on-disconnect \"$HOOK_DISCONNECT\""
     fi
 
     echo "$args"
