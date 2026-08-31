@@ -1,0 +1,717 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta charset="utf-8">
+<title>Трёхслойный обход</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+
+<style>
+  :root {
+    --bg:        #f4f2ee;
+    --surface:   #fbfaf7;
+    --surface-2: #efece5;
+    --ink:       #201f1b;
+    --ink-soft:  #4b4841;
+    --muted:     #756f64;
+    --line:      #e2ddd2;
+    --rule:      #d3ccbe;
+    --accent:    #0f7a76;   /* network teal */
+    --accent-ink:#ffffff;
+
+    --eng-direct: #4f8a4a;
+    --eng-desync: #b0761b;
+    --eng-warp:   #d8672f;
+    --eng-vless:  #6a5bc4;
+
+    --code-bg:   #1b1a16;
+    --code-ink:  #d8d1c3;
+    --shadow:    0 1px 2px rgba(35,28,12,.05), 0 12px 34px rgba(35,28,12,.06);
+
+    --font-ui:   "IBM Plex Sans", ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
+    --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    --measure: 43rem;
+    --bleed: 78rem;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg:        #15161a;
+      --surface:   #1c1e22;
+      --surface-2: #24262b;
+      --ink:       #e9e7e1;
+      --ink-soft:  #c2beb4;
+      --muted:     #928c81;
+      --line:      #2e3036;
+      --rule:      #3a3d44;
+      --accent:    #3fb2ac;
+      --eng-direct: #6bb063;
+      --eng-desync: #d29a3f;
+      --eng-warp:   #ec7c44;
+      --eng-vless:  #8f81e0;
+      --code-bg:   #101114;
+      --code-ink:  #cfc9bb;
+      --shadow:    0 1px 2px rgba(0,0,0,.4), 0 14px 38px rgba(0,0,0,.34);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg:        #15161a;
+    --surface:   #1c1e22;
+    --surface-2: #24262b;
+    --ink:       #e9e7e1;
+    --ink-soft:  #c2beb4;
+    --muted:     #928c81;
+    --line:      #2e3036;
+    --rule:      #3a3d44;
+    --accent:    #3fb2ac;
+    --eng-direct: #6bb063;
+    --eng-desync: #d29a3f;
+    --eng-warp:   #ec7c44;
+    --eng-vless:  #8f81e0;
+    --code-bg:   #101114;
+    --code-ink:  #cfc9bb;
+    --shadow:    0 1px 2px rgba(0,0,0,.4), 0 14px 38px rgba(0,0,0,.34);
+  }
+
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 400 16px/1.62 var(--font-ui);
+    -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility;
+  }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+  .wrap { max-width: var(--measure); margin: 0 auto; padding: 0 24px; }
+  .bleed { max-width: var(--bleed); margin-left: auto; margin-right: auto; padding: 0 24px; }
+
+  header.masthead {
+    border-bottom: 1px solid var(--rule);
+    background: linear-gradient(180deg, color-mix(in srgb, var(--accent) 7%, var(--surface)), var(--surface));
+  }
+  .masthead .wrap { padding-top: 46px; padding-bottom: 38px; }
+  .eyebrow {
+    font-family: var(--font-mono); font-size: 12px; font-weight: 500;
+    letter-spacing: .18em; text-transform: uppercase; color: var(--accent);
+    display: flex; gap: 10px; align-items: center; margin-bottom: 18px;
+  }
+  .eyebrow::after { content: ""; flex: 1; height: 1px; background: var(--rule); }
+  h1 {
+    font-size: clamp(30px, 5.4vw, 44px); line-height: 1.08; letter-spacing: -.02em;
+    font-weight: 700; margin: 0 0 18px; text-wrap: balance;
+  }
+  .standfirst { font-size: 18px; line-height: 1.6; color: var(--ink-soft); margin: 0; max-width: 38rem; }
+  .standfirst b { color: var(--ink); font-weight: 600; }
+
+  main { padding: 8px 0 90px; }
+  section { padding: 40px 0 8px; }
+  section > .wrap > h2, section > .bleed > h2 {
+    font-size: 13px; font-weight: 600; letter-spacing: .13em; text-transform: uppercase;
+    color: var(--muted); margin: 0 0 4px;
+    display: flex; align-items: baseline; gap: 12px;
+  }
+  section > .wrap > h2 .n, section > .bleed > h2 .n {
+    font-family: var(--font-mono); color: var(--accent); font-weight: 500;
+  }
+  .lede {
+    font-size: 21px; line-height: 1.4; letter-spacing: -.01em; font-weight: 600;
+    margin: 6px 0 22px; text-wrap: balance;
+  }
+  p { margin: 0 0 16px; }
+  p, li { color: var(--ink-soft); }
+  strong { color: var(--ink); font-weight: 600; }
+  a { color: var(--accent); text-underline-offset: 2px; }
+  code {
+    font-family: var(--font-mono); font-size: .87em;
+    background: var(--surface-2); padding: 1px 5px; border-radius: 4px; color: var(--ink);
+  }
+  h3 {
+    font-size: 17px; font-weight: 600; margin: 26px 0 8px; color: var(--ink);
+    letter-spacing: -.01em;
+  }
+  ul, ol { margin: 0 0 16px; padding-left: 1.25rem; }
+  li { margin: 5px 0; }
+  li::marker { color: var(--muted); }
+
+  .sup {
+    font-family: var(--font-mono); font-size: .7em; vertical-align: super;
+    color: var(--accent); text-decoration: none; padding: 0 1px;
+  }
+
+  /* engine chips */
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+    font-family: var(--font-mono); font-size: 12px; font-weight: 500;
+    padding: 2px 8px; border-radius: 999px;
+    border: 1px solid currentColor; background: color-mix(in srgb, currentColor 12%, transparent);
+  }
+  .chip .d { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+  .c-direct { color: var(--eng-direct); }
+  .c-desync { color: var(--eng-desync); }
+  .c-warp   { color: var(--eng-warp); }
+  .c-vless  { color: var(--eng-vless); }
+
+  /* cards */
+  .cards { display: grid; gap: 14px; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); margin: 18px 0 8px; }
+  .card {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 12px;
+    padding: 15px 16px; box-shadow: var(--shadow);
+  }
+  .card h4 {
+    margin: 0 0 6px; font-size: 14px; font-weight: 600; color: var(--ink);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .card p { margin: 0; font-size: 13.5px; line-height: 1.5; color: var(--ink-soft); }
+  .card .date { font-family: var(--font-mono); font-size: 11px; color: var(--muted); }
+
+  /* table */
+  .tablewrap { overflow-x: auto; margin: 18px 0; border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); }
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; background: var(--surface); }
+  th, td { text-align: left; padding: 10px 13px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th {
+    font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase;
+    color: var(--muted); background: var(--surface-2); position: sticky; top: 0;
+  }
+  tr:last-child td { border-bottom: 0; }
+  td.mono, th.mono { font-family: var(--font-mono); font-size: 12.5px; white-space: nowrap; }
+  td b { color: var(--ink); }
+
+  /* figure */
+  figure { margin: 24px auto; max-width: 60rem; }
+  figure svg { display: block; width: 100%; height: auto; color: var(--ink-soft); }
+  figcaption {
+    font-size: 13px; color: var(--muted); margin-top: 10px; line-height: 1.5;
+    padding-left: 14px; border-left: 2px solid var(--rule);
+  }
+
+  /* callout */
+  .callout {
+    border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--line));
+    background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+    border-radius: 12px; padding: 16px 18px; margin: 20px 0;
+  }
+  .callout p:last-child { margin-bottom: 0; }
+  .callout .tag {
+    font-family: var(--font-mono); font-size: 11px; font-weight: 600; letter-spacing: .1em;
+    text-transform: uppercase; color: var(--accent); display: block; margin-bottom: 6px;
+  }
+
+  pre {
+    background: var(--code-bg); color: var(--code-ink); border-radius: 10px;
+    padding: 14px 16px; overflow-x: auto; margin: 16px 0;
+    font: 400 12.5px/1.7 var(--font-mono);
+  }
+  pre .c { color: color-mix(in srgb, var(--code-ink) 55%, transparent); }
+
+  .phase { display: grid; grid-template-columns: auto 1fr; gap: 4px 18px; margin: 16px 0; }
+  .phase dt {
+    font-family: var(--font-mono); font-size: 12px; font-weight: 600; color: var(--accent);
+    padding-top: 2px;
+  }
+  .phase dd { margin: 0 0 14px; color: var(--ink-soft); }
+  .phase dd b { display: block; color: var(--ink); font-weight: 600; margin-bottom: 2px; }
+
+  .refs { font-size: 13px; color: var(--muted); }
+  .refs li { margin: 7px 0; }
+  .refs a { word-break: break-word; }
+
+  footer { border-top: 1px solid var(--rule); }
+  footer .wrap { padding: 26px 22px 40px; font-size: 12.5px; color: var(--muted); }
+  footer .toggle {
+    font: inherit; font-family: var(--font-mono); font-size: 12px;
+    background: transparent; border: 1px solid var(--line); color: var(--ink-soft);
+    border-radius: 7px; padding: 5px 11px; cursor: pointer;
+  }
+  hr.div { border: 0; border-top: 1px solid var(--rule); margin: 0; }
+  ::selection { background: color-mix(in srgb, var(--accent) 26%, transparent); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+</style>
+</head>
+<body>
+<header class="masthead">
+  <div class="wrap">
+    <div class="eyebrow">Keenetic&nbsp;+&nbsp;Entware · РФ · план архитектуры</div>
+    <h1>Трёхслойный обход: nfqws2, WARP-MASQUE и VLESS под одной панелью</h1>
+    <p class="standfirst">
+      К августу 2026 ни один метод по отдельности не держит весь список. Плана
+      два: <b>решить, какой трафик каким слоем идёт</b>, и <b>собрать три движка
+      и один веб-интерфейс так, чтобы они не мешали друг другу</b> на роутере.
+    </p>
+  </div>
+</header>
+
+<main>
+
+  <section>
+    <div class="wrap">
+      <h2><span class="n">01</span> Сеть сейчас</h2>
+      <p class="lede">Блокировка сместилась с «по протоколу» на «по поведению», и добавился слой замедления на стыках внутри страны.</p>
+      <p>
+        Кратко то, что определяет выбор архитектуры (по открытым сводкам, лето–август 2026 —
+        детали зависят от провайдера и региона):
+      </p>
+
+      <div class="cards">
+        <div class="card">
+          <h4>Волна по VLESS / SOCKS5 / L2TP</h4>
+          <p>С начала августа РКН массово рвёт ранее рабочие протоколы прокси. VLESS без доработок ловится.<span class="date"> авг 2026</span></p>
+        </div>
+        <div class="card">
+          <h4>ТСПУ по fingerprint</h4>
+          <p>Соединения режутся по поведению и метаданным потока, а не по сигнатуре протокола. Reality-маскировка перестаёт быть достаточной сама по себе.<span class="date"> июнь 2026</span></p>
+        </div>
+        <div class="card">
+          <h4>ТСПУ на внутренних стыках</h4>
+          <p>Оборудование ставят на узлах между сетями внутри РФ — замедляется весь транзитный трафик, не только «подозрительный».<span class="date"> авг 2026</span></p>
+        </div>
+        <div class="card">
+          <h4>Cloudflare по IP</h4>
+          <p>Подсети CF в реестре с июня 2025. WARP-over-WireGuard (UDP) провайдеры подрезают; MASQUE (HTTP/3 на 443) живёт, т.к. неотличим от HTTPS.<span class="date"> 2025–2026</span></p>
+        </div>
+        <div class="card">
+          <h4>zapret 1.9.3</h4>
+          <p>Экстренный патч под изменения ТСПУ: динамическая фрагментация, лучше QUIC/HTTP-3. Стратегия — своя под каждого провайдера.<span class="date"> июнь 2026</span></p>
+        </div>
+        <div class="card">
+          <h4>Часть доменов мертва</h4>
+          <p>Есть ресурсы, которые не открываются ни десинком, ни через WARP (IP-null-route + гео-замок на стороне сервиса). Остаётся только чистый зарубежный выход.</p>
+        </div>
+      </div>
+      <p style="font-size:13px;color:var(--muted)">Ссылки — в конце документа.</p>
+    </div>
+  </section>
+
+  <hr class="div">
+
+  <section>
+    <div class="wrap">
+      <h2><span class="n">02</span> Почему именно три слоя</h2>
+      <p class="lede">У каждого движка свой класс задач и своя точка отказа. Комбинация закрывает дыры поодиночке.</p>
+    </div>
+
+    <div class="bleed">
+      <div class="tablewrap">
+        <table>
+          <thead>
+            <tr><th>Слой</th><th>Когда применяется</th><th>Механизм</th><th>Точка отказа</th><th>Цена</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="chip c-direct"><span class="d"></span>direct</span></td>
+              <td>Ресурс не тронут</td>
+              <td class="mono">обычный маршрут</td>
+              <td>—</td>
+              <td>0</td>
+            </tr>
+            <tr>
+              <td><span class="chip c-desync"><span class="d"></span>nfqws2</span></td>
+              <td>Блок по SNI / хендшейку, но реальный IP доступен; замедление YouTube/Discord</td>
+              <td class="mono">NFQUEUE, desync<br>fake · split · disorder</td>
+              <td>IP-блок; поведенческий ТСПУ; null-route</td>
+              <td>0 — без туннеля, без задержки</td>
+            </tr>
+            <tr>
+              <td><span class="chip c-warp"><span class="d"></span>usque</span></td>
+              <td>Нужен другой egress-IP, а MASQUE у провайдера ещё не режется</td>
+              <td class="mono">MASQUE h3:443<br>→ Cloudflare</td>
+              <td>IP CF в реестре; WARP «мягко» блокируют; egress CF сам под гео-замком части сервисов</td>
+              <td>0 — но выход не «чистый резидентный»</td>
+            </tr>
+            <tr>
+              <td><span class="chip c-vless"><span class="d"></span>vless</span></td>
+              <td>Домен мёртв по всем остальным; нужен чистый зарубежный выход</td>
+              <td class="mono">VLESS-Reality<br>xray/sing-box → VPS</td>
+              <td>Reality под поведенческим давлением (авг 2026); нужен свой VPS</td>
+              <td>$ — аренда VPS, ручной подбор under-pressure</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="wrap">
+      <p>
+        Порядок предпочтения по стоимости и заметности: <b>сначала десинк</b> (бесплатно, без хопа),
+        <b>потом WARP</b> для середины, <b>VLESS в последнюю очередь</b> — для того, что иначе не
+        достаётся. Каждому слою — свой список доменов; пересечения решаются приоритетом
+        (vless &gt; warp &gt; desync).
+      </p>
+    </div>
+  </section>
+
+  <hr class="div">
+
+  <section>
+    <div class="bleed">
+      <h2><span class="n">03</span> Как маршрутизируется каждый запрос</h2>
+    </div>
+    <div class="bleed">
+      <figure>
+        <svg viewBox="0 0 940 430" role="img" aria-label="Путь запроса: DNS-перехват сверяет домен со списками и либо оставляет прямой маршрут (где nfqws2 пассивно правит пакеты), либо помечает fwmark и уводит в таблицу opkgtun0 для WARP или tun-xray для VLESS.">
+          <defs>
+            <marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0 0L10 5L0 10z" fill="currentColor"></path>
+            </marker>
+          </defs>
+
+          <!-- client -->
+          <rect x="16" y="176" width="118" height="62" rx="8" fill="var(--surface)" stroke="currentColor"></rect>
+          <text x="75" y="203" text-anchor="middle" font-size="13" font-weight="600" fill="var(--ink)">Клиент</text>
+          <text x="75" y="220" text-anchor="middle" font-size="11" fill="var(--muted)">LAN</text>
+
+          <!-- dns / decision -->
+          <rect x="196" y="150" width="176" height="114" rx="10" fill="var(--surface)" stroke="currentColor"></rect>
+          <text x="284" y="178" text-anchor="middle" font-size="13" font-weight="600" fill="var(--ink)">DNS-перехват</text>
+          <text x="284" y="196" text-anchor="middle" font-size="10.5" font-family="var(--font-mono)" fill="var(--muted)">dnsmasq · HydraRoute</text>
+          <line x1="212" y1="208" x2="356" y2="208" stroke="var(--rule)"></line>
+          <text x="284" y="226" text-anchor="middle" font-size="10.5" fill="var(--ink-soft)">резолв → сверка</text>
+          <text x="284" y="242" text-anchor="middle" font-size="10.5" fill="var(--ink-soft)">со списками → ipset</text>
+
+          <line x1="134" y1="207" x2="192" y2="207" stroke="currentColor" marker-end="url(#ah)"></line>
+          <text x="163" y="199" text-anchor="middle" font-size="10" fill="var(--muted)">DNS</text>
+
+          <!-- 4 lanes -->
+          <!-- direct -->
+          <line x1="372" y1="188" x2="470" y2="96" stroke="var(--eng-direct)" marker-end="url(#ah)"></line>
+          <rect x="470" y="70" width="250" height="52" rx="8" fill="color-mix(in srgb, var(--eng-direct) 12%, var(--surface))" stroke="var(--eng-direct)"></rect>
+          <text x="486" y="92" font-size="12" font-weight="600" fill="var(--ink)">нет в списках → прямой маршрут</text>
+          <text x="486" y="109" font-size="10.5" font-family="var(--font-mono)" fill="var(--eng-direct)">table main</text>
+
+          <!-- desync -->
+          <line x1="372" y1="203" x2="470" y2="170" stroke="var(--eng-desync)" marker-end="url(#ah)"></line>
+          <rect x="470" y="144" width="250" height="52" rx="8" fill="color-mix(in srgb, var(--eng-desync) 12%, var(--surface))" stroke="var(--eng-desync)"></rect>
+          <text x="486" y="166" font-size="12" font-weight="600" fill="var(--ink)">desync.list → прямой + nfqws2</text>
+          <text x="486" y="183" font-size="10.5" font-family="var(--font-mono)" fill="var(--eng-desync)">NFQUEUE на 80/443/QUIC</text>
+
+          <!-- warp -->
+          <line x1="372" y1="221" x2="470" y2="248" stroke="var(--eng-warp)" marker-end="url(#ah)"></line>
+          <rect x="470" y="222" width="250" height="52" rx="8" fill="color-mix(in srgb, var(--eng-warp) 12%, var(--surface))" stroke="var(--eng-warp)"></rect>
+          <text x="486" y="244" font-size="12" font-weight="600" fill="var(--ink)">warp.list → fwmark → opkgtun0</text>
+          <text x="486" y="261" font-size="10.5" font-family="var(--font-mono)" fill="var(--eng-warp)">table 100 · usque MASQUE</text>
+
+          <!-- vless -->
+          <line x1="372" y1="236" x2="470" y2="326" stroke="var(--eng-vless)" marker-end="url(#ah)"></line>
+          <rect x="470" y="300" width="250" height="52" rx="8" fill="color-mix(in srgb, var(--eng-vless) 12%, var(--surface))" stroke="var(--eng-vless)"></rect>
+          <text x="486" y="322" font-size="12" font-weight="600" fill="var(--ink)">vless.list → fwmark → tun-xray</text>
+          <text x="486" y="339" font-size="10.5" font-family="var(--font-mono)" fill="var(--eng-vless)">table 101 · VLESS-Reality</text>
+
+          <!-- WAN -->
+          <rect x="784" y="150" width="140" height="114" rx="10" fill="var(--surface)" stroke="currentColor"></rect>
+          <text x="854" y="196" text-anchor="middle" font-size="13" font-weight="600" fill="var(--ink)">WAN</text>
+          <text x="854" y="214" text-anchor="middle" font-size="10.5" fill="var(--muted)">провайдер · ТСПУ</text>
+
+          <line x1="720" y1="96"  x2="800" y2="168" stroke="var(--eng-direct)" marker-end="url(#ah)"></line>
+          <line x1="720" y1="170" x2="800" y2="196" stroke="var(--eng-desync)" marker-end="url(#ah)"></line>
+          <line x1="720" y1="248" x2="800" y2="220" stroke="var(--eng-warp)" marker-end="url(#ah)"></line>
+          <line x1="720" y1="326" x2="800" y2="246" stroke="var(--eng-vless)" marker-end="url(#ah)"></line>
+        </svg>
+        <figcaption>
+          Плоскость решений одна: DNS-перехват резолвит имя, сверяет с четырьмя списками и кладёт
+          IP в ipset. Дальше <b>nfqws2 работает пассивно на прямом маршруте</b> (правит пакеты на
+          выходе, трафик никуда не уводится), а <b>usque и xray — это увод в интерфейс</b> через
+          <code>fwmark</code> и отдельную таблицу маршрутизации.
+        </figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <hr class="div">
+
+  <section>
+    <div class="bleed">
+      <h2><span class="n">04</span> Компоненты на роутере</h2>
+    </div>
+    <div class="bleed">
+      <figure>
+        <svg viewBox="0 0 940 520" role="img" aria-label="Слои на роутере: веб-панель правит конфиги всех движков; плоскость решений — DNS-перехват, ipset, fwmark, ip rule, таблицы 100 и 101; движки nfqws2, usque и xray; хранилище списков с пресетами; всё уходит в WAN через ТСПУ провайдера.">
+          <defs>
+            <marker id="ah2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0 0L10 5L0 10z" fill="currentColor"></path>
+            </marker>
+          </defs>
+
+          <!-- LAN -->
+          <rect x="360" y="14" width="220" height="40" rx="8" fill="var(--surface)" stroke="currentColor"></rect>
+          <text x="470" y="39" text-anchor="middle" font-size="12.5" font-weight="600" fill="var(--ink)">Клиенты LAN</text>
+
+          <!-- web panel -->
+          <rect x="16" y="92" width="210" height="150" rx="10" fill="color-mix(in srgb, var(--accent) 9%, var(--surface))" stroke="var(--accent)"></rect>
+          <text x="121" y="116" text-anchor="middle" font-size="12.5" font-weight="700" fill="var(--ink)">Веб-панель</text>
+          <text x="121" y="133" text-anchor="middle" font-size="10" font-family="var(--font-mono)" fill="var(--muted)">lighttpd :91 · PHP</text>
+          <line x1="34" y1="144" x2="208" y2="144" stroke="var(--rule)"></line>
+          <text x="121" y="163" text-anchor="middle" font-size="10.5" fill="var(--ink-soft)">статус каждого движка</text>
+          <text x="121" y="180" text-anchor="middle" font-size="10.5" fill="var(--ink-soft)">общий редактор списков</text>
+          <text x="121" y="197" text-anchor="middle" font-size="10.5" fill="var(--ink-soft)">пресеты · «Применить»</text>
+          <text x="121" y="214" text-anchor="middle" font-size="10.5" fill="var(--ink-soft)">пробы, логи, рестарт</text>
+          <text x="121" y="231" text-anchor="middle" font-size="10" font-family="var(--font-mono)" fill="var(--accent)">/api · OpenAPI</text>
+
+          <!-- decision plane -->
+          <rect x="262" y="92" width="410" height="96" rx="10" fill="var(--surface)" stroke="currentColor"></rect>
+          <text x="467" y="114" text-anchor="middle" font-size="12.5" font-weight="700" fill="var(--ink)">Плоскость решений</text>
+          <text x="467" y="134" text-anchor="middle" font-size="10.5" font-family="var(--font-mono)" fill="var(--ink-soft)">DNS-перехват → ipset/nftset</text>
+          <text x="467" y="151" text-anchor="middle" font-size="10.5" font-family="var(--font-mono)" fill="var(--ink-soft)">nft: ip daddr @set → meta mark</text>
+          <text x="467" y="168" text-anchor="middle" font-size="10.5" font-family="var(--font-mono)" fill="var(--ink-soft)">ip rule fwmark → table 100 / 101</text>
+          <text x="467" y="182" text-anchor="middle" font-size="9.5" fill="var(--muted)">пере-применяется из /opt/etc/ndm/netfilter.d</text>
+
+          <!-- lists -->
+          <rect x="710" y="92" width="214" height="150" rx="10" fill="var(--surface)" stroke="currentColor"></rect>
+          <text x="817" y="116" text-anchor="middle" font-size="12.5" font-weight="700" fill="var(--ink)">Списки</text>
+          <text x="817" y="135" text-anchor="middle" font-size="10" font-family="var(--font-mono)" fill="var(--ink-soft)">/opt/etc/route/</text>
+          <text x="817" y="153" text-anchor="middle" font-size="10.5" fill="var(--eng-desync)">desync.list</text>
+          <text x="817" y="170" text-anchor="middle" font-size="10.5" fill="var(--eng-warp)">warp.list</text>
+          <text x="817" y="187" text-anchor="middle" font-size="10.5" fill="var(--eng-vless)">vless.list</text>
+          <text x="817" y="204" text-anchor="middle" font-size="10.5" fill="var(--ink-soft)">exclude.list</text>
+          <text x="817" y="226" text-anchor="middle" font-size="9.5" fill="var(--muted)">пресеты: itdoginfo/allow-domains</text>
+
+          <!-- engines -->
+          <rect x="60" y="300" width="250" height="92" rx="10" fill="color-mix(in srgb, var(--eng-desync) 11%, var(--surface))" stroke="var(--eng-desync)"></rect>
+          <text x="185" y="324" text-anchor="middle" font-size="12.5" font-weight="700" fill="var(--ink)">nfqws2</text>
+          <text x="185" y="343" text-anchor="middle" font-size="10.5" fill="var(--ink-soft)">NFQUEUE-хук на egress WAN</text>
+          <text x="185" y="360" text-anchor="middle" font-size="10" font-family="var(--font-mono)" fill="var(--eng-desync)">mark 0x2000·0x4000 /масштаб</text>
+          <text x="185" y="377" text-anchor="middle" font-size="9.5" fill="var(--muted)">не маршрутизирует — правит пакеты</text>
+
+          <rect x="345" y="300" width="250" height="92" rx="10" fill="color-mix(in srgb, var(--eng-warp) 11%, var(--surface))" stroke="var(--eng-warp)"></rect>
+          <text x="470" y="324" text-anchor="middle" font-size="12.5" font-weight="700" fill="var(--ink)">usque</text>
+          <text x="470" y="343" text-anchor="middle" font-size="10.5" font-family="var(--font-mono)" fill="var(--ink-soft)">opkgtun0 · nativetun</text>
+          <text x="470" y="360" text-anchor="middle" font-size="10.5" fill="var(--ink-soft)">MASQUE h3:443 → Cloudflare</text>
+          <text x="470" y="377" text-anchor="middle" font-size="9.5" fill="var(--muted)">on-connect / probe → в панель</text>
+
+          <rect x="630" y="300" width="250" height="92" rx="10" fill="color-mix(in srgb, var(--eng-vless) 11%, var(--surface))" stroke="var(--eng-vless)"></rect>
+          <text x="755" y="324" text-anchor="middle" font-size="12.5" font-weight="700" fill="var(--ink)">xray / sing-box</text>
+          <text x="755" y="343" text-anchor="middle" font-size="10.5" font-family="var(--font-mono)" fill="var(--ink-soft)">tun · tproxy</text>
+          <text x="755" y="360" text-anchor="middle" font-size="10.5" fill="var(--ink-soft)">VLESS-Reality → свой VPS</text>
+          <text x="755" y="377" text-anchor="middle" font-size="9.5" fill="var(--muted)">ядро xkeen / podkop</text>
+
+          <!-- WAN -->
+          <rect x="360" y="446" width="220" height="46" rx="9" fill="var(--surface)" stroke="currentColor"></rect>
+          <text x="470" y="467" text-anchor="middle" font-size="12.5" font-weight="600" fill="var(--ink)">WAN → провайдер → ТСПУ</text>
+          <text x="470" y="483" text-anchor="middle" font-size="10" fill="var(--muted)">интернет</text>
+
+          <!-- flow: LAN in -->
+          <line x1="470" y1="54" x2="470" y2="88" stroke="currentColor" marker-end="url(#ah2)"></line>
+          <!-- plane reads lists -->
+          <line x1="708" y1="150" x2="676" y2="150" stroke="currentColor" marker-end="url(#ah2)"></line>
+          <text x="690" y="142" text-anchor="middle" font-size="9" font-family="var(--font-mono)" fill="var(--muted)">читает</text>
+          <!-- panel writes configs (single labelled dashed) -->
+          <path d="M121 242 C 121 280, 260 280, 260 300" fill="none" stroke="var(--accent)" stroke-dasharray="5 3" marker-end="url(#ah2)"></path>
+          <path d="M226 150 C 245 150, 245 150, 258 148" fill="none" stroke="var(--accent)" stroke-dasharray="5 3" marker-end="url(#ah2)"></path>
+          <text x="150" y="276" font-size="9.5" font-family="var(--font-mono)" fill="var(--accent)">пишет конфиги</text>
+          <!-- plane marks/routes into engines -->
+          <line x1="410" y1="188" x2="300" y2="300" stroke="var(--eng-desync)" marker-end="url(#ah2)"></line>
+          <line x1="467" y1="188" x2="467" y2="300" stroke="var(--eng-warp)" marker-end="url(#ah2)"></line>
+          <line x1="524" y1="188" x2="700" y2="300" stroke="var(--eng-vless)" marker-end="url(#ah2)"></line>
+          <text x="505" y="245" text-anchor="middle" font-size="9" font-family="var(--font-mono)" fill="var(--muted)">mark → table</text>
+          <!-- engines to WAN -->
+          <line x1="230" y1="392" x2="380" y2="452" stroke="var(--eng-desync)" marker-end="url(#ah2)"></line>
+          <line x1="470" y1="392" x2="470" y2="442" stroke="var(--eng-warp)" marker-end="url(#ah2)"></line>
+          <line x1="710" y1="392" x2="560" y2="452" stroke="var(--eng-vless)" marker-end="url(#ah2)"></line>
+        </svg>
+        <figcaption>
+          Дашед-стрелки — панель правит конфиги, не трафик. Сплошные — путь пакета.
+          Плоскость решений — <b>одна на все три движка</b>; движки о ней не знают, только читают
+          свои списки. nfqws2 висит хуком на выходе WAN, usque и xray — это отдельные интерфейсы,
+          в которые уводит <code>fwmark</code>.
+        </figcaption>
+      </figure>
+    </div>
+
+    <div class="bleed">
+      <h3>Правила сосуществования</h3>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Потребитель</th><th class="mono">fwmark</th><th class="mono">таблица</th><th>Заметка</th></tr></thead>
+          <tbody>
+            <tr><td>Keenetic PBR («Приоритеты подключений»)</td><td class="mono">низкие 28 бит<br>маска 0x0fffffff</td><td class="mono">42, 43, …</td><td>Динамический, из <code>ndmc show ip policy</code>. Занимать нельзя.</td></tr>
+            <tr><td>nfqws2 (zapret2)</td><td class="mono">0x20000000<br>0x40000000</td><td class="mono">—</td><td>Маскированные, биты 29–30. Не маршрутизирует. Имеет <code>POLICY_EXCLUDE</code>, чтобы не трогать Keenetic PBR.</td></tr>
+            <tr><td><b>наш увод → usque</b></td><td class="mono">бит 28 + селектор<br>(через свою nft-таблицу)</td><td class="mono">100</td><td>Свободен только бит 28. Два движка развести — либо две ipset и два <code>ip rule</code>, либо готовая плоскость (ниже).</td></tr>
+            <tr><td><b>наш увод → vless</b></td><td class="mono">то же, второй селектор</td><td class="mono">101</td><td>Пере-применять из <code>/opt/etc/ndm/netfilter.d/</code> — Keenetic перестраивает firewall и стирает чужое.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="wrap">
+      <p>
+        DNS не подменяем принудительно: перехват сидит рядом с резолвером Keenetic (как HydraRoute)
+        либо через <code>dnsmasq</code> из Entware. MASQUE-эндпоинт Cloudflare (<code>162.159.198.0/24</code>)
+        — в <code>exclude</code> нигде не режем, наоборот: nfqws2 на этом потоке помогает хендшейку.
+      </p>
+    </div>
+  </section>
+
+  <hr class="div">
+
+  <section>
+    <div class="wrap">
+      <h2><span class="n">05</span> Единый веб-интерфейс</h2>
+      <p class="lede">Наш <code>usque-keenetic-web</code> расширяется с одного движка до трёх — модель уже подходящая.</p>
+      <p>Что переиспользуется как есть и что добавляется:</p>
+      <ul>
+        <li><strong>Тонкий PHP-слой</strong> остаётся: парсит <code>cmd</code>, дёргает <code>S51*</code>-скрипты движков, отдаёт JSON. Ничего своего не считает.</li>
+        <li><strong>Общий контракт статуса</strong>: каждый движок отдаёт <code>info</code> плоскими <code>key value</code> — панель собирает три карточки одинакового формата (up/down, здоровье, счётчики).</li>
+        <li><strong>Вкладки движков</strong>: <span class="chip c-desync"><span class="d"></span>nfqws2</span> <span class="chip c-warp"><span class="d"></span>usque</span> <span class="chip c-vless"><span class="d"></span>vless</span> — у каждой свой редактор списка + свои пресеты.</li>
+        <li><strong>Общий редактор списков</strong> (как у nfqws-keenetic-web): файлы <code>desync/warp/vless/exclude.list</code>, вкладками, с проверкой синтаксиса.</li>
+        <li><strong>Пресеты по сервисам</strong> из <a href="https://github.com/itdoginfo/allow-domains">itdoginfo/allow-domains</a> — назначаются на любой из трёх слоёв.</li>
+        <li><strong>Одна кнопка «Применить»</strong>: пишет списки → триггерит плоскость решений (ре-резолв, пере-разметка ipset, маршруты) → показывает «N доменов → M префиксов» по каждому слою.</li>
+        <li><strong>Здоровье по каждому слою</strong>: nfqws2 — активна ли стратегия; usque — <code>probe</code> через <code>opkgtun0</code> (egress IP, PoP, RTT); vless — <code>probe</code> через <code>tun-xray</code> + пинг до VPS.</li>
+        <li><strong>Порт <code>:91</code></strong>, авторизация по юзеру Entware, <code>session_name('bypass_web')</code> — чтобы не пересекаться с <code>nfqws-keenetic-web</code> на <code>:90</code>.</li>
+      </ul>
+      <pre><span class="c"># контракт API — тот же cmd-стиль, +ось движка</span>
+POST /api/index.php
+  cmd=status                 <span class="c">→ {engines:{nfqws2,usque,vless}, plane:{…}}</span>
+  cmd=engine&e=usque&op=info|probe|start|stop|restart
+  cmd=list_get&e=vless       cmd=list_set&e=vless&content=…
+  cmd=preset_toggle&e=warp&preset=youtube
+  cmd=apply                  <span class="c">→ пере-собрать плоскость по всем спискам</span></pre>
+    </div>
+  </section>
+
+  <hr class="div">
+
+  <section>
+    <div class="wrap">
+      <h2><span class="n">06</span> Строить или взять готовое</h2>
+      <p class="lede">Оркестрация трёх движков под одной панелью уже существует — вопрос в том, чего в ней не хватает.</p>
+    </div>
+    <div class="bleed">
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Проект</th><th>Что делает</th><th>Чего не хватает под нашу задачу</th></tr></thead>
+          <tbody>
+            <tr>
+              <td class="mono">spatiumstas/<br>web4static</td>
+              <td>PHP+lighttpd на <code>:99</code>, управляет NFQWS, NFQWS2, XKeen, HydraRoute, Xray, sing-box, mihomo, dnsmasq и др. — <b>ровно идея «один UI на все движки»</b>.</td>
+              <td>Нет usque/MASQUE как движка. UX «редактор конфигов», а не «дашборд состояния». Широкий, не сфокусированный.</td>
+            </tr>
+            <tr>
+              <td class="mono">Ground-Zerro/<br>HydraRoute (Neo)</td>
+              <td>Готовая <b>плоскость решений</b>: перехват DNS → ipset → fwmark → увод в любой туннель/интерфейс по доменам и CIDR. Обкатана на Keenetic, умеет сосуществовать с PBR.</td>
+              <td>Это движок маршрутизации, не панель. Целится в один туннель за раз — многослойность (desync + warp + vless одновременно) надо разложить.</td>
+            </tr>
+            <tr>
+              <td class="mono">podkop</td>
+              <td>sing-box + nftables, selective routing, ест <code>vless://</code> напрямую. Своя плоскость.</td>
+              <td>OpenWrt-центричный; на Keenetic — через костыли. Не оркеструет nfqws2.</td>
+            </tr>
+            <tr>
+              <td class="mono">xkeen</td>
+              <td>Xray/VLESS-Reality на Keenetic + автозапуск. Де-факто стандарт для слоя vless.</td>
+              <td>Только слой vless. Свой роутинг — не общий с остальными.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="wrap">
+      <div class="callout">
+        <span class="tag">Рекомендация</span>
+        <p>
+          <b>Не переписывать оркестрацию с нуля.</b> Реальный вклад — там, где сейчас дыра:
+        </p>
+        <ol>
+          <li><b>usque/MASQUE как первоклассный движок</b> в этой экосистеме (пакет + <code>S51usque</code> с <code>info/probe</code> — уже сделано в нашей ветке).</li>
+          <li><b>HydraRoute как плоскость решений</b>, настроенная на три цели сразу: <code>desync.list</code> → пометка «только nfqws2», <code>warp.list</code> → <code>opkgtun0</code>, <code>vless.list</code> → <code>tun-xray</code>.</li>
+          <li><b>Наш дашборд поверх</b> — состояние + пресеты + одна «Применить», три вкладки. Либо отдельным пакетом, либо PR в web4static с добавлением usque.</li>
+        </ol>
+      </div>
+    </div>
+  </section>
+
+  <hr class="div">
+
+  <section>
+    <div class="wrap">
+      <h2><span class="n">07</span> Дорожная карта</h2>
+      <dl class="phase">
+        <dt>Ф.0</dt>
+        <dd><b>Ядро usque + панель (готово в ветке <code>feature/web-ui</code>)</b>
+          Логи, <code>--on-connect</code>-состояние, <code>info</code>/<code>probe</code>/<code>reregister</code>, дашборд, OpenAPI.</dd>
+        <dt>Ф.1</dt>
+        <dd><b>Плоскость решений на HydraRoute</b>
+          Развернуть HydraRoute, три списка → три цели (desync-метка, <code>opkgtun0</code>, <code>tun-xray</code>). Проверить на живом роутере: fwmark, номера таблиц, <code>netfilter.d</code>-хук, сосуществование с nfqws2 и Keenetic PBR.</dd>
+        <dt>Ф.2</dt>
+        <dd><b>Панель → три движка</b>
+          Общий <code>info</code>-контракт для nfqws2 и xray-обёрток, три вкладки, общий редактор списков, пресеты itdoginfo, кнопка «Применить» дёргает HydraRoute.</dd>
+        <dt>Ф.3</dt>
+        <dd><b>Слой vless</b>
+          Обёртка над xkeen/xray: <code>S51</code>-скрипт с <code>info</code>/<code>probe</code>, ввод <code>vless://</code> в UI, генерация конфига, <code>tun-xray</code> как цель HydraRoute.</dd>
+        <dt>Ф.4</dt>
+        <dd><b>Автоматизация</b>
+          Cron: обновление пресетов, ре-резолв, watchdog по <code>probe</code> (авто-рестарт слоя при провале), авто-фолбэк warp → vless для домена, если warp-проба не проходит.</dd>
+      </dl>
+    </div>
+  </section>
+
+  <hr class="div">
+
+  <section>
+    <div class="wrap">
+      <h2><span class="n">08</span> Решения за тобой</h2>
+      <ul>
+        <li><strong>Плоскость решений</strong>: HydraRoute (рекоменд., обкатан на Keenetic) / podkop / своя на nftables.</li>
+        <li><strong>Ядро vless</strong>: xray (xkeen) / sing-box / mihomo. От этого зависит формат конфига и обёртка.</li>
+        <li><strong>Панель</strong>: отдельный пакет <code>bypass-web</code> / PR в <code>web4static</code> с движком usque / развивать наш <code>usque-keenetic-web</code> до трёх вкладок.</li>
+        <li><strong>Форк nfqws2</strong>: не нужен — интегрируемся рядом, читаем его <code>S51nfqws2 status</code> и правим его списки в <code>/opt/etc/nfqws2/lists/</code>.</li>
+        <li><strong>Репозиторий</strong>: твоя Гитея <code>192.168.1.54:8418</code> — один репо с core + web + плоскостью, или три.</li>
+        <li><strong>VPS для vless</strong>: свой (контроль, но обслуживание) / арендный конфиг.</li>
+      </ul>
+    </div>
+  </section>
+
+  <hr class="div">
+
+  <section>
+    <div class="wrap">
+      <h2><span class="n">Прил.</span> Источники</h2>
+      <ol class="refs">
+        <li><a href="https://habr.com/ru/articles/1047442/">Habr — «Заморозка по fingerprint: как ТСПУ в июне 2026 ломает соединения по поведению»</a></li>
+        <li><a href="https://habr.com/ru/articles/1007570/">Habr — «Чебурнет 2026»</a></li>
+        <li><a href="https://multihop.app/news/blokirovki-13-23-avgusta-2026-svodka">multihop.app — сводка блокировок 13–23 августа 2026</a></li>
+        <li><a href="https://digirpt.com/2026/02/17/vless-zablokirovali-rossiya-chto-delat/">digirpt.com — «VLESS заблокировали в России: что делать в 2026»</a></li>
+        <li><a href="https://techora.ru/news/massovye-sboi-telegram-i-blokirovki-vpn-2026-08-02">techora.ru — сбои Telegram и блокировки VPN 1–2 августа 2026</a></li>
+        <li><a href="https://ntc.party/t/%D0%B1%D0%BB%D0%BE%D0%BA%D0%B8%D1%80%D0%BE%D0%B2%D0%BA%D0%B8-%D0%BD%D0%B0-%D1%80%D0%BE%D1%81%D1%81%D0%B8%D0%B9%D1%81%D0%BA%D0%B8%D1%85-%D1%81%D0%B5%D1%80%D0%B2%D0%B5%D1%80%D0%B0%D1%85-cloudflare-cdndnswarp/22551">ntc.party — блокировки на серверах Cloudflare (CDN/DNS/WARP)</a></li>
+        <li><a href="https://tenchat.ru/media/5556966-novaya-versiya-zapret-obkhod-blokirovok-discord-i-youtube-19062026">Zapret 1.9.3 — обход Discord и YouTube, 19.06.2026</a></li>
+        <li><a href="https://github.com/nfqws/nfqws2-keenetic">github.com/nfqws/nfqws2-keenetic</a> · <a href="https://github.com/nfqws/nfqws-keenetic-web">nfqws-keenetic-web</a></li>
+        <li><a href="https://github.com/side-effect-tm/usque-keenetic">github.com/side-effect-tm/usque-keenetic</a> · <a href="https://github.com/Diniboy1123/usque">Diniboy1123/usque</a></li>
+        <li><a href="https://github.com/Ground-Zerro/HydraRoute">github.com/Ground-Zerro/HydraRoute</a></li>
+        <li><a href="https://github.com/spatiumstas/web4static">github.com/spatiumstas/web4static</a></li>
+        <li><a href="https://github.com/itdoginfo/allow-domains">github.com/itdoginfo/allow-domains</a> · <a href="https://github.com/Corvus-Malus/XKeen">Corvus-Malus/XKeen</a></li>
+      </ol>
+      <p style="font-size:12.5px;color:var(--muted)">
+        Ситуация в сети меняется быстро; факты по состоянию на конец августа 2026 и зависят от провайдера/региона.
+      </p>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <button class="toggle" id="theme-toggle" type="button">тема: системная</button>
+    <p style="margin-top:14px">
+      План для стека Keenetic + Entware: nfqws2 (десинк) · usque (MASQUE/WARP) · VLESS-Reality —
+      под одной плоскостью решений и одной панелью.
+    </p>
+  </div>
+</footer>
+
+<script>
+  (function () {
+    var root = document.documentElement, btn = document.getElementById('theme-toggle');
+    var modes = ['system', 'light', 'dark'], labels = { system: 'системная', light: 'светлая', dark: 'тёмная' };
+    var i = 0;
+    try { var s = localStorage.getItem('bypass.theme'); if (s) i = Math.max(0, modes.indexOf(s)); } catch (e) {}
+    function apply() {
+      var m = modes[i];
+      if (m === 'system') root.removeAttribute('data-theme'); else root.setAttribute('data-theme', m);
+      btn.textContent = 'тема: ' + labels[m];
+      try { localStorage.setItem('bypass.theme', m); } catch (e) {}
+    }
+    btn.addEventListener('click', function () { i = (i + 1) % modes.length; apply(); });
+    apply();
+  })();
+</script>
+</body>
+</html>

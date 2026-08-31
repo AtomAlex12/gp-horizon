@@ -1,0 +1,1137 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta charset="utf-8">
+<title>usque WARP Panel</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+
+<style>
+  :root {
+    /* warm neutrals — biased toward the orange accent, not a stock grey */
+    --bg:        #f6f4f0;
+    --surface:   #ffffff;
+    --surface-2: #f1ede6;
+    --ink:       #221d17;
+    --muted:     #6c6459;
+    --line:      #e6dfd4;
+    --accent:    #f6821f;   /* Cloudflare WARP orange */
+    --accent-ink:#ffffff;
+    --ok:        #1f8f5f;
+    --crit:      #d8443a;
+    --idle:      #a49a8c;
+    --code-bg:   #14110d;
+    --code-ink:  #d7cfc2;
+    --shadow:    0 1px 2px rgba(40,30,15,.06), 0 10px 30px rgba(40,30,15,.06);
+    --radius:    13px;
+
+    --font-ui:   "IBM Plex Sans", ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
+    --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg:        #151310;
+      --surface:   #201c17;
+      --surface-2: #29241d;
+      --ink:       #ede7dd;
+      --muted:     #a09789;
+      --line:      #322c24;
+      --accent:    #ff922e;
+      --ok:        #46b985;
+      --crit:      #f0645a;
+      --idle:      #7e7669;
+      --code-bg:   #100e0b;
+      --code-ink:  #cfc7b8;
+      --shadow:    0 1px 2px rgba(0,0,0,.4), 0 12px 34px rgba(0,0,0,.34);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg:        #151310;
+    --surface:   #201c17;
+    --surface-2: #29241d;
+    --ink:       #ede7dd;
+    --muted:     #a09789;
+    --line:      #322c24;
+    --accent:    #ff922e;
+    --ok:        #46b985;
+    --crit:      #f0645a;
+    --idle:      #7e7669;
+    --code-bg:   #100e0b;
+    --code-ink:  #cfc7b8;
+    --shadow:    0 1px 2px rgba(0,0,0,.4), 0 12px 34px rgba(0,0,0,.34);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font: 400 14px/1.5 var(--font-ui);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  h1, h2, h3 { text-wrap: balance; }
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
+
+  /* ---- top bar ------------------------------------------------------ */
+  .topbar {
+    position: sticky; top: 0; z-index: 8;
+    display: flex; align-items: center; justify-content: space-between; gap: 14px;
+    padding: 11px 20px; background: var(--surface); border-bottom: 1px solid var(--line);
+  }
+  .brand { display: flex; align-items: center; gap: 9px; min-width: 0; }
+  .brand .mark {
+    width: 22px; height: 22px; border-radius: 6px; flex: none;
+    background: var(--accent);
+    -webkit-mask: var(--shield) center / contain no-repeat;
+            mask: var(--shield) center / contain no-repeat;
+  }
+  .brand b { font-weight: 700; font-size: 15px; letter-spacing: .2px; }
+  .brand .sub { color: var(--muted); font-size: 12px; white-space: nowrap; }
+  @media (max-width: 620px) { .brand .sub { display: none; } }
+  .topbar-right { display: flex; align-items: center; gap: 8px; flex: none; }
+  .ver { color: var(--muted); font-family: var(--font-mono); font-size: 11.5px; }
+  @media (max-width: 720px) { .ver { display: none; } }
+
+  /* ---- demo strip -------------------------------------------------- */
+  .demobar {
+    display: flex; align-items: center; gap: 14px 18px; flex-wrap: wrap;
+    padding: 9px 20px;
+    background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+    border-bottom: 1px solid var(--line);
+    font-size: 12.5px;
+  }
+  .demobar .tag {
+    font-family: var(--font-mono); font-weight: 600; font-size: 10.5px;
+    letter-spacing: .12em; text-transform: uppercase;
+    color: var(--accent-ink); background: var(--accent);
+    padding: 3px 7px; border-radius: 5px; flex: none;
+  }
+  .demobar .note { color: var(--ink); }
+  .demobar .note a { color: inherit; }
+  .seg {
+    margin-left: auto; display: inline-flex; background: var(--surface);
+    border: 1px solid var(--line); border-radius: 9px; padding: 2px; gap: 2px;
+  }
+  .seg button {
+    border: 0; background: transparent; color: var(--muted);
+    font: 500 12px var(--font-ui); padding: 4px 10px; border-radius: 7px; cursor: pointer;
+  }
+  .seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
+  @media (max-width: 720px) { .seg { margin-left: 0; width: 100%; overflow-x: auto; } }
+
+  /* ---- layout ----------------------------------------------------- */
+  main { max-width: 1200px; margin: 0 auto; padding: 22px 20px 60px; }
+  .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(284px, 1fr)); }
+  .card {
+    background: var(--surface); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 17px; box-shadow: var(--shadow);
+    min-width: 0;
+  }
+  .card.wide { grid-column: 1 / -1; }
+  .card h3 {
+    margin: 0 0 13px; font-size: 11px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .13em; color: var(--muted);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .headline { font-size: 21px; font-weight: 600; letter-spacing: -.01em; margin-bottom: 4px; }
+  .headline.mono { font-family: var(--font-mono); font-size: 19px; }
+  .sub-headline { color: var(--muted); font-size: 12.5px; margin-bottom: 14px; }
+
+  dl { display: grid; grid-template-columns: auto 1fr; gap: 7px 14px; margin: 0; font-size: 13px; }
+  dt { color: var(--muted); }
+  dd {
+    margin: 0; text-align: right; font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums; word-break: break-all;
+  }
+
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 15px; }
+  button.act, a.act {
+    font: 500 13px var(--font-ui); padding: 7px 13px; border-radius: 8px;
+    border: 1px solid transparent; background: var(--accent); color: var(--accent-ink);
+    cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 6px;
+    transition: filter .14s, background .14s;
+  }
+  button.act:hover, a.act:hover { filter: brightness(1.07); }
+  button.act:disabled { opacity: .42; cursor: not-allowed; filter: none; }
+  button.act.ghost, a.act.ghost {
+    background: transparent; color: var(--ink); border-color: var(--line);
+  }
+  button.act.ghost:hover { background: var(--surface-2); filter: none; }
+  button.act.danger { background: var(--crit); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-family: var(--font-mono); font-size: 12px; font-weight: 500;
+    padding: 3px 9px 3px 7px; border-radius: 999px;
+    background: var(--surface-2); color: var(--ink);
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--idle); flex: none; }
+  .dot.ok   { background: var(--ok);   box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 22%, transparent); }
+  .dot.crit { background: var(--crit); box-shadow: 0 0 0 3px color-mix(in srgb, var(--crit) 22%, transparent); }
+  .dot.idle { background: var(--idle); }
+  .dot.pulse { animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+
+  .badge {
+    font-family: var(--font-mono); font-size: 11px;
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
+    color: var(--accent); border-radius: 999px; padding: 1px 8px;
+  }
+
+  canvas#spark { width: 100%; height: 72px; display: block; margin-bottom: 14px; }
+
+  .routes { max-height: 210px; overflow: auto; display: flex; flex-wrap: wrap; gap: 6px; }
+  .routes span {
+    font-family: var(--font-mono); font-size: 11.5px;
+    background: var(--surface-2); border: 1px solid var(--line);
+    border-radius: 6px; padding: 2px 7px; color: var(--ink);
+  }
+
+  /* routing card */
+  .presets { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 14px; }
+  .presets button {
+    font: 500 12px var(--font-ui); padding: 5px 11px; border-radius: 999px; cursor: pointer;
+    border: 1px solid var(--line); background: var(--surface-2); color: var(--ink);
+    display: inline-flex; align-items: center; gap: 6px; transition: background .12s, border-color .12s;
+  }
+  .presets button::before {
+    content: ""; width: 7px; height: 7px; border-radius: 50%;
+    background: var(--idle); flex: none;
+  }
+  .presets button[aria-pressed="true"] {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 15%, transparent);
+  }
+  .presets button[aria-pressed="true"]::before { background: var(--accent); }
+  .rg-label {
+    display: block; font-size: 11px; font-weight: 600; letter-spacing: .1em;
+    text-transform: uppercase; color: var(--muted); margin-bottom: 6px;
+  }
+  .rg-text {
+    width: 100%; resize: vertical; min-height: 120px;
+    font: 400 12.5px/1.6 var(--font-mono);
+    background: var(--code-bg); color: var(--code-ink);
+    border: 1px solid var(--line); border-radius: 9px; padding: 11px;
+  }
+  .rg-stat { color: var(--muted); font-size: 12px; align-self: center; }
+
+  form.config { display: flex; flex-wrap: wrap; gap: 14px; align-items: end; }
+  form.config select {
+    font: 400 13px var(--font-mono); padding: 7px 9px; border-radius: 8px;
+    border: 1px solid var(--line); background: var(--bg); color: var(--ink);
+  }
+  form.config label {
+    display: flex; flex-direction: column; gap: 5px;
+    font-size: 11px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--muted);
+  }
+  form.config input[type=text] {
+    font: 400 13px var(--font-mono); padding: 7px 9px; border-radius: 8px;
+    border: 1px solid var(--line); background: var(--bg); color: var(--ink); min-width: 170px;
+  }
+  label.check {
+    flex-direction: row; align-items: center; gap: 7px;
+    text-transform: none; letter-spacing: 0; font-weight: 500; font-size: 13px; color: var(--ink);
+  }
+  label.check.inline { margin-left: auto; font-size: 12px; }
+  input[type=checkbox] { accent-color: var(--accent); width: 15px; height: 15px; }
+
+  pre.log {
+    margin: 0; background: var(--code-bg); color: var(--code-ink);
+    border-radius: 9px; padding: 13px; max-height: 320px; overflow: auto;
+    font: 400 12px/1.65 var(--font-mono); white-space: pre-wrap; word-break: break-all;
+  }
+  pre.log .t { color: color-mix(in srgb, var(--code-ink) 55%, transparent); }
+  pre.log .w { color: var(--accent); }
+  pre.log .e { color: var(--crit); }
+
+  /* ---- overlays -------------------------------------------------- */
+  .overlay {
+    position: fixed; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center;
+    background: color-mix(in srgb, var(--code-bg) 62%, transparent); backdrop-filter: blur(3px);
+  }
+  .login {
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+    box-shadow: var(--shadow); padding: 22px; width: 90%; max-width: 330px;
+    display: flex; flex-direction: column; gap: 12px;
+  }
+  .login h2 { margin: 0; font-size: 17px; }
+  .login p { margin: 0; color: var(--muted); font-size: 12.5px; }
+  .login label { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--muted); }
+  .login input {
+    font: 400 13px var(--font-mono); padding: 9px; border-radius: 8px;
+    border: 1px solid var(--line); background: var(--bg); color: var(--ink);
+  }
+
+  .toast {
+    position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%) translateY(0);
+    background: var(--ink); color: var(--bg); padding: 10px 17px; border-radius: 9px;
+    box-shadow: var(--shadow); z-index: 40; font-size: 13px; max-width: 92%;
+    opacity: 1; transition: opacity .25s, transform .25s;
+  }
+  .toast.hidden { opacity: 0; transform: translateX(-50%) translateY(8px); pointer-events: none; }
+  .toast.err { background: var(--crit); color: #fff; }
+
+  dialog {
+    border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface);
+    color: var(--ink); padding: 20px; max-width: 360px; box-shadow: var(--shadow);
+  }
+  dialog::backdrop { background: color-mix(in srgb, var(--code-bg) 55%, transparent); }
+  dialog p { margin: 0 0 4px; }
+  dialog menu { display: flex; gap: 8px; justify-content: flex-end; margin: 16px 0 0; padding: 0; }
+
+  .hidden { display: none !important; }
+  .spin { display: inline-block; width: 12px; height: 12px; border-radius: 50%;
+    border: 2px solid currentColor; border-right-color: transparent; animation: spin .7s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="topbar">
+  <div class="brand">
+    <span class="mark" aria-hidden="true"></span>
+    <b>usque</b>
+    <span class="sub">MASQUE&nbsp;·&nbsp;Cloudflare WARP&nbsp;·&nbsp;Keenetic</span>
+  </div>
+  <div class="topbar-right">
+    <span class="ver" id="ver"></span>
+    <button class="act ghost" id="api-btn" type="button">API</button>
+    <button class="act ghost" id="theme-btn" type="button" title="Theme">◑</button>
+    <button class="act ghost" id="lang-btn" type="button">EN</button>
+    <button class="act ghost hidden" id="logout-btn" type="button" data-i18n="logout">Выход</button>
+  </div>
+</div>
+
+<div class="demobar">
+  <span class="tag">demo</span>
+  <span class="note" data-i18n="demo.note">Бэкенд имитируется в браузере — реального роутера нет. Все кнопки рабочие.</span>
+  <div class="seg" id="scenario" role="group" aria-label="scenario">
+    <button type="button" data-scn="connected"    aria-pressed="true"  data-i18n="scn.connected">Подключён</button>
+    <button type="button" data-scn="reconnecting" aria-pressed="false" data-i18n="scn.reconnecting">Переподключение</button>
+    <button type="button" data-scn="down"         aria-pressed="false" data-i18n="scn.down">Туннель упал</button>
+    <button type="button" data-scn="stopped"      aria-pressed="false" data-i18n="scn.stopped">Сервис остановлен</button>
+  </div>
+</div>
+
+<main>
+  <div class="grid">
+    <!-- service -->
+    <section class="card" id="card-service">
+      <h3 data-i18n="service">Сервис</h3>
+      <div class="headline" id="svc-state">—</div>
+      <div class="sub-headline" id="svc-tunnel">—</div>
+      <dl>
+        <dt data-i18n="pid">PID</dt><dd id="svc-pid">—</dd>
+        <dt data-i18n="uptime">Аптайм</dt><dd id="svc-uptime">—</dd>
+        <dt data-i18n="usque">usque</dt><dd id="svc-usque">—</dd>
+        <dt data-i18n="config">Конфиг</dt><dd id="svc-config">—</dd>
+      </dl>
+      <div class="actions">
+        <button class="act" id="b-start" type="button" data-i18n="start">Запуск</button>
+        <button class="act danger" id="b-stop" type="button" data-i18n="stop">Стоп</button>
+        <button class="act ghost" id="b-restart" type="button" data-i18n="restart">Рестарт</button>
+        <button class="act ghost" id="b-rereg" type="button" data-i18n="reregister">Ре-регистрация</button>
+      </div>
+    </section>
+
+    <!-- health -->
+    <section class="card" id="card-health">
+      <h3 data-i18n="health">Здоровье туннеля</h3>
+      <div class="headline mono" id="hl-warp">—</div>
+      <div class="sub-headline" id="hl-line">—</div>
+      <dl>
+        <dt data-i18n="egress">Внешний IP</dt><dd id="hl-ip">—</dd>
+        <dt data-i18n="pop">PoP Cloudflare</dt><dd id="hl-pop">—</dd>
+        <dt data-i18n="rtt">RTT</dt><dd id="hl-rtt">—</dd>
+        <dt data-i18n="checked">Проверено</dt><dd id="hl-ts">—</dd>
+      </dl>
+      <div class="actions">
+        <button class="act ghost" id="b-probe" type="button" data-i18n="probe">Проверить сейчас</button>
+      </div>
+    </section>
+
+    <!-- interface -->
+    <section class="card" id="card-iface">
+      <h3 data-i18n="iface">Интерфейс</h3>
+      <dl>
+        <dt data-i18n="name">Имя</dt><dd id="if-name">—</dd>
+        <dt data-i18n="ip">IP</dt><dd id="if-ip">—</dd>
+        <dt>MTU</dt><dd id="if-mtu">—</dd>
+        <dt>Link</dt><dd id="if-link">—</dd>
+        <dt data-i18n="ndm">NDM</dt><dd id="if-ndm">—</dd>
+        <dt>Endpoint</dt><dd id="if-endpoint">—</dd>
+      </dl>
+    </section>
+
+    <!-- traffic -->
+    <section class="card" id="card-traffic">
+      <h3 data-i18n="traffic">Трафик <span class="badge" id="tf-win">2 мин</span></h3>
+      <canvas id="spark" width="600" height="72"></canvas>
+      <dl>
+        <dt><span style="color:var(--accent)">↓</span> <span data-i18n="rate">скорость</span></dt><dd id="tf-rx">—</dd>
+        <dt>↑ <span data-i18n="rate">скорость</span></dt><dd id="tf-tx">—</dd>
+        <dt data-i18n="total">Всего ↓ / ↑</dt><dd id="tf-total">—</dd>
+        <dt data-i18n="errors">Ошибки / дропы</dt><dd id="tf-err">—</dd>
+      </dl>
+    </section>
+
+    <!-- routes -->
+    <section class="card wide" id="card-routes">
+      <h3><span data-i18n="routes">Маршруты в туннель</span> <span class="badge" id="rt-count">0</span></h3>
+      <div class="routes" id="rt-list"></div>
+    </section>
+
+    <!-- routing -->
+    <section class="card wide" id="card-routing">
+      <h3>
+        <span data-i18n="routing.title">Что заворачивать в туннель</span>
+        <span class="badge" id="rg-count">0 доменов</span>
+      </h3>
+      <p class="sub-headline" data-i18n="routing.hint">
+        Пресеты по сервисам (списки github.com/itdoginfo/allow-domains) плюс свои строки.
+        «Применить» резолвит домены и ставит маршруты на opkgtun.
+      </p>
+      <div class="presets" id="presets"></div>
+      <label class="rg-label" data-i18n="routing.list">Список (домен / IP / CIDR, по строке)</label>
+      <textarea id="rg-text" class="rg-text" spellcheck="false" rows="7"></textarea>
+      <div class="actions">
+        <button class="act" id="b-route-apply" type="button" data-i18n="routing.apply">Применить</button>
+        <button class="act ghost" id="b-route-clear" type="button" data-i18n="routing.clear">Очистить</button>
+        <span class="rg-stat" id="rg-stat"></span>
+      </div>
+    </section>
+
+    <!-- config -->
+    <section class="card wide" id="card-config">
+      <h3 data-i18n="config.title">Конфигурация</h3>
+      <form class="config" id="config-form">
+        <label><span data-i18n="cfg.iface">Интерфейс</span>
+          <select id="cfg-iface">
+            <option value="opkgtun0">opkgtun0</option>
+            <option value="opkgtun1">opkgtun1</option>
+          </select>
+        </label>
+        <label><span>IFACE_IP</span> <input type="text" id="cfg-ip" placeholder="auto (172.16.1.100–200)"></label>
+        <label><span>IFACE_MASK</span> <input type="text" id="cfg-mask" placeholder="255.255.255.255"></label>
+        <label><span data-i18n="cfg.mtu">MTU</span> <input type="text" id="cfg-mtu" placeholder="1280"></label>
+        <label><span>SNI</span> <input type="text" id="cfg-sni" placeholder="ozon.ru"></label>
+        <label class="check"><input type="checkbox" id="cfg-http2"> <span>HTTP/2</span></label>
+        <button class="act" type="submit" data-i18n="config.save">Сохранить и перезапустить</button>
+      </form>
+    </section>
+
+    <!-- log -->
+    <section class="card wide" id="card-log">
+      <h3>
+        <span data-i18n="log">Лог</span>
+        <label class="check inline"><input type="checkbox" id="log-follow" checked> <span data-i18n="log.follow">следить</span></label>
+      </h3>
+      <pre class="log" id="log-view">—</pre>
+    </section>
+  </div>
+</main>
+
+<div class="overlay hidden" id="login-ov">
+  <form class="login" id="login-form">
+    <h2 data-i18n="login.title">Вход</h2>
+    <p data-i18n="login.hint">Демо: любой логин и пароль.</p>
+    <label><span data-i18n="login.user">Пользователь</span>
+      <input type="text" id="li-user" value="root" autocomplete="off"></label>
+    <label><span data-i18n="login.pass">Пароль</span>
+      <input type="password" id="li-pass" value="keenetic" autocomplete="off"></label>
+    <button class="act" type="submit" data-i18n="login.submit">Войти</button>
+  </form>
+</div>
+
+<div class="toast hidden" id="toast"></div>
+
+<dialog id="confirm">
+  <p id="confirm-text"></p>
+  <menu>
+    <button type="button" class="act ghost" id="confirm-cancel" data-i18n="cancel">Отмена</button>
+    <button type="button" class="act danger" id="confirm-ok" data-i18n="ok">Подтвердить</button>
+  </menu>
+</dialog>
+
+<dialog id="apidlg">
+  <div>
+    <p style="font-weight:600" data-i18n="api.title">API — POST /api/index.php</p>
+    <p style="color:var(--muted);font-size:12.5px" data-i18n="api.desc">Полный контракт — web/openapi.yaml, отдаётся на :91/openapi.yaml.</p>
+    <pre class="log" style="max-height:250px;margin-top:10px">cmd=status        → сервис, туннель, iface, трафик, маршруты
+cmd=probe         → ok, egress_ip, warp, colo, loc, rtt_ms
+cmd=log&lines=N   → хвост usque.log
+cmd=config_get    → IFACE, IFACE_IP, IFACE_MASK, MTU, SNI, HTTP2_ENABLE
+cmd=config_set    → iface? iface_ip? iface_mask? mtu? sni? http2? → restart
+cmd=route_get     → presets[], list, domains, prefixes
+cmd=route_set     → list? presets? → резолв + маршруты на opkgtun
+cmd=start|stop|restart|reregister
+cmd=login&user&password   ·   cmd=logout</pre>
+    <menu><button type="button" class="act ghost" id="apidlg-close" data-i18n="close">Закрыть</button></menu>
+  </div>
+</dialog>
+
+<script>
+(function () {
+  'use strict';
+  var $ = function (s, r) { return (r || document).querySelector(s); };
+  var root = document.documentElement;
+
+  /* shield mask for the brand mark */
+  root.style.setProperty('--shield', "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 2l8 3v6c0 5-3.4 9-8 11-4.6-2-8-6-8-11V5z'/%3E%3C/svg%3E\")");
+
+  /* ---------------------------------------------------------------- i18n */
+  var STR = {
+    ru: {
+      logout:'Выход', service:'Сервис', pid:'PID', uptime:'Аптайм', usque:'usque', config:'Конфиг',
+      start:'Запуск', stop:'Стоп', restart:'Рестарт', reregister:'Ре-регистрация',
+      health:'Здоровье туннеля', egress:'Внешний IP', pop:'PoP Cloudflare', rtt:'RTT', checked:'Проверено',
+      probe:'Проверить сейчас', iface:'Интерфейс', name:'Имя', ip:'IP', ndm:'NDM',
+      traffic:'Трафик', rate:'скорость', total:'Всего ↓ / ↑', errors:'Ошибки / дропы',
+      routes:'Маршруты в туннель', 'config.title':'Конфигурация', 'config.save':'Сохранить и перезапустить',
+      'cfg.iface':'Интерфейс', 'cfg.mtu':'MTU',
+      'routing.title':'Что заворачивать в туннель',
+      'routing.hint':'Пресеты по сервисам (списки github.com/itdoginfo/allow-domains) плюс свои строки. «Применить» резолвит домены и ставит маршруты на opkgtun.',
+      'routing.list':'Список (домен / IP / CIDR, по строке)',
+      'routing.apply':'Применить', 'routing.clear':'Очистить',
+      rg_domains:'доменов', rg_stat:'домены: {d} · префиксы: {p} · пресетов: {k}',
+      c_route:'Применить список и переставить маршруты на opkgtun?', t_route:'Маршруты обновлены',
+      log:'Лог', 'log.follow':'следить', cancel:'Отмена', ok:'Подтвердить', close:'Закрыть',
+      'login.title':'Вход', 'login.hint':'Демо: любой логин и пароль.', 'login.user':'Пользователь',
+      'login.pass':'Пароль', 'login.submit':'Войти',
+      'demo.note':'Бэкенд имитируется в браузере — реального роутера нет. Все кнопки рабочие.',
+      'scn.connected':'Подключён', 'scn.reconnecting':'Переподключение', 'scn.down':'Туннель упал',
+      'scn.stopped':'Сервис остановлен',
+      'api.title':'API — POST /api/index.php',
+      'api.desc':'Полный контракт — web/openapi.yaml, отдаётся на :91/openapi.yaml.',
+      st_running:'работает', st_stopped:'остановлен',
+      tun_connected:'подключён', tun_disconnected:'отключён', tun_unknown:'состояние неизвестно',
+      tun_stopped:'сервис не запущен', tun_since:'на связи',
+      c_stop:'Остановить сервис usque?', c_restart:'Перезапустить сервис usque?',
+      c_rereg:'Сбросить device key и зарегистрироваться заново? Туннель прервётся.',
+      c_config:'Сохранить конфиг и перезапустить сервис?',
+      t_done:'Готово', t_saved:'Сохранено', t_fail:'Ошибка', t_reg:'Новый device key получен',
+      probe_off:'нет ответа через туннель', probing:'проверяю…'
+    },
+    en: {
+      logout:'Log out', service:'Service', pid:'PID', uptime:'Uptime', usque:'usque', config:'Config',
+      start:'Start', stop:'Stop', restart:'Restart', reregister:'Re-register',
+      health:'Tunnel health', egress:'Egress IP', pop:'Cloudflare PoP', rtt:'RTT', checked:'Checked',
+      probe:'Check now', iface:'Interface', name:'Name', ip:'IP', ndm:'NDM',
+      traffic:'Traffic', rate:'rate', total:'Total ↓ / ↑', errors:'Errors / drops',
+      routes:'Routes into tunnel', 'config.title':'Configuration', 'config.save':'Save & restart',
+      'cfg.iface':'Interface', 'cfg.mtu':'MTU',
+      'routing.title':'What goes through the tunnel',
+      'routing.hint':'Per-service presets (github.com/itdoginfo/allow-domains lists) plus your own lines. “Apply” resolves the domains and installs routes on opkgtun.',
+      'routing.list':'List (domain / IP / CIDR, one per line)',
+      'routing.apply':'Apply', 'routing.clear':'Clear',
+      rg_domains:'domains', rg_stat:'domains: {d} · prefixes: {p} · presets: {k}',
+      c_route:'Apply the list and reinstall routes on opkgtun?', t_route:'Routes updated',
+      log:'Log', 'log.follow':'follow', cancel:'Cancel', ok:'Confirm', close:'Close',
+      'login.title':'Sign in', 'login.hint':'Demo: any username and password.', 'login.user':'User',
+      'login.pass':'Password', 'login.submit':'Sign in',
+      'demo.note':'The backend is simulated in your browser — there is no real router. Every button works.',
+      'scn.connected':'Connected', 'scn.reconnecting':'Reconnecting', 'scn.down':'Tunnel down',
+      'scn.stopped':'Service stopped',
+      'api.title':'API — POST /api/index.php',
+      'api.desc':'Full contract: web/openapi.yaml, served at :91/openapi.yaml.',
+      st_running:'running', st_stopped:'stopped',
+      tun_connected:'connected', tun_disconnected:'disconnected', tun_unknown:'state unknown',
+      tun_stopped:'service not running', tun_since:'up',
+      c_stop:'Stop the usque service?', c_restart:'Restart the usque service?',
+      c_rereg:'Reset the device key and re-register? The tunnel will drop.',
+      c_config:'Save config and restart the service?',
+      t_done:'Done', t_saved:'Saved', t_fail:'Failed', t_reg:'New device key enrolled',
+      probe_off:'no answer through the tunnel', probing:'checking…'
+    }
+  };
+  var lang = 'ru';
+  function t(k) { return STR[lang][k] != null ? STR[lang][k] : (STR.en[k] != null ? STR.en[k] : k); }
+  function applyI18n() {
+    document.querySelectorAll('[data-i18n]').forEach(function (el) {
+      if (el.children.length === 0) el.textContent = t(el.getAttribute('data-i18n'));
+    });
+    $('#lang-btn').textContent = lang === 'ru' ? 'EN' : 'RU';
+    render(); renderProbe(lastProbe);
+    if (sim.presets) renderRouting();
+  }
+
+  /* ---------------------------------------------------------------- format */
+  function fmtBytes(n) {
+    n = +n || 0; var u = ['B','KB','MB','GB','TB'], i = 0;
+    while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+    return (i === 0 ? n : n.toFixed(n < 10 ? 2 : 1)) + ' ' + u[i];
+  }
+  function fmtRate(b) { return fmtBytes(b) + '/s'; }
+  function fmtDur(s) {
+    s = Math.max(0, Math.floor(+s || 0));
+    var d = (s / 86400) | 0, h = ((s % 86400) / 3600) | 0, m = ((s % 3600) / 60) | 0;
+    if (d) return d + 'd ' + h + 'h';
+    if (h) return h + 'h ' + m + 'm';
+    if (m) return m + 'm ' + (s % 60) + 's';
+    return s + 's';
+  }
+  function agoTxt(sec) {
+    if (!sec) return '—';
+    return fmtDur(Date.now() / 1000 - sec) + (lang === 'ru' ? ' назад' : ' ago');
+  }
+
+  /* ---------------------------------------------------------------- simulated backend */
+  var LOG0 = [
+    '{t}2026-08-31T20:58:11Z INFO  usque 4.2.0 starting (nativetun opkgtun0)',
+    '{t}2026-08-31T20:58:11Z INFO  registering device key … ok',
+    '{t}2026-08-31T20:58:12Z INFO  MASQUE dial 162.159.198.2:443 (h3)',
+    '{t}2026-08-31T20:58:12Z INFO  connect-ip session established, mtu=1280',
+    '{t}2026-08-31T20:58:12Z INFO  tunnel up · colo=DME'
+  ];
+  /* preset domain groups — in the real package these come from
+     github.com/itdoginfo/allow-domains (or a mirror on your Gitea) */
+  var PRESETS = {
+    telegram:  { label: 'Telegram',  domains: ['telegram.org', 't.me', 'telegram.me', 'telesco.pe', 'cdn-telegram.org'],
+                 cidr: ['91.108.4.0/22', '149.154.160.0/20', '95.161.64.0/20'] },
+    discord:   { label: 'Discord',   domains: ['discord.com', 'discord.gg', 'discordapp.com', 'discord.media', 'discordapp.net'],
+                 cidr: ['162.159.128.0/19', '66.22.192.0/18'] },
+    youtube:   { label: 'YouTube',   domains: ['youtube.com', 'youtu.be', 'googlevideo.com', 'ytimg.com', 'ggpht.com', 'youtubei.googleapis.com'],
+                 cidr: ['142.250.0.0/15', '172.217.0.0/16', '216.58.192.0/19', '208.65.152.0/22'] },
+    meta:      { label: 'Meta (IG/FB/WA)', domains: ['instagram.com', 'facebook.com', 'whatsapp.com', 'fbcdn.net', 'cdninstagram.com'],
+                 cidr: ['157.240.0.0/16', '31.13.24.0/21', '129.134.0.0/16'] },
+    x:         { label: 'Twitter / X', domains: ['x.com', 'twitter.com', 'twimg.com', 't.co', 'video.twimg.com'],
+                 cidr: ['104.244.42.0/24', '199.16.156.0/22'] },
+    openai:    { label: 'OpenAI',    domains: ['openai.com', 'chatgpt.com', 'oaistatic.com', 'oaiusercontent.com', 'sora.com'],
+                 cidr: ['104.18.0.0/16'] },
+    cloudflare:{ label: 'Cloudflare', domains: ['cloudflare.com', 'cloudflare-dns.com', 'workers.dev', 'pages.dev'],
+                 cidr: ['104.16.0.0/13', '172.64.0.0/13', '1.1.1.0/24'] },
+    refilter:  { label: 'Re-filter · RU', domains: ['(≈ 12 500 доменов)'], cidr: ['(≈ 40 000 префиксов)'], big: true, count: 12480 }
+  };
+
+  var sim = {}, ticker = null, flap = null;
+  function seed(scn) {
+    clearTimeout(flap);
+    var base = {
+      pkg:'0.4.0', usqv:'4.2.0', cfgv:1, pid:4571,
+      sni:'ozon.ru', http2:false, endpoint:'162.159.198.2',
+      iface:'opkgtun0', iface_ip:'', mask:'255.255.255.255', mtu:'1280',
+      rx:96.4e6, tx:23.1e6, rxDrop:3, txDrop:0, rxErr:0, txErr:0,
+      presets: new Set(['telegram', 'youtube', 'discord']),
+      customList: 'rutracker.org\nnnmclub.to\nhabr.com\n185.15.244.0/24',
+      routes: [], routeCount: 0, domainCount: 0,
+      log: LOG0.slice(),
+      spark: []
+    };
+    var s = { connected: { running:true, tunnel:'connected', since: nowS() - 74*60 },
+              reconnecting: { running:true, tunnel:'disconnected', since: nowS() - 6, flap:true },
+              down: { running:true, tunnel:'disconnected', since: nowS() - 320 },
+              stopped: { running:false, tunnel:'stopped', since: nowS() - 40 } }[scn];
+    sim = Object.assign(base, s);
+    sim.egress = sim.tunnel === 'connected' ? '104.28.51.9' : null;
+    sim.colo = 'DME'; sim.loc = 'RU'; sim.rtt = 18.4; sim.warp = 'on';
+    if (scn === 'reconnecting') {
+      pushLog('e', 'WARN  connect-ip session lost — retry in 2s');
+      flap = setTimeout(function () {
+        sim.tunnel = 'connected'; sim.since = nowS(); sim.egress = '104.28.51.9';
+        pushLog('', 'INFO  tunnel re-established · colo=DME');
+        toast(t('tun_connected')); render();
+      }, 4200);
+    }
+    if (scn === 'down') pushLog('e', 'ERROR connect-ip handshake timeout (no route to 162.159.198.2?)');
+    if (scn === 'stopped') pushLog('', 'INFO  received SIGTERM, shutting down');
+    recomputeRoutes();
+  }
+  function nowS() { return Math.floor(Date.now() / 1000); }
+
+  /* ---- routing: resolve the domain list into prefixes on opkgtunN ---- */
+  var IPRE = /^(\d{1,3}\.){3}\d{1,3}(\/\d{1,2})?$/;
+  function hashCidr(s) {
+    var h = 0; for (var i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+    h = Math.abs(h);
+    return (h % 223 + 11) + '.' + (h >> 8 & 255) + '.' + (h >> 3 & 255) + '.0/24';
+  }
+  function customLines() {
+    return sim.customList.split('\n').map(function (l) { return l.replace(/#.*/, '').trim(); })
+      .filter(function (l) { return l.length; });
+  }
+  function recomputeRoutes() {
+    var pfx = {}, dom = 0;
+    sim.presets.forEach(function (k) {
+      var p = PRESETS[k]; if (!p) return;
+      dom += p.big ? p.count : p.domains.length;
+      p.cidr.forEach(function (c) { if (!p.big) pfx[c] = 1; });
+      if (p.big) { pfx['(' + p.label + ': ' + p.cidr[0] + ')'] = 1; }
+    });
+    customLines().forEach(function (l) {
+      if (IPRE.test(l)) { pfx[l.indexOf('/') < 0 ? l + '/32' : l] = 1; }
+      else { dom++; pfx[hashCidr(l)] = 1; }
+    });
+    sim.routes = Object.keys(pfx).sort();
+    sim.routeCount = sim.presets.has('refilter')
+      ? sim.routes.length - 1 + 39800 : sim.routes.length;
+    sim.domainCount = dom;
+  }
+
+  function renderPresets() {
+    var box = $('#presets'); if (!box) return;
+    if (box.childElementCount === 0) {
+      Object.keys(PRESETS).forEach(function (k) {
+        var b = document.createElement('button');
+        b.type = 'button'; b.dataset.k = k; b.textContent = PRESETS[k].label;
+        b.onclick = function () {
+          sim.presets.has(k) ? sim.presets.delete(k) : sim.presets.add(k);
+          recomputeRoutes(); renderPresets(); renderRouting(); render();
+        };
+        box.appendChild(b);
+      });
+    }
+    Array.prototype.forEach.call(box.children, function (b) {
+      b.setAttribute('aria-pressed', String(sim.presets.has(b.dataset.k)));
+    });
+  }
+  function renderRouting() {
+    var ta = $('#rg-text');
+    if (ta && document.activeElement !== ta) ta.value = sim.customList;
+    $('#rg-count').textContent = sim.domainCount.toLocaleString('ru') + ' ' + t('rg_domains');
+    $('#rg-stat').textContent = t('rg_stat')
+      .replace('{d}', sim.domainCount.toLocaleString('ru'))
+      .replace('{p}', sim.routeCount.toLocaleString('ru'))
+      .replace('{k}', sim.presets.size);
+  }
+  function pushLog(cls, msg) {
+    var ts = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
+    var span = cls === 'e' ? 'e' : cls === 'w' ? 'w' : '';
+    sim.log.push('{t}' + ts + '  ' + (span ? ' ' + span + ' ' : '') + msg);
+    if (sim.log.length > 60) sim.log.shift();
+  }
+  function logHtml() {
+    return sim.log.slice().reverse().map(function (l) {
+      l = l.replace('{t}', '');
+      l = l.replace(/^([^ ]*?Z)\s+/, '<span class="t">$1</span>  ');
+      l = l.replace(/ (\w) (.*)$/, '<span class="$1">$2</span>');
+      return l;
+    }).join('\n');
+  }
+
+  function startSeq(msg) {
+    sim.running = true;
+    sim.tunnel = 'disconnected'; sim.since = nowS(); sim.egress = null;
+    pushLog('', 'INFO  ' + (msg || 'starting') + ' (nativetun opkgtun0)');
+    render();
+    clearTimeout(flap);
+    flap = setTimeout(function () {
+      sim.tunnel = 'connected'; sim.since = nowS(); sim.egress = '104.28.51.9';
+      pushLog('', 'INFO  MASQUE session established · colo=DME');
+      render(); if ($('#log-follow').checked) paintLog();
+    }, 1500);
+  }
+  function stopNow() {
+    sim.running = false; sim.tunnel = 'stopped'; sim.since = nowS(); sim.egress = null;
+    clearTimeout(flap);
+    pushLog('', 'INFO  received SIGTERM, shutting down');
+  }
+
+  /* the fake API — same response shapes as web/backend/index.php */
+  function api(cmd, p) {
+    p = p || {};
+    return new Promise(function (res) {
+      setTimeout(function () { res(handle(cmd, p)); }, 140 + Math.random() * 260);
+    });
+  }
+  function handle(cmd, p) {
+    switch (cmd) {
+      case 'status': return {
+        status: 0, anonym: false, web_version: '0.4.0', name: 'USQUE',
+        version: { pkg: sim.pkg, usque: sim.usqv, config: sim.cfgv },
+        service: { running: sim.running ? 1 : 0, pid: sim.running ? sim.pid : '',
+                   uptime_s: sim.running ? nowS() - Math.min(sim.since, nowS() - 60) : 0 },
+        tunnel: { state: sim.running ? sim.tunnel : 'stopped', since: sim.since,
+                  endpoint: sim.http2 ? '162.159.198.2' : sim.endpoint },
+        iface: { name: sim.iface, ndm_name: sim.iface.replace(/^opkg/, 'Opkg').replace('tun', 'Tun'),
+                 label: 'usque', ip: sim.iface_ip || '172.16.1.100', mtu: +sim.mtu || 1280,
+                 link: sim.tunnel === 'connected' ? 'up' : (sim.running ? 'lowerlayerdown' : 'down'),
+                 ndm_state: sim.running ? 'up' : 'down' },
+        traffic: { rx_bytes: Math.floor(sim.rx), tx_bytes: Math.floor(sim.tx),
+                   rx_packets: Math.floor(sim.rx / 1200), tx_packets: Math.floor(sim.tx / 900),
+                   rx_errors: sim.rxErr, tx_errors: sim.txErr,
+                   rx_dropped: sim.rxDrop, tx_dropped: sim.txDrop },
+        config: { sni: sim.sni, http2: sim.http2 ? 1 : 0, iface_ip: sim.iface_ip },
+        routes: { count: sim.routeCount, list: sim.routes.slice(0, 80) }
+      };
+      case 'probe':
+        if (sim.tunnel === 'connected')
+          return { status: 0, ok: 1, egress_ip: '104.28.51.9', warp: 'on', colo: 'DME',
+                   loc: 'RU', sni: 'plaintext', rtt_ms: (16 + Math.random() * 9).toFixed(1), ts: nowS() };
+        return { status: 0, ok: 0, reason: 'no-response', ts: nowS() };
+      case 'log': return { status: 0, content: logHtml() };
+      case 'config_get':
+        return { status: 0, SNI: sim.sni, HTTP2_ENABLE: sim.http2 ? '1' : '0',
+                 IFACE: sim.iface, IFACE_IP: sim.iface_ip, IFACE_MASK: sim.mask, MTU: sim.mtu };
+      case 'config_set':
+        if (p.sni != null) sim.sni = p.sni;
+        if (p.iface != null) sim.iface = p.iface;
+        if (p.iface_ip != null) sim.iface_ip = p.iface_ip;
+        if (p.iface_mask != null) sim.mask = p.iface_mask || '255.255.255.255';
+        if (p.mtu != null) sim.mtu = p.mtu || '1280';
+        if (p.http2 != null) sim.http2 = p.http2 === '1';
+        stopNow(); startSeq('config changed, restarting');
+        return { status: 0, output: ['Stopping USQUE service...', 'Started USQUE service'] };
+      case 'route_get':
+        return { status: 0, presets: Array.from(sim.presets), list: sim.customList,
+                 domains: sim.domainCount, prefixes: sim.routeCount };
+      case 'route_set':
+        if (p.list != null) sim.customList = p.list;
+        if (p.presets != null) sim.presets = new Set(String(p.presets).split(',').filter(Boolean));
+        recomputeRoutes();
+        pushLog('', 'INFO  routing list applied: ' + sim.domainCount + ' domains → '
+          + sim.routeCount + ' prefixes on ' + sim.iface);
+        return { status: 0, output: ['flushed ' + sim.iface + ' routes', 'installed ' + sim.routeCount + ' prefixes'],
+                 domains: sim.domainCount, prefixes: sim.routeCount };
+      case 'start':
+        if (sim.running) return { status: 1, output: ['Service USQUE is already running'] };
+        startSeq('starting'); return { status: 0, output: ['Started USQUE service'] };
+      case 'stop':
+        if (!sim.running) return { status: 1, output: ['Service USQUE is not running'] };
+        stopNow(); return { status: 0, output: ['Stopped USQUE service'] };
+      case 'restart':
+        stopNow(); startSeq('restarting');
+        return { status: 0, output: ['Stopped USQUE service', 'Started USQUE service'] };
+      case 'reregister':
+        stopNow();
+        sim.log.push('{t}' + new Date().toISOString().replace(/\.\d+Z$/, 'Z') + '  INFO  removing device key');
+        pushLog('', 'INFO  registering new device key … ok');
+        startSeq('re-registered, starting');
+        return { status: 0, output: ['Re-registration done'] };
+      case 'login': return { status: 0 };
+      case 'logout': return { status: 0 };
+      default: return { status: 1, error: 'unknown cmd' };
+    }
+  }
+
+  /* ---------------------------------------------------------------- sparkline */
+  var spark = { rx: [], tx: [], N: 100 };
+  function pushSpark(rx, tx) {
+    spark.rx.push(rx); spark.tx.push(tx);
+    if (spark.rx.length > spark.N) { spark.rx.shift(); spark.tx.shift(); }
+    drawSpark();
+  }
+  function drawSpark() {
+    var c = $('#spark'), ctx = c.getContext('2d');
+    var dpr = window.devicePixelRatio || 1;
+    var w = c.width = c.clientWidth * dpr, h = c.height = 72 * dpr;
+    ctx.clearRect(0, 0, w, h);
+    var cs = getComputedStyle(root);
+    var accent = cs.getPropertyValue('--accent').trim();
+    var muted = cs.getPropertyValue('--muted').trim();
+    var line = cs.getPropertyValue('--line').trim();
+    var peak = Math.max.apply(null, spark.rx.concat(spark.tx, [1])) * 1.15;
+
+    // baseline
+    ctx.strokeStyle = line; ctx.lineWidth = dpr;
+    ctx.beginPath(); ctx.moveTo(0, h - dpr); ctx.lineTo(w, h - dpr); ctx.stroke();
+
+    function pts(arr) {
+      return arr.map(function (v, i) {
+        return [ (i / (spark.N - 1)) * w, h - (v / peak) * (h - 6 * dpr) - 3 * dpr ];
+      });
+    }
+    function area(arr, col) {
+      if (arr.length < 2) return;
+      var p = pts(arr);
+      var g = ctx.createLinearGradient(0, 0, 0, h);
+      g.addColorStop(0, col + '44'); g.addColorStop(1, col + '00');
+      ctx.beginPath(); ctx.moveTo(p[0][0], h);
+      p.forEach(function (q) { ctx.lineTo(q[0], q[1]); });
+      ctx.lineTo(p[p.length - 1][0], h); ctx.closePath();
+      ctx.fillStyle = g; ctx.fill();
+    }
+    function stroke(arr, col, wd) {
+      if (arr.length < 2) return;
+      var p = pts(arr);
+      ctx.beginPath(); p.forEach(function (q, i) { i ? ctx.lineTo(q[0], q[1]) : ctx.moveTo(q[0], q[1]); });
+      ctx.strokeStyle = col; ctx.lineWidth = wd * dpr; ctx.lineJoin = 'round'; ctx.stroke();
+      var last = p[p.length - 1];
+      ctx.beginPath(); ctx.arc(last[0], last[1], 2.4 * dpr, 0, 7); ctx.fillStyle = col; ctx.fill();
+    }
+    area(spark.rx, accent);
+    stroke(spark.tx, muted, 1.3);
+    stroke(spark.rx, accent, 1.8);
+  }
+
+  /* ---------------------------------------------------------------- render */
+  var lastStatus = null, lastProbe = null, prevTf = null, prevT = 0;
+
+  function render() {
+    if (!lastStatus) return;
+    var d = lastStatus, v = d.version, svc = d.service, tun = d.tunnel;
+    var running = svc.running === 1;
+    var tstate = running ? tun.state : 'stopped';
+
+    $('#ver').textContent = 'web ' + d.web_version + '  ·  usque ' + v.usque;
+    $('#svc-state').textContent = running ? t('st_running') : t('st_stopped');
+    var sub = 'tun_' + tstate;
+    var line = t(sub);
+    if (tstate === 'connected' && tun.since)
+      line = t('tun_since') + ' ' + fmtDur(Date.now() / 1000 - tun.since);
+    $('#svc-tunnel').textContent = line;
+    $('#svc-pid').textContent = svc.pid || '—';
+    $('#svc-uptime').textContent = running ? fmtDur(svc.uptime_s) : '—';
+    $('#svc-usque').textContent = v.usque;
+    $('#svc-config').textContent = 'v' + v.config;
+
+    var i = d.iface;
+    $('#if-name').textContent = i.name + ' (' + i.label + ')';
+    $('#if-ip').textContent = i.ip;
+    $('#if-mtu').textContent = i.mtu;
+    $('#if-link').textContent = i.link;
+    $('#if-ndm').textContent = i.ndm_state;
+    $('#if-endpoint').textContent = tun.endpoint || '—';
+
+    // health card headline reflects live tunnel state even between probes
+    if (tstate !== 'connected' && (!lastProbe || lastProbe.ok !== 1)) {
+      $('#hl-warp').textContent = tstate === 'stopped' ? '—' : 'offline';
+      $('#hl-line').textContent = tstate === 'stopped' ? t('tun_stopped') : t('probe_off');
+    }
+
+    var tf = d.traffic, nowt = Date.now() / 1000;
+    if (prevTf && prevT && nowt > prevT && running) {
+      var dt = nowt - prevT;
+      var rxr = Math.max(0, (tf.rx_bytes - prevTf.rx_bytes) / dt);
+      var txr = Math.max(0, (tf.tx_bytes - prevTf.tx_bytes) / dt);
+      $('#tf-rx').textContent = fmtRate(rxr);
+      $('#tf-tx').textContent = fmtRate(txr);
+      pushSpark(rxr, txr);
+    } else if (!running) {
+      $('#tf-rx').textContent = '0 B/s'; $('#tf-tx').textContent = '0 B/s';
+      pushSpark(0, 0);
+    }
+    prevTf = tf; prevT = nowt;
+    $('#tf-total').textContent = fmtBytes(tf.rx_bytes) + ' / ' + fmtBytes(tf.tx_bytes);
+    $('#tf-err').textContent = (tf.rx_errors + tf.tx_errors) + ' / ' + (tf.rx_dropped + tf.tx_dropped);
+
+    var r = d.routes;
+    $('#rt-count').textContent = (r.count || 0).toLocaleString('ru');
+    var box = $('#rt-list'); box.textContent = '';
+    r.list.forEach(function (x) { var s = document.createElement('span'); s.textContent = x; box.appendChild(s); });
+    if (r.count > r.list.length) {
+      var more = document.createElement('span');
+      more.textContent = '+ ' + (r.count - r.list.length).toLocaleString('ru') + ' …';
+      more.style.opacity = '.6'; box.appendChild(more);
+    }
+    if (typeof renderRouting === 'function') renderRouting();
+
+    // brand + control state
+    var dotClass = !running ? 'idle' : tstate === 'connected' ? 'ok'
+      : tstate === 'disconnected' ? 'crit' : 'idle';
+    $('.brand .mark').style.background = 'var(--' + (dotClass === 'ok' ? 'ok' : dotClass === 'crit' ? 'crit' : 'accent') + ')';
+
+    $('#b-start').disabled = running;
+    $('#b-stop').disabled = !running;
+    $('#b-restart').disabled = !running;
+    $('#b-rereg').disabled = false;
+  }
+
+  function renderProbe(d) {
+    if (!d) return;
+    if (d.ok === 1) {
+      $('#hl-warp').textContent = 'warp=' + d.warp;
+      $('#hl-line').textContent = 'trace ok · sni=' + (d.sni || '?');
+      $('#hl-ip').textContent = d.egress_ip;
+      $('#hl-pop').textContent = d.colo + ' / ' + d.loc;
+      $('#hl-rtt').textContent = d.rtt_ms + ' ms';
+      $('#hl-ts').textContent = agoTxt(d.ts);
+    } else {
+      $('#hl-warp').textContent = 'offline';
+      $('#hl-line').textContent = t('probe_off');
+      $('#hl-ip').textContent = '—'; $('#hl-pop').textContent = '—';
+      $('#hl-rtt').textContent = '—'; $('#hl-ts').textContent = d.ts ? agoTxt(d.ts) : '—';
+    }
+  }
+
+  function paintLog() { api('log').then(function (d) { $('#log-view').innerHTML = d.content || '—'; }); }
+
+  /* ---------------------------------------------------------------- polling */
+  var pollT = null, probeT = null, logT = null;
+  function loopStatus() {
+    api('status').then(function (d) { lastStatus = d; render(); });
+    pollT = setTimeout(loopStatus, 2000);
+  }
+  function loopProbe() {
+    api('probe').then(function (d) { lastProbe = d; renderProbe(d); });
+    probeT = setTimeout(loopProbe, 12000);
+  }
+  function loopLog() {
+    if ($('#log-follow').checked) paintLog();
+    logT = setTimeout(loopLog, 3500);
+  }
+  function startLoops() {
+    stopLoops(); loopStatus(); loopProbe(); loopLog();
+  }
+  function stopLoops() { clearTimeout(pollT); clearTimeout(probeT); clearTimeout(logT); }
+
+  /* continuously move the traffic counters so the sparkline lives */
+  function trafficTick() {
+    if (sim.running && sim.tunnel === 'connected') {
+      var base = 240e3 + 120e3 * Math.sin(Date.now() / 9000);
+      sim.rx += (base + Math.random() * 260e3) * 1.0;
+      sim.tx += (26e3 + Math.random() * 40e3) * 1.0;
+      if (Math.random() < 0.04) sim.rxDrop++;
+    }
+  }
+
+  /* ---------------------------------------------------------------- ui glue */
+  function toast(msg, err) {
+    var el = $('#toast');
+    el.textContent = msg; el.className = 'toast' + (err ? ' err' : '');
+    clearTimeout(toast._t);
+    toast._t = setTimeout(function () { el.classList.add('hidden'); }, 3200);
+  }
+  function confirmDialog(key) {
+    return new Promise(function (res) {
+      var dlg = $('#confirm');
+      $('#confirm-text').textContent = t(key);
+      var ok = $('#confirm-ok'), cancel = $('#confirm-cancel');
+      function done(v) {
+        ok.onclick = cancel.onclick = null;
+        dlg.removeEventListener('cancel', onEsc);
+        if (dlg.open) dlg.close();
+        res(v);
+      }
+      function onEsc(e) { e.preventDefault(); done(false); }
+      ok.onclick = function () { done(true); };
+      cancel.onclick = function () { done(false); };
+      dlg.addEventListener('cancel', onEsc);
+      dlg.showModal();
+    });
+  }
+  function action(cmd, confirmKey) {
+    (confirmKey ? confirmDialog(confirmKey) : Promise.resolve(true)).then(function (go) {
+      if (!go) return;
+      ['b-start','b-stop','b-restart','b-rereg'].forEach(function (id) { $('#' + id).disabled = true; });
+      api(cmd).then(function (r) {
+        if (cmd === 'reregister' && r.status === 0) toast(t('t_reg'));
+        else toast(r.status === 0 ? t('t_done') : t('t_fail') + ': ' + ((r.output || [])[0] || r.error || ''), r.status !== 0);
+        api('status').then(function (d) { lastStatus = d; render(); paintLog(); });
+      });
+    });
+  }
+
+  function setScenario(scn) {
+    document.querySelectorAll('#scenario button').forEach(function (b) {
+      b.setAttribute('aria-pressed', String(b.dataset.scn === scn));
+    });
+    seed(scn);
+    spark.rx = []; spark.tx = []; prevTf = null; prevT = 0;
+    api('status').then(function (d) { lastStatus = d; render(); });
+    api('probe').then(function (d) { lastProbe = d; renderProbe(d); });
+    api('config_get').then(function (d) {
+      $('#cfg-sni').value = d.SNI; $('#cfg-ip').value = d.IFACE_IP;
+      $('#cfg-mask').value = d.IFACE_MASK; $('#cfg-mtu').value = d.MTU;
+      $('#cfg-iface').value = d.IFACE; $('#cfg-http2').checked = d.HTTP2_ENABLE === '1';
+    });
+    renderPresets(); renderRouting();
+    paintLog();
+  }
+
+  /* theme toggle: cycle system → light → dark */
+  function currentTheme() { return root.getAttribute('data-theme') || 'system'; }
+  function setTheme(mode) {
+    if (mode === 'system') root.removeAttribute('data-theme');
+    else root.setAttribute('data-theme', mode);
+    try { localStorage.setItem('usque.theme', mode); } catch (e) {}
+    $('#theme-btn').textContent = mode === 'light' ? '☀' : mode === 'dark' ? '☾' : '◑';
+    drawSpark();
+  }
+
+  function bind() {
+    $('#lang-btn').onclick = function () { lang = lang === 'ru' ? 'en' : 'ru'; applyI18n(); };
+    $('#theme-btn').onclick = function () {
+      var n = { system: 'light', light: 'dark', dark: 'system' }[currentTheme()];
+      setTheme(n);
+    };
+    $('#api-btn').onclick = function () { $('#apidlg').showModal(); };
+    $('#apidlg-close').onclick = function () { $('#apidlg').close(); };
+    $('#apidlg').addEventListener('cancel', function (e) { e.preventDefault(); this.close(); });
+    $('#logout-btn').onclick = function () {
+      api('logout').then(function () { stopLoops(); $('#login-ov').classList.remove('hidden'); });
+    };
+    $('#b-start').onclick = function () { action('start'); };
+    $('#b-stop').onclick = function () { action('stop', 'c_stop'); };
+    $('#b-restart').onclick = function () { action('restart', 'c_restart'); };
+    $('#b-rereg').onclick = function () { action('reregister', 'c_rereg'); };
+    $('#b-probe').onclick = function () {
+      $('#hl-warp').innerHTML = '<span class="spin"></span>';
+      $('#hl-line').textContent = t('probing');
+      api('probe').then(function (d) { lastProbe = d; renderProbe(d); });
+    };
+    $('#log-follow').onchange = function () { if (this.checked) paintLog(); };
+
+    $('#config-form').onsubmit = function (e) {
+      e.preventDefault();
+      confirmDialog('c_config').then(function (go) {
+        if (!go) return;
+        api('config_set', {
+          sni: $('#cfg-sni').value.trim(),
+          iface: $('#cfg-iface').value,
+          iface_ip: $('#cfg-ip').value.trim(),
+          iface_mask: $('#cfg-mask').value.trim(),
+          mtu: $('#cfg-mtu').value.trim(),
+          http2: $('#cfg-http2').checked ? '1' : '0'
+        }).then(function (r) {
+          toast(r.status === 0 ? t('t_saved') : t('t_fail'), r.status !== 0);
+          api('status').then(function (d) { lastStatus = d; render(); paintLog(); });
+        });
+      });
+    };
+
+    $('#rg-text').oninput = function () { sim.customList = this.value; };
+    $('#b-route-clear').onclick = function () {
+      sim.customList = ''; sim.presets.clear();
+      $('#rg-text').value = ''; recomputeRoutes(); renderPresets(); renderRouting();
+      api('status').then(function (d) { lastStatus = d; render(); });
+    };
+    $('#b-route-apply').onclick = function () {
+      confirmDialog('c_route').then(function (go) {
+        if (!go) return;
+        $('#b-route-apply').disabled = true;
+        api('route_set', { list: $('#rg-text').value, presets: Array.from(sim.presets).join(',') })
+          .then(function (r) {
+            $('#b-route-apply').disabled = false;
+            toast(t('t_route') + ' · ' + r.prefixes.toLocaleString('ru') + ' pfx', r.status !== 0);
+            renderRouting(); paintLog();
+            api('status').then(function (d) { lastStatus = d; render(); });
+          });
+      });
+    };
+
+    $('#login-form').onsubmit = function (e) {
+      e.preventDefault();
+      api('login', { user: $('#li-user').value, password: $('#li-pass').value }).then(function (r) {
+        if (r.status === 0) { $('#login-ov').classList.add('hidden'); startLoops(); }
+      });
+    };
+
+    document.querySelectorAll('#scenario button').forEach(function (b) {
+      b.onclick = function () { setScenario(b.dataset.scn); };
+    });
+
+    window.addEventListener('resize', drawSpark);
+  }
+
+  /* ---------------------------------------------------------------- boot */
+  try {
+    var savedTheme = localStorage.getItem('usque.theme');
+    if (savedTheme) setTheme(savedTheme); else setTheme('system');
+  } catch (e) { setTheme('system'); }
+
+  bind();
+  applyI18n();
+  seed('connected');
+  setScenario('connected');
+  startLoops();
+  ticker = setInterval(trafficTick, 900);
+})();
+</script>
+</body>
+</html>
