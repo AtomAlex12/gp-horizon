@@ -1,0 +1,55 @@
+#!/bin/sh
+
+PATH=/opt/sbin:/opt/bin:/opt/usr/sbin:/opt/usr/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+NAME="nuxk-core"
+BIN="/opt/usr/bin/nuxk-core"
+CONFIG="/opt/etc/nuxk/nuxk.conf"
+PIDFILE="/opt/var/run/nuxk-core.pid"
+LOGFILE="/opt/var/log/nuxk-core.log"
+LOG_MAX_BYTES=524288
+
+fn_running() {
+    [ -f "$PIDFILE" ] || return 1
+    kill -0 "$(cat "$PIDFILE" 2>/dev/null)" 2>/dev/null
+}
+
+fn_rotate_log() {
+    [ -f "$LOGFILE" ] || return 0
+    sz=$(wc -c <"$LOGFILE" 2>/dev/null) || sz=0
+    [ "${sz:-0}" -gt "$LOG_MAX_BYTES" ] || return 0
+    tail -c $((LOG_MAX_BYTES / 2)) "$LOGFILE" >"$LOGFILE.tmp" 2>/dev/null && mv "$LOGFILE.tmp" "$LOGFILE"
+    rm -f "$LOGFILE.tmp"
+}
+
+fn_start() {
+    if fn_running; then
+        echo "$NAME already running (PID $(cat "$PIDFILE"))" >&2
+        return 1
+    fi
+    mkdir -p "$(dirname "$PIDFILE")" "$(dirname "$LOGFILE")"
+    fn_rotate_log
+    echo "Starting $NAME..."
+    start-stop-daemon -S -b -m -p "$PIDFILE" -x /bin/sh -- -c \
+        "exec \"$BIN\" -config \"$CONFIG\" >>\"$LOGFILE\" 2>&1"
+    sleep 1
+    fn_running && echo "Started $NAME" || { echo "Failed to start $NAME" >&2; return 1; }
+}
+
+fn_stop() {
+    if ! fn_running; then
+        echo "$NAME is not running" >&2
+        return 1
+    fi
+    echo "Stopping $NAME..."
+    start-stop-daemon -K -p "$PIDFILE" && rm -f "$PIDFILE"
+    echo "Stopped $NAME"
+}
+
+case "$1" in
+start)   fn_start ;;
+stop)    fn_stop ;;
+restart) fn_stop; sleep 1; fn_start ;;
+status)  fn_running && echo "$NAME is running (PID $(cat "$PIDFILE"))" || echo "$NAME is stopped" ;;
+*)       echo "Usage: $0 {start|stop|restart|status}" ;;
+esac
