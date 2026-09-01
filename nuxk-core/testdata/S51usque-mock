@@ -1,0 +1,73 @@
+#!/bin/sh
+# Fake S51usque for local end-to-end testing of nuxk-core without a router.
+#   nuxk-core -config testdata/nuxk.conf -debug
+# State toggles via testdata/mock.state (contents: "up" or "down").
+
+STATE_FILE="$(dirname "$0")/mock.state"
+[ -f "$STATE_FILE" ] || echo up >"$STATE_FILE"
+STATE=$(cat "$STATE_FILE")
+
+case "$1" in
+start)   echo up   >"$STATE_FILE"; echo "Started USQUE service" ;;
+stop)    echo down >"$STATE_FILE"; echo "Stopped USQUE service" ;;
+restart) echo up   >"$STATE_FILE"; echo "Restarted USQUE service" ;;
+reregister) echo "Re-registration done" ;;
+info)
+    if [ "$STATE" = "up" ]; then
+        RUN=1; TUN=connected; PID=$$
+    else
+        RUN=0; TUN=stopped; PID=
+    fi
+    cat <<EOF
+name USQUE
+version.pkg 0.4.0
+version.usque 4.2.0
+version.config 1
+service.running $RUN
+service.pid $PID
+service.uptime_s 3600
+tunnel.state $TUN
+tunnel.since 1756668000
+tunnel.endpoint 162.159.198.2
+iface.name opkgtun0
+iface.ndm_name OpkgTun0
+iface.label usque
+iface.ip 172.16.1.100
+iface.mtu 1280
+iface.link up
+iface.ndm_state up
+traffic.rx_bytes $((RANDOM * 5000))
+traffic.tx_bytes $((RANDOM * 800))
+traffic.rx_errors 0
+traffic.tx_errors 0
+traffic.rx_dropped 3
+traffic.tx_dropped 0
+config.sni ozon.ru
+config.http2 0
+config.iface_ip
+routes.count 6
+route 104.16.0.0/13
+route 172.64.0.0/13
+route 1.1.1.1/32
+EOF
+    ;;
+probe)
+    if [ "$STATE" = "up" ]; then
+        cat <<EOF
+ok 1
+egress_ip 104.28.51.9
+warp on
+colo DME
+loc RU
+sni plaintext
+rtt_ms 18.4
+ts $(date +%s)
+EOF
+    else
+        echo "ok 0"
+        echo "reason no-response"
+        echo "ts $(date +%s)"
+    fi
+    ;;
+*) echo "usage: $0 {start|stop|restart|reregister|info|probe}" ;;
+esac
