@@ -1,0 +1,11 @@
+# Shell scripts, Go, configs and web assets ship verbatim into .ipk / Docker
+# and run on the router — keep LF on every platform.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff2 binary
+*.ipk binary
+*.tar binary
+*.gz binary
