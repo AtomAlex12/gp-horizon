@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"nuxk.dev/horizon/core/internal/core"
 	"nuxk.dev/horizon/core/internal/engine"
 	"nuxk.dev/horizon/core/internal/state"
 )
@@ -17,6 +18,7 @@ type Deps struct {
 	Version string
 	State   *state.Store
 	Engines *engine.Registry
+	Hub     *core.Hub
 	WebRoot string // static nuxk-web build; "" = API only
 	Token   string // "" = allow localhost only
 }
@@ -24,7 +26,7 @@ type Deps struct {
 func NewRouter(d Deps) http.Handler {
 	mux := http.NewServeMux()
 
-	// --- unauthenticated ---
+	// --- unauthenticated liveness ---
 	mux.HandleFunc("GET /api/v1/healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
@@ -52,23 +54,18 @@ func (d Deps) handleVersion(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"version": d.Version, "api": "v1"})
 }
 
+// handleStatus is served from the Hub — the reconcile loop keeps it fresh, so
+// this never blocks on an engine.
 func (d Deps) handleStatus(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
-	defer cancel()
-	writeJSON(w, http.StatusOK, map[string]any{
-		"version": d.Version,
-		"engines": d.Engines.Snapshot(ctx),
-		"plane":   map[string]any{"status": "not-wired"}, // TODO MVP-2
-		"ts":      time.Now().Unix(),
-	})
+	writeJSON(w, http.StatusOK, d.Hub.Get())
 }
 
 func (d Deps) handleEngines(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
-	defer cancel()
-	writeJSON(w, http.StatusOK, d.Engines.Snapshot(ctx))
+	writeJSON(w, http.StatusOK, d.Hub.Get().Engines)
 }
 
+// handleEngine goes live (not the Hub) — a single-engine GET is a deliberate
+// "give me the current truth" call.
 func (d Deps) handleEngine(w http.ResponseWriter, r *http.Request) {
 	k := engine.Kind(r.PathValue("kind"))
 	e, ok := d.Engines.Get(k)
@@ -76,7 +73,9 @@ func (d Deps) handleEngine(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "engine_not_found", "no such engine: "+string(k))
 		return
 	}
-	info, err := e.Info(r.Context())
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	info, err := e.Info(ctx)
 	if err != nil {
 		writeErr(w, http.StatusBadGateway, "engine_error", err.Error())
 		return
