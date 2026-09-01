@@ -30,10 +30,16 @@ export interface Probe {
   ts: number;
 }
 
+// What /status and /engines return: Info plus the last active probe.
+export interface EngineState extends EngineInfo {
+  probe?: Probe;
+  probe_at?: number;
+}
+
 export interface Status {
   version: string;
   ts: number;
-  engines: EngineInfo[];
+  engines: EngineState[];
   plane: Record<string, unknown>;
 }
 
@@ -42,7 +48,11 @@ export interface ApiError {
 }
 
 class HttpError extends Error {
-  constructor(public status: number, public code: string, message: string) {
+  constructor(
+    public status: number,
+    public code: string,
+    message: string,
+  ) {
     super(message);
   }
 }
@@ -70,7 +80,7 @@ export const api = {
   version: () => req<{ version: string; api: string }>('GET', '/version'),
   status: () => req<Status>('GET', '/status'),
 
-  engines: () => req<EngineInfo[]>('GET', '/engines'),
+  engines: () => req<EngineState[]>('GET', '/engines'),
   engine: (k: EngineKind) => req<EngineInfo>('GET', `/engines/${k}`),
   engineAction: (k: EngineKind, action: 'start' | 'stop' | 'restart') =>
     req<{ status: string }>('POST', `/engines/${k}/${action}`),
