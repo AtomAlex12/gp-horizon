@@ -1,0 +1,49 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  core:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: nuxk-core
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - run: go vet ./...
+      - run: go test ./...
+      - name: cross-compile
+        run: |
+          mkdir -p dist
+          LDFLAGS="-s -w -X main.version=${GITHUB_REF_NAME:-dev}"
+          CGO_ENABLED=0 GOOS=linux GOARCH=mips   GOMIPS=softfloat go build -ldflags "$LDFLAGS" -o dist/nuxk-core-mips   .
+          CGO_ENABLED=0 GOOS=linux GOARCH=mipsle GOMIPS=softfloat go build -ldflags "$LDFLAGS" -o dist/nuxk-core-mipsel .
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64                   go build -ldflags "$LDFLAGS" -o dist/nuxk-core-aarch64 .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nuxk-core
+          path: nuxk-core/dist/*
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: nuxk-web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      # - run: npm ci
+      # - run: npm run build           # full
+      # - run: npm run build:lite      # lite  → dist-lite/
+      - run: echo "TODO — enable once nuxk-web is scaffolded"
+
+  # packages job — assembles opkg + docker on tag; wired after MVP-1
