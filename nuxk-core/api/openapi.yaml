@@ -1,0 +1,215 @@
+openapi: 3.1.0
+
+info:
+  title: nuxk-core API
+  version: "0.1.0-draft"
+  description: >
+    Internal control API for nuxk Horizon. Single-tenant. `nuxk-web` is the only
+    client. Bearer token required for non-loopback callers (`API_TOKEN` in
+    `/opt/etc/nuxk/nuxk.conf`); loopback with no token configured is allowed.
+    Flat responses — a resource is returned directly; errors are
+    `{"error":{"code","message"}}` plus the HTTP status.
+    DRAFT — only /healthz, /version, /status, /engines* are implemented so far.
+  license: { name: MIT }
+
+servers:
+  - url: http://{host}:4141
+    variables: { host: { default: 127.0.0.1 } }
+
+security:
+  - bearer: []
+
+tags:
+  - { name: core }
+  - { name: engines }
+  - { name: routing }
+  - { name: discovery }
+
+paths:
+  /api/v1/healthz:
+    get:
+      tags: [core]
+      security: []
+      summary: Liveness
+      responses: { "200": { description: alive } }
+
+  /api/v1/version:
+    get:
+      tags: [core]
+      responses:
+        "200":
+          content: { application/json: { schema: { $ref: "#/components/schemas/Version" } } }
+
+  /api/v1/status:
+    get:
+      tags: [core]
+      summary: Aggregate — every engine + the routing plane + core version
+      responses:
+        "200":
+          content: { application/json: { schema: { $ref: "#/components/schemas/Status" } } }
+
+  /api/v1/engines:
+    get:
+      tags: [engines]
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/EngineInfo" } }
+
+  /api/v1/engines/{kind}:
+    parameters: [{ $ref: "#/components/parameters/kind" }]
+    get:
+      tags: [engines]
+      responses:
+        "200": { content: { application/json: { schema: { $ref: "#/components/schemas/EngineInfo" } } } }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /api/v1/engines/{kind}/{action}:
+    parameters:
+      - { $ref: "#/components/parameters/kind" }
+      - name: action
+        in: path
+        required: true
+        schema: { type: string, enum: [start, stop, restart, probe] }
+    post:
+      tags: [engines]
+      summary: start / stop / restart (202) — or probe (200 with result)
+      responses:
+        "200": { description: probe result, content: { application/json: { schema: { $ref: "#/components/schemas/Probe" } } } }
+        "202": { description: action accepted }
+        "404": { $ref: "#/components/responses/Error" }
+        "502": { $ref: "#/components/responses/Error" }
+
+  # ---- not yet implemented — contract sketch ----
+  /api/v1/engines/{kind}/config:
+    parameters: [{ $ref: "#/components/parameters/kind" }]
+    put:
+      tags: [engines]
+      summary: "TODO — set engine config (vless:// or sub URL, SNI, strategy ref)"
+      responses: { "200": { description: applied } }
+
+  /api/v1/lists/{name}:
+    parameters:
+      - name: name
+        in: path
+        required: true
+        schema: { type: string, enum: [nfqws2, usque, xray, exclude] }
+    get:
+      tags: [routing]
+      summary: "TODO — read a routing list (domain / ip / cidr, one per line)"
+      responses: { "200": { description: list body } }
+    put:
+      tags: [routing]
+      summary: "TODO — replace the list, then recompute the plane"
+      responses: { "200": { description: replaced } }
+
+  /api/v1/decisions:
+    get:
+      tags: [discovery]
+      summary: "TODO — the learned domain→mode cache"
+      responses: { "200": { description: decisions } }
+
+  /api/v1/decisions/{domain}:
+    parameters: [{ name: domain, in: path, required: true, schema: { type: string } }]
+    put:
+      tags: [discovery]
+      summary: "TODO — pin a domain to a mode (source=manual, never auto-changed)"
+      responses: { "200": { description: pinned } }
+    delete:
+      tags: [discovery]
+      summary: "TODO — forget / unpin"
+      responses: { "204": { description: forgotten } }
+
+  /api/v1/discover:
+    post:
+      tags: [discovery]
+      summary: "TODO — queue an out-of-band ladder sweep for a domain or service group"
+      responses: { "202": { description: "{ job_id }" } }
+
+  /api/v1/discover/{job_id}:
+    parameters: [{ name: job_id, in: path, required: true, schema: { type: string } }]
+    get:
+      tags: [discovery]
+      summary: "TODO — sweep progress + per-rung result"
+      responses: { "200": { description: job } }
+
+  /api/v1/apply:
+    post:
+      tags: [routing]
+      summary: "TODO — recompute nuxk-plane from all lists + decisions"
+      responses: { "200": { description: "{ per-engine: { domains, prefixes } }" } }
+
+  /api/v1/events:
+    get:
+      tags: [core]
+      summary: "TODO — SSE stream of state changes for the live UI"
+      responses: { "200": { description: "text/event-stream" } }
+
+components:
+  securitySchemes:
+    bearer: { type: http, scheme: bearer }
+
+  parameters:
+    kind:
+      name: kind
+      in: path
+      required: true
+      schema: { type: string, enum: [nfqws2, usque, xray] }
+
+  responses:
+    Error:
+      description: error
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+
+  schemas:
+    Version:
+      type: object
+      properties: { version: { type: string }, api: { type: string, const: v1 } }
+
+    Status:
+      type: object
+      properties:
+        version: { type: string }
+        ts: { type: integer }
+        engines: { type: array, items: { $ref: "#/components/schemas/EngineInfo" } }
+        plane: { type: object, additionalProperties: true }
+
+    EngineInfo:
+      type: object
+      required: [kind, running, health]
+      properties:
+        kind: { type: string, enum: [nfqws2, usque, xray] }
+        running: { type: boolean }
+        pid: { type: integer }
+        uptime_sec: { type: integer }
+        version: { type: string }
+        health: { type: string, enum: [ok, degraded, down, unknown] }
+        iface: { type: string, description: "opkgtun0 / tun-xray / ''" }
+        endpoint: { type: string }
+        routes: { type: integer, description: prefixes currently targeted }
+        detail: { type: object, additionalProperties: { type: string } }
+
+    Probe:
+      type: object
+      required: [ok, ts]
+      properties:
+        ok: { type: boolean }
+        egress_ip: { type: string }
+        rtt_ms: { type: number }
+        detail: { type: object, additionalProperties: { type: string } }
+        reason: { type: string }
+        ts: { type: integer }
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
