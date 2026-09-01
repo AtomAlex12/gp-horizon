@@ -1,0 +1,27 @@
+# build output
+/**/dist/
+/**/dist-lite/
+/**/out/
+/**/bin/
+*.ipk
+*.tar.gz
+
+# go
+/nuxk-core/nuxk-core
+/nuxk-core/*.test
+/nuxk-core/coverage.out
+
+# node
+node_modules/
+.svelte-kit/
+*.local
+
+# vendored engine binaries (pulled at build time)
+/engines/*/vendor-bin/
+/nuxk-core/testdata/router-mock/opt/
+
+# editor / os
+.DS_Store
+.idea/
+.vscode/
+*.swp
