@@ -23,6 +23,9 @@ node_modules/
 /nuxk-core/testdata/state/
 /nuxk-core/testdata/mock.state
 
+# committed before the first release (npm install for now)
+/nuxk-web/package-lock.json
+
 # editor / os
 .DS_Store
 .idea/
