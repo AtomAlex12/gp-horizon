@@ -21,7 +21,9 @@ import (
 
 	"nuxk.dev/horizon/core/internal/api"
 	"nuxk.dev/horizon/core/internal/config"
+	"nuxk.dev/horizon/core/internal/core"
 	"nuxk.dev/horizon/core/internal/engine"
+	"nuxk.dev/horizon/core/internal/engine/usque"
 	"nuxk.dev/horizon/core/internal/state"
 )
 
@@ -30,8 +32,8 @@ var version = "0.0.0-dev" // set by -ldflags at build time
 func main() {
 	var (
 		cfgPath = flag.String("config", "/opt/etc/nuxk/nuxk.conf", "path to config file")
-		listen  = flag.String("listen", "127.0.0.1:4141", "API listen address")
-		webRoot = flag.String("web", "", "optional dir to serve nuxk-web static build (empty = API only)")
+		listen  = flag.String("listen", "", "override API listen address")
+		webRoot = flag.String("web", "", "dir to serve nuxk-web static build (empty = API only)")
 		debug   = flag.Bool("debug", false, "verbose logging")
 	)
 	flag.Parse()
@@ -40,66 +42,73 @@ func main() {
 	if *debug {
 		lvl = slog.LevelDebug
 	}
-	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: lvl}))
-	slog.SetDefault(log)
-	log.Info("nuxk-core starting", "version", version)
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: lvl})))
+	slog.Info("nuxk-core starting", "version", version)
 
 	cfg, err := config.Load(*cfgPath)
 	if err != nil {
-		log.Error("load config", "path", *cfgPath, "err", err)
+		slog.Error("load config", "path", *cfgPath, "err", err)
 		os.Exit(1)
 	}
 	if *listen != "" {
 		cfg.Listen = *listen
 	}
+	if *webRoot != "" {
+		cfg.WebRoot = *webRoot
+	}
 
 	st, err := state.Open(cfg.StateDir)
 	if err != nil {
-		log.Error("open state", "dir", cfg.StateDir, "err", err)
+		slog.Error("open state", "dir", cfg.StateDir, "err", err)
 		os.Exit(1)
 	}
 
 	// Engine registry — adapters are wired here as they land.
 	//   MVP-1: usque   MVP-2: + nfqws2   Ф.3: + xray
 	reg := engine.NewRegistry()
-	// reg.Add(usque.New(cfg.Engines.Usque))
+	reg.Add(usque.New(cfg.Engines.Usque))
 	// reg.Add(nfqws2.New(cfg.Engines.Nfqws2))
 	// reg.Add(xray.New(cfg.Engines.Xray))
 
-	srv := &http.Server{
-		Addr:              cfg.Listen,
-		Handler:           api.NewRouter(api.Deps{Version: version, State: st, Engines: reg, WebRoot: *webRoot, Token: cfg.APIToken}),
-		ReadHeaderTimeout: 5 * time.Second,
-		WriteTimeout:      30 * time.Second,
-		IdleTimeout:       60 * time.Second,
-	}
+	hub := core.NewHub(version)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	rc := core.NewReconciler(reg, hub, version)
+	go rc.Run(ctx)
+
+	srv := &http.Server{
+		Addr: cfg.Listen,
+		Handler: api.NewRouter(api.Deps{
+			Version: version, State: st, Engines: reg, Hub: hub,
+			WebRoot: cfg.WebRoot, Token: cfg.APIToken,
+		}),
+		ReadHeaderTimeout: 5 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
+
 	errc := make(chan error, 1)
 	go func() {
-		log.Info("api listening", "addr", cfg.Listen, "web", *webRoot != "")
+		slog.Info("api listening", "addr", cfg.Listen, "web", cfg.WebRoot != "")
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errc <- err
 		}
 	}()
 
-	// TODO(MVP-1): start the reconcile loop — periodic health probes, plane
-	// re-apply, discovery queue drain. For now the daemon just serves the API.
-
 	select {
 	case err := <-errc:
-		log.Error("server error", "err", err)
+		slog.Error("server error", "err", err)
 		os.Exit(1)
 	case <-ctx.Done():
-		log.Info("shutdown signal received")
+		slog.Info("shutdown signal received")
 	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		log.Warn("graceful shutdown failed", "err", err)
+		slog.Warn("graceful shutdown failed", "err", err)
 	}
-	log.Info("nuxk-core stopped")
+	slog.Info("nuxk-core stopped")
 }
