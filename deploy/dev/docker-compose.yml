@@ -1,0 +1,21 @@
+# nuxk Horizon — dev stack (nuxk-core + nuxk-web + S51usque mock in one box).
+#
+#   docker compose -f deploy/dev/docker-compose.yml up --build
+#   http://localhost:4141        dashboard
+#   http://localhost:4141/api/v1/status
+#
+# Toggle the mock tunnel state from the host:
+#   docker compose -f deploy/dev/docker-compose.yml exec nuxk sh -c 'echo down > /opt/mock/mock.state'
+
+services:
+  nuxk:
+    build:
+      context: ../..
+      dockerfile: deploy/dev/Dockerfile
+      args:
+        VERSION: dev
+        VITE_API_TOKEN: dev-nuxk-token
+    image: nuxk-horizon-dev
+    ports:
+      - "4141:4141"
+    restart: unless-stopped
