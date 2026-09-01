@@ -132,12 +132,23 @@ awk 'FNR==1 && NR!=1 {next} {print}' \
 
 ---
 
-## 5. Полезные ссылки
+## 5. Зеркала референсов на этой Гитее
+
+Если github недоступен — всё нужное уже зеркалировано (приватные, `admin/*`):
+
+| Гитея | Оригинал | Зачем |
+|---|---|---|
+| `admin/nfqws2-keenetic` | github.com/nfqws/nfqws2-keenetic | движок десинка, модель split-пакетов |
+| `admin/nfqws-keenetic` | github.com/nfqws/nfqws-keenetic | v1, для истории |
+| `admin/nfqws-keenetic-web` | github.com/nfqws/nfqws-keenetic-web | стек веб-UI (lighttpd+PHP+React), с которого копируем |
+| `admin/HydraRoute` | github.com/Ground-Zerro/HydraRoute | плоскость решений для Ф.1 |
+| `admin/web4static` | github.com/spatiumstas/web4static | мульти-движковый веб-UI (прецедент) |
+
+Зеркала — снимок на момент старта; обновить: `git remote add gh <github-url> && git fetch gh && git push origin 'refs/remotes/gh/*:refs/heads/*'`.
+
+## 6. Полезные ссылки
 
 - upstream: <https://github.com/side-effect-tm/usque-keenetic>
 - usque: <https://github.com/Diniboy1123/usque>
-- nfqws2: <https://github.com/nfqws/nfqws2-keenetic> · web: <https://github.com/nfqws/nfqws-keenetic-web>
-- HydraRoute: <https://github.com/Ground-Zerro/HydraRoute>
-- web4static: <https://github.com/spatiumstas/web4static>
 - пресеты доменов: <https://github.com/itdoginfo/allow-domains>
 - xkeen: <https://github.com/Corvus-Malus/XKeen>
