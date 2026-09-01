@@ -41,9 +41,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      # - run: npm ci
-      # - run: npm run build           # full
-      # - run: npm run build:lite      # lite  → dist-lite/
-      - run: echo "TODO — enable once nuxk-web is scaffolded"
+      - run: npm install --no-audit --no-fund
+      - run: npm run check
+      - run: npm run build        # full  -> dist/
+      - run: npm run build:lite   # lite  -> dist-lite/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nuxk-web
+          path: |
+            nuxk-web/dist/**
+            nuxk-web/dist-lite/**
 
   # packages job — assembles opkg + docker on tag; wired after MVP-1
