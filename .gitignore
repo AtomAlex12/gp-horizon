@@ -18,7 +18,10 @@ node_modules/
 
 # vendored engine binaries (pulled at build time)
 /engines/*/vendor-bin/
-/nuxk-core/testdata/router-mock/opt/
+
+# dev / mock runtime
+/nuxk-core/testdata/state/
+/nuxk-core/testdata/mock.state
 
 # editor / os
 .DS_Store
