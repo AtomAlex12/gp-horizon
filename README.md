@@ -21,7 +21,7 @@
 | Каталог | Что | Подход |
 |---|---|---|
 | `nuxk-core/` | контроллер (Go, 1 бинарь/арх) | своё |
-| `nuxk-web/` | UI (Svelte) — сборки `full` \| `lite` | своё |
+| `nuxk-web/` | UI (Svelte 5 + Vite) — сборки `full` \| `lite` | своё |
 | `nuxk-plane/` | плоскость решений | форк HydraRoute, адаптация |
 | `engines/nuxk-nfqws2/` | обёртка nfqws2 | форк nfqws2-keenetic |
 | `engines/nuxk-usque/` | обёртка usque | наш форк (`feature/web-ui`) |
@@ -31,28 +31,30 @@
 **Ядра движков** (`nfqws2`, `usque`, `xray-core`) — вендорим из upstream-релизов,
 пинним версию. Не форкаем: гонка с ТСПУ, отставать нельзя.
 
-## Сборка
+## Быстрый старт (без роутера)
 
 ```sh
-# контроллер под роутер
-cd nuxk-core && make cross          # → dist/nuxk-core-{mips,mipsel,aarch64}
+# контроллер + мок-движок usque
+cd nuxk-core
+chmod +x testdata/S51usque-mock
+go test ./...
+go run . -config testdata/nuxk.conf -debug        # :4141
 
-# веб
-cd nuxk-web && npm i
-npm run build                        # full  → dist/
-npm run build -- --mode lite         # lite  → dist-lite/  (~30–40 КБ)
-
-# пакеты
-cd packaging && make opkg docker
+# веб (в другом терминале)
+cd nuxk-web
+npm install
+npm run dev                                        # :5173, /api проксируется на :4141
 ```
 
-CI (`.gitea/workflows/ci.yml`) собирает кросс-компиляцию и пакеты по тегу.
+Открыть `http://localhost:5173` — карточка движка usque, кнопки start/stop/restart.
+`echo down > nuxk-core/testdata/mock.state` — переключить состояние туннеля.
 
 ## Статус
 
 - **Ф.0** — `engines/nuxk-usque` готов (`info`/`probe`/`reregister`, логи, hooks).
-- **MVP-1** — `nuxk-core` + адаптер usque + full-`nuxk-web` в Docker. ← сейчас
-- **MVP-2** — + адаптер nfqws2 + `nuxk-plane` + пресеты + укрепление транспорта.
+- **MVP-1 ✅** — `nuxk-core` (демон + `/api/v1` + адаптер usque + reconcile-loop),
+  `nuxk-web` (Svelte-дашборд). Не собрано на этой машине — `go vet/test/build` первым делом.
+- **MVP-2** — + адаптер nfqws2 + `nuxk-plane` + пресеты + укрепление транспорта. ← дальше
 - Ф.3 VLESS · Ф.4 автоподбор · Ф.5 lite-веб.
 
 Полная презентация — артефакт «nuxk Horizon».
