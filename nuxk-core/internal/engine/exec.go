@@ -35,6 +35,18 @@ func (e Exec) Action(ctx context.Context, action string) error {
 	return err
 }
 
+// ActionWithInput runs a subcommand, feeding data on stdin — for actions that
+// take a payload (e.g. nfqws2's apply-desync/apply-endpoints, which read a
+// newline-delimited list from stdin rather than an argv flag).
+func (e Exec) ActionWithInput(ctx context.Context, action, input string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, e.Script, action)
+	cmd.Stdin = strings.NewReader(input)
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
 // KV runs a subcommand expected to print flat "key value" lines.
 func (e Exec) KV(ctx context.Context, sub string) (map[string]string, []string, error) {
 	out, err := e.run(ctx, sub)
