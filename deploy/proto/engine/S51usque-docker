@@ -1,0 +1,353 @@
+#!/bin/sh
+# S51usque-docker — nuxk Horizon prototype (deploy/proto), NOT shipped to the
+# router. Derived from usque-keenetic's scripts/init.d/{entware-head,_shared,
+# entware-tail} (branch feature/web-ui) + scripts/usque.
+#
+# The one real delta from upstream: every Keenetic-only call from
+# scripts/network (ndmc interface create/address/mtu/up/down) is removed.
+# Those existed because usque was run with --no-iproute2, delegating tun
+# setup to Keenetic's own interface manager. Here we drop --no-iproute2 (see
+# fn_daemon_args) so `usque nativetun` creates and configures its own tun
+# device via plain iproute2 — its normal, non-Keenetic mode, which is exactly
+# what a Docker container needs.
+#
+# Speaks the same flat "key value" info/probe contract as the real S51usque —
+# nuxk-core/internal/engine/usque/usque.go can't tell the difference.
+
+PATH=/opt/sbin:/opt/bin:/opt/usr/sbin:/opt/usr/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+NAME="USQUE"
+USQUE_BIN="/opt/usr/bin/usque"
+PIDFILE="/opt/var/run/usque.pid"
+CONFIG_FILE="/opt/etc/usque/usque.conf"
+SESSION_FILE="/opt/etc/usque/session.conf"
+LOG_FILE="/opt/var/log/usque.log"
+LOG_MAX_BYTES=524288
+STATE_FILE="/opt/var/run/usque.state"
+RUN_WRAPPER="/opt/var/run/usque.run.sh"
+HOOK_DIR="/opt/etc/usque/hooks"
+HOOK_CONNECT="$HOOK_DIR/on-connect.sh"
+HOOK_DISCONNECT="$HOOK_DIR/on-disconnect.sh"
+
+. "$CONFIG_FILE"
+
+fn_iface_netname() { echo "$IFACE" | tr '[:upper:]' '[:lower:]'; }
+
+fn_is_running() {
+    pid_running=$(pgrep -nf "$USQUE_BIN" 2>/dev/null)
+    [ -n "$pid_running" ] || return 1
+    [ -f "$PIDFILE" ] || return 1
+    pid_saved=$(cat "$PIDFILE" 2>/dev/null)
+    [ "$pid_running" -eq "$pid_saved" ] || return 1
+    kill -0 "$pid_saved" 2>/dev/null || return 1
+    return 0
+}
+
+fn_status() {
+    if fn_is_running; then
+        echo "Service $NAME is running (PID $(cat "$PIDFILE"))"
+    else
+        echo "Service $NAME is stopped"
+    fi
+}
+
+fn_uptime_s() {
+    [ -f "$PIDFILE" ] || { echo 0; return; }
+    started=$(stat -c %Y "$PIDFILE" 2>/dev/null) || started=0
+    now=$(date +%s 2>/dev/null) || now=0
+    if [ "$started" -gt 0 ] && [ "$now" -ge "$started" ]; then
+        echo $((now - started))
+    else
+        echo 0
+    fi
+}
+
+fn_rotate_log() {
+    [ -f "$LOG_FILE" ] || return 0
+    sz=$(wc -c <"$LOG_FILE" 2>/dev/null) || sz=0
+    [ "${sz:-0}" -gt "$LOG_MAX_BYTES" ] || return 0
+    tail -c $((LOG_MAX_BYTES / 2)) "$LOG_FILE" >"$LOG_FILE.tmp" 2>/dev/null && mv "$LOG_FILE.tmp" "$LOG_FILE"
+    rm -f "$LOG_FILE.tmp"
+}
+
+fn_supports_hooks() {
+    "$USQUE_BIN" nativetun --help 2>&1 | grep -q -- '--on-connect'
+}
+
+fn_hooks_active() {
+    fn_supports_hooks && [ -x "$HOOK_CONNECT" ] && [ -x "$HOOK_DISCONNECT" ]
+}
+
+fn_ensure_hooks() {
+    mkdir -p "$HOOK_DIR" "$(dirname "$RUN_WRAPPER")" "$(dirname "$LOG_FILE")"
+    cat >"$HOOK_CONNECT" <<EOF
+#!/bin/sh
+exec /opt/etc/init.d/S51usque-docker _event connected on-connect
+EOF
+    cat >"$HOOK_DISCONNECT" <<EOF
+#!/bin/sh
+exec /opt/etc/init.d/S51usque-docker _event disconnected on-disconnect
+EOF
+    chmod +x "$HOOK_CONNECT" "$HOOK_DISCONNECT"
+}
+
+fn_write_run_wrapper() {
+    args="$1"
+    cat >"$RUN_WRAPPER" <<EOF
+#!/bin/sh
+exec "$USQUE_BIN" $args >>"$LOG_FILE" 2>&1
+EOF
+    chmod +x "$RUN_WRAPPER"
+}
+
+# $1 = state (connected|disconnected|unknown|stopped)  $2 = event label
+fn_write_state() {
+    now=$(date +%s 2>/dev/null) || now=0
+    prev=""
+    [ -f "$STATE_FILE" ] && prev=$(sed -n 's/^STATE=//p' "$STATE_FILE" 2>/dev/null)
+    since="$now"
+    if [ "$prev" = "$1" ] && [ -f "$STATE_FILE" ]; then
+        since=$(sed -n 's/^SINCE=//p' "$STATE_FILE" 2>/dev/null)
+        [ -n "$since" ] || since="$now"
+    fi
+    mkdir -p "$(dirname "$STATE_FILE")"
+    {
+        echo "STATE=$1"
+        echo "SINCE=$since"
+        echo "EVENT=${2:-}"
+        echo "UPDATED=$now"
+    } >"$STATE_FILE"
+}
+
+fn_iface_stat() {
+    netif=$(fn_iface_netname)
+    f="/sys/class/net/$netif/statistics/$1"
+    [ -f "$f" ] && cat "$f" 2>/dev/null || echo 0
+}
+
+fn_iface_operstate() {
+    netif=$(fn_iface_netname)
+    cat "/sys/class/net/$netif/operstate" 2>/dev/null || echo unknown
+}
+
+fn_iface_ip_live() {
+    netif=$(fn_iface_netname)
+    ip -o -4 addr show dev "$netif" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1
+}
+
+fn_routes_list() {
+    netif=$(fn_iface_netname)
+    ip route show dev "$netif" 2>/dev/null | awk '{print $1}' | grep -vE '^(default|unreachable)$' | sort -u
+}
+
+fn_detect_endpoint() {
+    pid=$(cat "$PIDFILE" 2>/dev/null)
+    [ -n "$pid" ] || { fn_endpoint_from_config; return; }
+    ep=$(ss -tunp 2>/dev/null | grep -w "pid=$pid" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+:[0-9]+' | grep -vE '^(0\.0\.0\.0|127\.|172\.16\.1\.)' | tail -1)
+    ep=$(echo "$ep" | cut -d: -f1)
+    [ -n "$ep" ] && echo "$ep" || fn_endpoint_from_config
+}
+
+fn_endpoint_from_config() {
+    [ "$HTTP2_ENABLE" = "1" ] && echo "162.159.198.2" || echo ""
+}
+
+# ---------------------------------------------------------------------------
+# machine-readable state: flat "key value" lines (parsed by engine/exec.go)
+# ---------------------------------------------------------------------------
+fn_info() {
+    running=0; pid=""; uptime=0
+    if fn_is_running; then
+        running=1
+        pid=$(cat "$PIDFILE" 2>/dev/null)
+        uptime=$(fn_uptime_s)
+    fi
+
+    tstate="unknown"; tsince=0; tevent=""
+    if [ -f "$STATE_FILE" ]; then
+        tstate=$(sed -n 's/^STATE=//p' "$STATE_FILE")
+        tsince=$(sed -n 's/^SINCE=//p' "$STATE_FILE")
+        tevent=$(sed -n 's/^EVENT=//p' "$STATE_FILE")
+    fi
+    [ "$running" = "1" ] || tstate="stopped"
+
+    echo "name $NAME"
+    echo "version.usque $("$USQUE_BIN" version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+    echo "service.running $running"
+    echo "service.pid ${pid:-}"
+    echo "service.uptime_s ${uptime:-0}"
+    echo "tunnel.state ${tstate:-unknown}"
+    echo "tunnel.since ${tsince:-0}"
+    echo "tunnel.event ${tevent:-}"
+    echo "tunnel.endpoint $(fn_detect_endpoint)"
+
+    echo "iface.name $(fn_iface_netname)"
+    echo "iface.ip $(fn_iface_ip_live)"
+    echo "iface.link $(fn_iface_operstate)"
+
+    echo "traffic.rx_bytes $(fn_iface_stat rx_bytes)"
+    echo "traffic.tx_bytes $(fn_iface_stat tx_bytes)"
+    echo "traffic.rx_dropped $(fn_iface_stat rx_dropped)"
+    echo "traffic.tx_dropped $(fn_iface_stat tx_dropped)"
+
+    echo "config.sni ${SNI:-}"
+    echo "config.http2 ${HTTP2_ENABLE:-0}"
+
+    routes=$(fn_routes_list)
+    n=$(echo "$routes" | grep -c . 2>/dev/null || echo 0)
+    echo "routes.count $n"
+    echo "$routes" | grep . | head -300 | while read -r r; do
+        echo "route $r"
+    done
+}
+
+# ---------------------------------------------------------------------------
+# active connectivity probe through the tunnel interface
+# ---------------------------------------------------------------------------
+fn_probe() {
+    netif=$(fn_iface_netname)
+
+    if ! command -v curl >/dev/null 2>&1; then
+        echo "ok 0"
+        echo "reason no-curl"
+        echo "ts $(date +%s 2>/dev/null || echo 0)"
+        return
+    fi
+
+    trace=$(curl -s --max-time 8 --interface "$netif" "https://cloudflare.com/cdn-cgi/trace" 2>/dev/null)
+
+    if [ -n "$trace" ]; then
+        echo "ok 1"
+        echo "egress_ip $(echo "$trace" | sed -n 's/^ip=//p')"
+        echo "warp $(echo "$trace" | sed -n 's/^warp=//p')"
+        echo "colo $(echo "$trace" | sed -n 's/^colo=//p')"
+        echo "loc $(echo "$trace" | sed -n 's/^loc=//p')"
+        echo "sni $(echo "$trace" | sed -n 's/^sni=//p')"
+    else
+        echo "ok 0"
+        echo "reason no-response"
+    fi
+
+    rttc=$(ping -c 1 -W 3 -I "$netif" 1.1.1.1 2>/dev/null | sed -n 's/.*time=\([0-9.]*\).*/\1/p' | head -1)
+    [ -n "$rttc" ] && echo "rtt_ms $rttc"
+
+    echo "ts $(date +%s 2>/dev/null || echo 0)"
+}
+
+fn_daemon_args() {
+    iface=$(fn_iface_netname)
+    args="nativetun --config \"$SESSION_FILE\" --interface-name $iface"
+
+    [ -n "$SNI" ] && args="$args -s $SNI"
+    [ "$HTTP2_ENABLE" = "1" ] && args="$args --http2"
+    if fn_hooks_active; then
+        args="$args --on-connect \"$HOOK_CONNECT\" --on-disconnect \"$HOOK_DISCONNECT\""
+    fi
+    echo "$args"
+}
+
+fn_has_session() { [ -f "$SESSION_FILE" ]; }
+
+fn_create_session() {
+    echo "Register a new client and enroll a device key"
+    "$USQUE_BIN" register --accept-tos --config "$SESSION_FILE"
+}
+
+fn_remove_session() {
+    echo "Remove client data and device key"
+    rm -f "$SESSION_FILE"
+}
+
+fn_start() {
+    if fn_is_running; then
+        echo "Service $NAME is already running" >&2
+        return 1
+    fi
+    if [ -z "$IFACE" ]; then
+        echo "IFACE not specified in config file" >&2
+        return 1
+    fi
+    if ip link show "$(fn_iface_netname)" >/dev/null 2>&1; then
+        echo "Interface $IFACE is already in use." >&2
+        return 1
+    fi
+    fn_has_session || {
+        echo "No session at $SESSION_FILE — run '$0 register' first (see the prototype's checkpoint 2)." >&2
+        return 1
+    }
+
+    fn_rotate_log
+    fn_ensure_hooks
+    fn_write_run_wrapper "$(fn_daemon_args)"
+
+    echo "Starting $NAME service..."
+    start-stop-daemon -S -b -m -p "$PIDFILE" -x "$RUN_WRAPPER" || {
+        echo "Failed to start $NAME service" >&2
+        rm -f "$PIDFILE"
+        return 1
+    }
+
+    if fn_hooks_active; then
+        fn_write_state disconnected start
+    else
+        fn_write_state unknown start
+    fi
+    echo "Started $NAME service"
+}
+
+fn_stop_internal() {
+    echo "Stopping $NAME service..."
+    start-stop-daemon -K -p "$PIDFILE" && rm -f "$PIDFILE"
+    rm -f "$RUN_WRAPPER"
+    # usque's iproute2-native mode should tear down its own tun device on
+    # exit; this is a defensive fallback in case it doesn't (deploy/proto
+    # plan §8 — not yet verified either way).
+    ip link delete "$(fn_iface_netname)" 2>/dev/null || true
+    fn_write_state stopped stop
+    echo "Stopped $NAME service"
+}
+
+fn_stop() {
+    if ! fn_is_running; then
+        echo "Service $NAME is not running" >&2
+        return 1
+    fi
+    fn_stop_internal
+}
+
+fn_reregister() {
+    echo "Re-registering $NAME device key..."
+    was_running=0
+    fn_is_running && was_running=1
+    [ "$was_running" = "1" ] && fn_stop_internal
+    fn_remove_session
+    rm -f "$STATE_FILE"
+    fn_create_session || {
+        echo "Re-registration failed" >&2
+        return 1
+    }
+    [ "$was_running" = "1" ] && fn_start
+    echo "Re-registration done"
+}
+
+case "$1" in
+start) fn_start ;;
+stop) fn_stop ;;
+status) fn_status ;;
+restart)
+    fn_stop
+    fn_start
+    ;;
+register) fn_create_session ;;
+reregister) fn_reregister ;;
+info) fn_info ;;
+probe) fn_probe ;;
+_event)
+    # called by usque's --on-connect / --on-disconnect hooks
+    fn_write_state "${2:-unknown}" "${3:-}"
+    fn_rotate_log
+    ;;
+*)
+    echo "Usage: $0 {start|stop|restart|status|register|reregister|info|probe}"
+    ;;
+esac
