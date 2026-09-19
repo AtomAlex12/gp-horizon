@@ -23,6 +23,7 @@ import (
 	"nuxk.dev/horizon/core/internal/config"
 	"nuxk.dev/horizon/core/internal/core"
 	"nuxk.dev/horizon/core/internal/engine"
+	"nuxk.dev/horizon/core/internal/engine/nfqws2"
 	"nuxk.dev/horizon/core/internal/engine/usque"
 	"nuxk.dev/horizon/core/internal/state"
 )
@@ -67,8 +68,8 @@ func main() {
 	//   MVP-1: usque   MVP-2: + nfqws2   Ф.3: + xray
 	reg := engine.NewRegistry()
 	reg.Add(usque.New(cfg.Engines.Usque))
-	// reg.Add(nfqws2.New(cfg.Engines.Nfqws2))
-	// reg.Add(xray.New(cfg.Engines.Xray))
+	reg.Add(nfqws2.New(cfg.Engines.Nfqws2)) // MVP-2
+	// reg.Add(xray.New(cfg.Engines.Xray))    // Ф.3
 
 	hub := core.NewHub(version)
 
