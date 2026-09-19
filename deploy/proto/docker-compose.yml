@@ -1,0 +1,39 @@
+# nuxk Horizon — REAL-engine prototype stack (deploy/proto). Isolated own
+# bridge network, no network_mode: host — must not touch the Pi's other
+# running containers (warp, dutyviewer, hawser) or its real routing state.
+#
+#   docker compose -f deploy/proto/docker-compose.yml build
+#   docker compose -f deploy/proto/docker-compose.yml run --rm \
+#     --entrypoint /opt/etc/init.d/S51usque-docker nuxk register   # checkpoint 2
+#   docker compose -f deploy/proto/docker-compose.yml up -d
+#   http://<pi-ip>:4242        dashboard
+#   http://<pi-ip>:4242/api/v1/status
+
+services:
+  nuxk:
+    build:
+      context: ../..
+      dockerfile: deploy/proto/Dockerfile
+      args:
+        VERSION: proto
+        VITE_API_TOKEN: proto-nuxk-token
+        USQUE_VERSION: "4.2.0"
+    image: nuxk-horizon-proto
+    init: true # Docker's tini as real PID1 -> clean SIGTERM to nuxk-core
+    cap_add: [NET_ADMIN, NET_RAW] # no privileged: true, no network_mode: host
+    networks: [nuxk-proto]
+    ports: ["4242:4141"] # distinct from deploy/dev's 4141
+    volumes:
+      - usque-session:/opt/etc/usque
+    environment:
+      NUXK_ENABLE_USQUE: "1"
+      NUXK_ENABLE_NFQWS2: "0" # Phase A first — flip on for Phase C
+      NUXK_ENABLE_DNS_GLUE: "0" # Phase A first — flip on for Phase B
+    restart: unless-stopped
+
+networks:
+  nuxk-proto:
+    driver: bridge
+
+volumes:
+  usque-session:
