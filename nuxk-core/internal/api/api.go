@@ -5,6 +5,8 @@ package api
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -109,8 +111,18 @@ func (d Deps) handleEngineAction(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, p)
 		return
+	case "apply":
+		var routing engine.Routing
+		if r.Body != nil {
+			defer r.Body.Close()
+			if derr := json.NewDecoder(r.Body).Decode(&routing); derr != nil && derr != io.EOF {
+				writeErr(w, http.StatusBadRequest, "bad_body", "invalid routing JSON: "+derr.Error())
+				return
+			}
+		}
+		err = e.ApplyRouting(ctx, routing)
 	default:
-		writeErr(w, http.StatusBadRequest, "bad_action", "action must be start|stop|restart|probe")
+		writeErr(w, http.StatusBadRequest, "bad_action", "action must be start|stop|restart|probe|apply")
 		return
 	}
 	if err != nil {
