@@ -43,6 +43,14 @@ export interface Status {
   plane: Record<string, unknown>;
 }
 
+// Mirrors engine.Routing (nuxk-core/internal/engine/engine.go).
+export interface Routing {
+  domains?: string[];
+  cidrs?: string[];
+  endpoints?: string[];
+  strategy?: string;
+}
+
 export interface ApiError {
   error: { code: string; message: string };
 }
@@ -85,8 +93,10 @@ export const api = {
   engineAction: (k: EngineKind, action: 'start' | 'stop' | 'restart') =>
     req<{ status: string }>('POST', `/engines/${k}/${action}`),
   engineProbe: (k: EngineKind) => req<Probe>('POST', `/engines/${k}/probe`),
+  applyRouting: (k: EngineKind, routing: Routing) =>
+    req<{ status: string }>('POST', `/engines/${k}/apply`, routing),
 
-  // TODO: lists, decisions, discover, apply, presets, settings, events(SSE)
+  // TODO: lists, decisions, discover, presets, settings, events(SSE)
 };
 
 export { HttpError };
