@@ -21,6 +21,8 @@ services:
     image: nuxk-horizon-proto
     init: true # Docker's tini as real PID1 -> clean SIGTERM to nuxk-core
     cap_add: [NET_ADMIN, NET_RAW] # no privileged: true, no network_mode: host
+    devices:
+      - /dev/net/tun:/dev/net/tun # NET_ADMIN alone doesn't grant TUN access — usque needs this to create opkgtun0
     networks: [nuxk-proto]
     ports: ["4242:4141"] # distinct from deploy/dev's 4141
     volumes:
