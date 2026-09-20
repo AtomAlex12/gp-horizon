@@ -76,6 +76,15 @@ COPY deploy/proto/engine/usque.conf       /opt/etc/usque/usque.conf
 COPY deploy/proto/engine/nfqws2.conf      /opt/etc/nfqws2/nfqws2.conf
 COPY deploy/proto/engine/user.list        /opt/etc/nfqws2/lists/user.list
 COPY deploy/proto/engine/exclude.list     /opt/etc/nfqws2/lists/exclude.list
+# Blobs vendored from nfqws2-keenetic as base64 text (deploy/proto/plan §8 —
+# the Gitea file-write tool used to vendor them isn't binary-safe), decoded
+# back to real bytes here at build time.
+COPY deploy/proto/engine/blobs/quic_initial.bin.b64     /tmp/quic_initial.bin.b64
+COPY deploy/proto/engine/blobs/tls_clienthello.bin.b64  /tmp/tls_clienthello.bin.b64
+RUN mkdir -p /opt/etc/nfqws2/blobs \
+    && base64 -d /tmp/quic_initial.bin.b64    > /opt/etc/nfqws2/blobs/quic_initial.bin \
+    && base64 -d /tmp/tls_clienthello.bin.b64 > /opt/etc/nfqws2/blobs/tls_clienthello.bin \
+    && rm -f /tmp/quic_initial.bin.b64 /tmp/tls_clienthello.bin.b64
 COPY deploy/proto/routing-glue.sh         /opt/etc/nuxk/routing-glue.sh
 COPY deploy/proto/dnsmasq.conf            /etc/dnsmasq.d/nuxk-warp.conf
 COPY deploy/proto/nuxk.conf               /etc/nuxk/nuxk.conf
