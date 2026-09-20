@@ -13,7 +13,7 @@
 #    1). entrypoint.sh already hard-fails before this script runs at all if
 #    they're missing; this is defense-in-depth logging only.
 #  - create_running_config()'s ndmc_cli lookup is kept VERBATIM — with
-#    POLICY_NAME empty (see nfqws2.conf) it degrades to POLICY_MARK="" exactly
+#    POLICY_NAME empty (see nfqws2.conf) it degrades to PLICY_MARK="" exactly
 #    as designed upstream when ndmc is absent, no porting needed.
 #  - info / probe / apply-desync / apply-endpoints are NEW — nothing upstream
 #    provides a machine-readable state contract yet (engines/nuxk-nfqws2/
@@ -232,7 +232,7 @@ _firewall_start() {
     $CMD -w -t mangle -F $IPT_GROUP_POST
     $CMD -w -t mangle -C POSTROUTING -j $IPT_GROUP_POST 2>/dev/null || $CMD -w -t mangle -A POSTROUTING -j $IPT_GROUP_POST
 
-    if [ "$CMD" == "iptables" ]; then
+    if [ "$CMD" = "iptables" ]; then
         $CMD -w -t nat -N $IPT_GROUP_NAT 2>/dev/null
         $CMD -w -t nat -F $IPT_GROUP_NAT
         $CMD -w -t nat -C POSTROUTING -j $IPT_GROUP_NAT 2>/dev/null || $CMD -w -t nat -A POSTROUTING -j $IPT_GROUP_NAT
@@ -257,7 +257,7 @@ _firewall_start() {
         $CMD -w -t mangle -A $IPT_GROUP_POST -o $IFACE $CONN_CHECK -p tcp -m multiport --dports $TCP_PORTS --tcp-flags fin fin $JNFQ
         $CMD -w -t mangle -A $IPT_GROUP_POST -o $IFACE $CONN_CHECK -p tcp -m multiport --dports $TCP_PORTS --tcp-flags rst rst $JNFQ
 
-        if [ "$CMD" == "iptables" ]; then
+        if [ "$CMD" = "iptables" ]; then
             $CMD -w -t nat -A $IPT_GROUP_NAT -o $IFACE -m mark --mark $MARK_PROCESSED -p udp -j MASQUERADE
         fi
 
@@ -288,7 +288,7 @@ _firewall_stop() {
     while $CMD -w -t mangle -C PREROUTING -j $IPT_GROUP_PRE 2>/dev/null; do
         $CMD -w -t mangle -D PREROUTING -j $IPT_GROUP_PRE 2>/dev/null || break
     done
-    if [ "$CMD" == "iptables" ]; then
+    if [ "$CMD" = "iptables" ]; then
         while $CMD -w -t nat -C POSTROUTING -j $IPT_GROUP_NAT 2>/dev/null; do
             $CMD -w -t nat -D POSTROUTING -j $IPT_GROUP_NAT 2>/dev/null || break
         done
@@ -298,7 +298,7 @@ _firewall_stop() {
     $CMD -w -t mangle -X $IPT_GROUP_POST 2>/dev/null
     $CMD -w -t mangle -F $IPT_GROUP_PRE 2>/dev/null
     $CMD -w -t mangle -X $IPT_GROUP_PRE 2>/dev/null
-    if [ "$CMD" == "iptables" ]; then
+    if [ "$CMD" = "iptables" ]; then
         $CMD -w -t nat -F $IPT_GROUP_NAT 2>/dev/null
         $CMD -w -t nat -X $IPT_GROUP_NAT 2>/dev/null
     fi
