@@ -2,12 +2,14 @@
   --bg: #f4f2ee;
   --surface: #fbfaf7;
   --surface-2: #efece5;
+  --surface-3: #e6e2d8;
   --ink: #201f1b;
   --muted: #756f64;
   --line: #e2ddd2;
   --accent: #0f7a76;
   --ok: #1f8f5f;
   --warn: #d8443a;
+  --degraded: #b8860b;
   --idle: #a49a8c;
   --font-ui: "IBM Plex Sans", ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
   --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
@@ -17,12 +19,14 @@
     --bg: #15161a;
     --surface: #1c1e22;
     --surface-2: #24262b;
+    --surface-3: #2b2e34;
     --ink: #e9e7e1;
     --muted: #928c81;
     --line: #2e3036;
     --accent: #3fb2ac;
     --ok: #46b985;
     --warn: #f0645a;
+    --degraded: #e0a530;
     --idle: #7e7669;
   }
 }
@@ -47,4 +51,15 @@ button {
 button.ghost { background: transparent; color: var(--ink); }
 button.warn { background: var(--warn); }
 button:disabled { opacity: 0.45; cursor: default; }
+textarea, input[type=text] {
+  font: 400 13px var(--font-mono);
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  color: var(--ink);
+  width: 100%;
+  resize: vertical;
+}
+textarea:focus, input[type=text]:focus { outline: 1px solid var(--accent); }
 code, .mono { font-family: var(--font-mono); font-size: 0.9em; }
