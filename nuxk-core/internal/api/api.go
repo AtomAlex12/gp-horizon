@@ -40,6 +40,7 @@ func NewRouter(d Deps) http.Handler {
 	v1.HandleFunc("GET /api/v1/engines", d.handleEngines)
 	v1.HandleFunc("GET /api/v1/engines/{kind}", d.handleEngine)
 	v1.HandleFunc("POST /api/v1/engines/{kind}/{action}", d.handleEngineAction)
+	v1.HandleFunc("PUT /api/v1/engines/{kind}/config", d.handleEngineConfig)
 	// TODO: /lists/{kind}, /decisions, /discover, /apply, /presets, /settings, /events(SSE)
 	mux.Handle("/api/v1/", d.auth(v1))
 
@@ -130,6 +131,39 @@ func (d Deps) handleEngineAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]string{"status": "ok"})
+}
+
+// handleEngineConfig sets an engine's runtime target (e.g. xray's VLESS URI / subscription).
+// Only engines implementing engine.Configurable accept this; others get 404, same as an
+// unknown kind — a caller can't tell "no such engine" from "exists, not configurable" by
+// design, since neither should be probed for from outside.
+func (d Deps) handleEngineConfig(w http.ResponseWriter, r *http.Request) {
+	k := engine.Kind(r.PathValue("kind"))
+	e, ok := d.Engines.Get(k)
+	if !ok {
+		writeErr(w, http.StatusNotFound, "engine_not_found", "no such engine: "+string(k))
+		return
+	}
+	c, ok := e.(engine.Configurable)
+	if !ok {
+		writeErr(w, http.StatusNotFound, "not_configurable", "engine does not accept runtime config: "+string(k))
+		return
+	}
+	var cfg map[string]string
+	if r.Body != nil {
+		defer r.Body.Close()
+		if derr := json.NewDecoder(r.Body).Decode(&cfg); derr != nil && derr != io.EOF {
+			writeErr(w, http.StatusBadRequest, "bad_body", "invalid config JSON: "+derr.Error())
+			return
+		}
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	if err := c.SetConfig(ctx, cfg); err != nil {
+		writeErr(w, http.StatusBadGateway, "engine_error", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 // auth enforces the bearer token for non-loopback clients.
