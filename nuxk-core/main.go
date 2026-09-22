@@ -25,6 +25,7 @@ import (
 	"nuxk.dev/horizon/core/internal/engine"
 	"nuxk.dev/horizon/core/internal/engine/nfqws2"
 	"nuxk.dev/horizon/core/internal/engine/usque"
+	"nuxk.dev/horizon/core/internal/engine/xray"
 	"nuxk.dev/horizon/core/internal/state"
 )
 
@@ -65,11 +66,11 @@ func main() {
 	}
 
 	// Engine registry — adapters are wired here as they land.
-	//   MVP-1: usque   MVP-2: + nfqws2   Ф.3: + xray
+	//   MVP-1: usque   MVP-2: + nfqws2   MVP-3: + xray
 	reg := engine.NewRegistry()
 	reg.Add(usque.New(cfg.Engines.Usque))
 	reg.Add(nfqws2.New(cfg.Engines.Nfqws2)) // MVP-2
-	// reg.Add(xray.New(cfg.Engines.Xray))    // Ф.3
+	reg.Add(xray.New(cfg.Engines.Xray))     // MVP-3
 
 	hub := core.NewHub(version)
 
