@@ -1,0 +1,70 @@
+#!/bin/sh
+# Fake S52xray for local end-to-end testing of nuxk-core without a router.
+#   nuxk-core -config testdata/nuxk.conf -debug
+# State toggles via testdata/mock.state (contents: "up" or "down"), same convention as
+# S51usque-mock. set-config writes testdata/mock.xray-config from stdin (VLESS_URI=... or
+# SUB_URL=...) so TestApplyRouting-style e2e checks can assert it actually took effect.
+
+DIR="$(dirname "$0")"
+STATE_FILE="$DIR/mock.state"
+CONFIG_FILE="$DIR/mock.xray-config"
+[ -f "$STATE_FILE" ] || echo up >"$STATE_FILE"
+STATE=$(cat "$STATE_FILE")
+
+case "$1" in
+start)     echo up   >"$STATE_FILE"; echo "Started XRAY service" ;;
+stop)      echo down >"$STATE_FILE"; echo "Stopped XRAY service" ;;
+restart)   echo up   >"$STATE_FILE"; echo "Restarted XRAY service" ;;
+set-config)
+    cat >"$CONFIG_FILE"
+    echo "Config applied, restarting..."
+    echo up >"$STATE_FILE"
+    ;;
+info)
+    if [ "$STATE" = "up" ]; then
+        RUN=1; TUN=connected; PID=$$
+    else
+        RUN=0; TUN=stopped; PID=
+    fi
+    SERVER=""; SNI=""; FP=""
+    if [ -f "$CONFIG_FILE" ]; then
+        SERVER="203.0.113.9:443"
+        SNI="www.microsoft.com"
+        FP="chrome"
+    fi
+    cat <<EOF
+name XRAY
+version.xray 25.9.11
+version.pkg 0.1.0
+service.running $RUN
+service.pid $PID
+service.uptime_s 300
+tunnel.state $TUN
+iface.name tun-xray
+config.server $SERVER
+config.sni $SNI
+config.fingerprint $FP
+config.flow xtls-rprx-vision
+traffic.rx_bytes $((RANDOM * 5000))
+traffic.tx_bytes $((RANDOM * 800))
+routes.count 1
+route 0.0.0.0/0
+EOF
+    ;;
+probe)
+    if [ "$STATE" = "up" ]; then
+        cat <<EOF
+ok 1
+egress_ip 203.0.113.9
+server 203.0.113.9
+rtt_ms 24.7
+ts $(date +%s)
+EOF
+    else
+        echo "ok 0"
+        echo "reason no-response"
+        echo "ts $(date +%s)"
+    fi
+    ;;
+*) echo "usage: $0 {start|stop|restart|set-config|info|probe}" ;;
+esac
