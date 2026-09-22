@@ -81,14 +81,27 @@ paths:
         "404": { $ref: "#/components/responses/Error" }
         "502": { $ref: "#/components/responses/Error" }
 
-  # ---- not yet implemented — contract sketch ----
   /api/v1/engines/{kind}/config:
     parameters: [{ $ref: "#/components/parameters/kind" }]
     put:
       tags: [engines]
-      summary: "TODO — set engine config (vless:// or sub URL, SNI, strategy ref)"
-      responses: { "200": { description: applied } }
+      summary: >
+        Set an engine's runtime target. Only engines implementing internal Configurable accept
+        this today (xray: vless_uri or sub_url); others get 404 identically to an unknown kind.
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EngineConfig" }
+            examples:
+              vlessUri: { value: { vless_uri: "vless://uuid@host:443?type=tcp&security=reality&fp=chrome" } }
+              subUrl: { value: { sub_url: "https://panel.example/sub/xxxx" } }
+      responses:
+        "200": { description: applied }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "502": { $ref: "#/components/responses/Error" }
 
+  # ---- not yet implemented — contract sketch ----
   /api/v1/lists/{name}:
     parameters:
       - name: name
@@ -191,6 +204,13 @@ components:
         endpoint: { type: string }
         routes: { type: integer, description: prefixes currently targeted }
         detail: { type: object, additionalProperties: { type: string } }
+
+    EngineConfig:
+      type: object
+      description: >
+        Free-form key/value — shape is engine-specific (xray: vless_uri XOR sub_url). Unknown
+        keys are ignored; the engine's own init script validates.
+      additionalProperties: { type: string }
 
     Probe:
       type: object
