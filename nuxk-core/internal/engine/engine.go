@@ -86,3 +86,11 @@ type Routing struct {
 	Endpoints []string `json:"endpoints,omitempty"` // nfqws2 only — other tunnels' upstreams
 	Strategy  string   `json:"strategy,omitempty"`  // nfqws2 only — strategy snippet id
 }
+
+// Configurable is implemented by engines whose runtime target (server URI, subscription, ...)
+// is set at runtime rather than fixed at build time — xray today (nfqws2/usque aren't, yet).
+// Callers type-assert for it rather than it being part of Engine, so adapters that don't need
+// runtime config don't have to implement a no-op.
+type Configurable interface {
+	SetConfig(ctx context.Context, cfg map[string]string) error
+}
