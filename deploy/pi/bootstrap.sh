@@ -64,11 +64,29 @@ if [ ! -f deploy/pi/.env ]; then
     say "создан deploy/pi/.env (этап A: только WARP) — этапы B и C включаются там"
 fi
 
-# --- 4. build ---------------------------------------------------------------------------
+# --- 4. an older stand from deploy/proto (project "proto") holds :4242 --------------
+OLD=$(docker ps --filter "label=com.docker.compose.project=proto" --format '{{.Names}}' | head -n 1)
+if [ -n "$OLD" ]; then
+    say "Останавливаю старый стенд deploy/proto ($OLD) — его тома сохраняются"
+    docker ps -q --filter "label=com.docker.compose.project=proto" | xargs docker stop >/dev/null
+fi
+BUSY=$(docker ps --format '{{.Names}} {{.Ports}}' | grep -E ':(4242|4300)->' | grep -v '^nuxk-pi-' || true)
+[ -z "$BUSY" ] || die "порты 4242/4300 заняты другим контейнером: $BUSY"
+
+# --- 5. build ---------------------------------------------------------------------------
 say "Сборка образов (первый раз 5–10 минут)"
 docker compose -f "$COMPOSE" build
 
-# --- 5. WARP registration, once (reads Cloudflare's ToS — keep it interactive) ---
+# --- 6. WARP registration, once (reads Cloudflare's ToS — keep it interactive) ---
+# Carry over the registration of an older deploy/proto stand instead of
+# registering a second device.
+if docker volume inspect proto_usque-session >/dev/null 2>&1 &&
+    ! docker volume inspect nuxk-pi_usque-session >/dev/null 2>&1; then
+    say "Переношу регистрацию WARP из старого стенда (том proto_usque-session)"
+    docker volume create nuxk-pi_usque-session >/dev/null
+    docker run --rm -v proto_usque-session:/from:ro -v nuxk-pi_usque-session:/to \
+        --entrypoint sh nuxk-horizon-proto -c 'cp -a /from/. /to/'
+fi
 if ! docker compose -f "$COMPOSE" run --rm --entrypoint sh nuxk -c 'test -f /opt/etc/usque/session.conf' 2>/dev/null; then
     say "Регистрация устройства WARP (один раз)"
     if [ -t 0 ]; then
@@ -80,7 +98,7 @@ if ! docker compose -f "$COMPOSE" run --rm --entrypoint sh nuxk -c 'test -f /opt
     fi
 fi
 
-# --- 6. start ------------------------------------------------------------------------------
+# --- 7. start ------------------------------------------------------------------------------
 say "Запуск стека"
 docker compose -f "$COMPOSE" up -d
 sleep 3

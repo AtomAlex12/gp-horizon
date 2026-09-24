@@ -8,6 +8,9 @@
 #   docker compose -f deploy/pi/docker-compose.yml up -d --build
 #   docker compose -f deploy/pi/docker-compose.yml logs installer   # access code
 
+# fixed project name: volumes are nuxk-pi_usque-session etc. whatever the checkout dir
+name: nuxk-pi
+
 include:
   - ../proto/docker-compose.yml
 
