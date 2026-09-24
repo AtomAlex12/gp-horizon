@@ -30,8 +30,10 @@
     busy = true;
     try {
       await api.engineAction(engine.kind as EngineKind, action);
-      await refresh();
+    } catch {
+      // the controller records it as last_error — shown after the refresh
     } finally {
+      await refresh();
       busy = false;
     }
   }
@@ -70,6 +72,9 @@
       </dd>
     {/if}
   </dl>
+  {#if engine.last_error || engine.detail?.error}
+    <p class="err mono">{engine.last_error || engine.detail?.error}</p>
+  {/if}
 
   <div class="actions">
     <button onclick={(e) => act(e, 'start')} disabled={busy || engine.running}>Запуск</button>
@@ -82,6 +87,14 @@
 </div>
 
 <style>
+  .err {
+    color: var(--warn);
+    font-size: 11px;
+    margin: 0 0 10px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   .card {
     background: var(--surface);
     border: 1px solid var(--line);

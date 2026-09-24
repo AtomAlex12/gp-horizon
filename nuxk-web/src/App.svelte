@@ -35,6 +35,7 @@
     <span class="muted">Keenetic · обходная платформа</span>
   </div>
   <div class="right">
+    <span class="muted mono">web {__APP_VERSION__}</span>
     {#if status.data}<span class="muted mono">core {status.data.version}</span>{/if}
     {#if !__LITE__}<span class="badge">full</span>{/if}
   </div>
