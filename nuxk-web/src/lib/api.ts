@@ -96,6 +96,10 @@ export const api = {
   applyRouting: (k: EngineKind, routing: Routing) =>
     req<{ status: string }>('POST', `/engines/${k}/apply`, routing),
 
+  // Only engines implementing engine.Configurable (today: xray) accept this; others 404.
+  setConfig: (k: EngineKind, cfg: Record<string, string>) =>
+    req<{ status: string }>('PUT', `/engines/${k}/config`, cfg),
+
   // TODO: lists, decisions, discover, presets, settings, events(SSE)
 };
 
