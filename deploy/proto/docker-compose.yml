@@ -15,9 +15,10 @@ services:
       context: ../..
       dockerfile: deploy/proto/Dockerfile
       args:
-        VERSION: proto
+        COMMIT: ${NUXK_COMMIT:-unknown} # `make proto` fills it; version comes from /VERSION
         VITE_API_TOKEN: proto-nuxk-token
         USQUE_VERSION: "4.2.0"
+        ZAPRET2_VERSION: "1.0.5.2"
     image: nuxk-horizon-proto
     init: true # Docker's tini as real PID1 -> clean SIGTERM to nuxk-core
     cap_add: [NET_ADMIN, NET_RAW] # no privileged: true, no network_mode: host
@@ -27,6 +28,11 @@ services:
     ports: ["4242:4141"] # distinct from deploy/dev's 4141
     volumes:
       - usque-session:/opt/etc/usque
+      # nuxk-core desired state (run intent, routing, xray config) — survives
+      # `up --build`, and the controller re-applies it to fresh engines.
+      - nuxk-state:/var/lib/nuxk
+      # nfqws2 lists, incl. auto.list learned by MODE_AUTO.
+      - nfqws2-lists:/opt/etc/nfqws2/lists
     environment:
       NUXK_ENABLE_USQUE: "1"
       NUXK_ENABLE_NFQWS2: "0" # Phase A first — flip on for Phase C
@@ -39,3 +45,5 @@ networks:
 
 volumes:
   usque-session:
+  nuxk-state:
+  nfqws2-lists:

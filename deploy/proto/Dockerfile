@@ -29,8 +29,12 @@ WORKDIR /src
 COPY nuxk-core/go.mod ./
 RUN go mod download
 COPY nuxk-core/ ./
-ARG VERSION=proto
-RUN CGO_ENABLED=0 GOARCH=arm64 go build -ldflags "-s -w -X main.version=${VERSION}" -o /nuxk-core .
+COPY VERSION /VERSION
+# Version comes from the repo-root VERSION file (single source of truth);
+# COMMIT is passed by `make proto` (git isn't in the build context).
+ARG COMMIT=unknown
+RUN CGO_ENABLED=0 GOARCH=arm64 go build \
+    -ldflags "-s -w -X main.version=$(cat /VERSION)+proto -X main.commit=${COMMIT}" -o /nuxk-core .
 
 # --- stage: usque-fetch -------------------------------------------------------
 FROM debian:bookworm-slim AS usque-fetch
@@ -49,8 +53,15 @@ RUN url=$(curl -s "https://api.github.com/repos/Diniboy1123/usque/releases/tags/
 FROM debian:bookworm-slim AS nfqws2-fetch
 RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
     && rm -rf /var/lib/apt/lists/*
-RUN url=$(curl -s "https://api.github.com/repos/bol-van/zapret2/releases/latest" \
+# Pinned like usque above — "latest" made two builds a day apart behave
+# differently against the same DPI, so test results weren't comparable.
+# Bump deliberately, note it in CHANGELOG.md.
+# Escape hatch: --build-arg ZAPRET2_VERSION=latest (then record the version used).
+ARG ZAPRET2_VERSION=1.0.5.2
+RUN if [ "$ZAPRET2_VERSION" = latest ]; then rel=latest; else rel="tags/v${ZAPRET2_VERSION}"; fi \
+    && url=$(curl -s "https://api.github.com/repos/bol-van/zapret2/releases/${rel}" \
     | grep browser_download_url | grep 'embedded.tar.gz' | cut -d '"' -f4) \
+    && { test -n "$url" || { echo "zapret2 ${ZAPRET2_VERSION}: no *embedded.tar.gz asset" >&2; exit 1; }; } \
     && curl -sSL "$url" -o /tmp/zapret2.tar.gz \
     && mkdir -p /tmp/zapret2 /out/bin /out/lua \
     && tar -C /tmp/zapret2 -xzf /tmp/zapret2.tar.gz \
