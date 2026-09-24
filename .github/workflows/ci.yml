@@ -35,6 +35,21 @@ jobs:
           name: nuxk-core
           path: nuxk-core/dist/*
 
+  installer:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: nuxk-installer
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - run: test -z "$(gofmt -l .)"
+      - run: go vet ./...
+      - run: go test -race ./...   # incl. end-to-end over a real SSH server
+      - run: sh ../engines/nuxk-nfqws2/shim_test.sh
+
   web:
     runs-on: ubuntu-latest
     defaults:
