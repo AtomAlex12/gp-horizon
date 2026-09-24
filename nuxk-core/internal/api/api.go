@@ -5,7 +5,9 @@ package api
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -13,16 +15,16 @@ import (
 
 	"nuxk.dev/horizon/core/internal/core"
 	"nuxk.dev/horizon/core/internal/engine"
-	"nuxk.dev/horizon/core/internal/state"
 )
 
 type Deps struct {
 	Version string
-	State   *state.Store
+	Commit  string
 	Engines *engine.Registry
 	Hub     *core.Hub
-	WebRoot string // static nuxk-web build; "" = API only
-	Token   string // "" = allow localhost only
+	Ctl     *core.Controller // every state change goes through it — see core.Controller
+	WebRoot string           // static nuxk-web build; "" = API only
+	Token   string           // "" = allow localhost only
 }
 
 func NewRouter(d Deps) http.Handler {
@@ -54,7 +56,7 @@ func NewRouter(d Deps) http.Handler {
 }
 
 func (d Deps) handleVersion(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"version": d.Version, "api": "v1"})
+	writeJSON(w, http.StatusOK, map[string]string{"version": d.Version, "commit": d.Commit, "api": "v1"})
 }
 
 // handleStatus is served from the Hub — the reconcile loop keeps it fresh, so
@@ -97,13 +99,9 @@ func (d Deps) handleEngineAction(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	var err error
-	switch r.PathValue("action") {
-	case "start":
-		err = e.Start(ctx)
-	case "stop":
-		err = e.Stop(ctx)
-	case "restart":
-		err = e.Restart(ctx)
+	switch action := r.PathValue("action"); action {
+	case "start", "stop", "restart":
+		err = d.Ctl.Action(ctx, k, action)
 	case "probe":
 		p, perr := e.Probe(ctx)
 		if perr != nil {
@@ -121,7 +119,7 @@ func (d Deps) handleEngineAction(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		err = e.ApplyRouting(ctx, routing)
+		err = d.Ctl.Apply(ctx, k, routing)
 	default:
 		writeErr(w, http.StatusBadRequest, "bad_action", "action must be start|stop|restart|probe|apply")
 		return
@@ -136,19 +134,10 @@ func (d Deps) handleEngineAction(w http.ResponseWriter, r *http.Request) {
 // handleEngineConfig sets an engine's runtime target (e.g. xray's VLESS URI / subscription).
 // Only engines implementing engine.Configurable accept this; others get 404, same as an
 // unknown kind — a caller can't tell "no such engine" from "exists, not configurable" by
-// design, since neither should be probed for from outside.
+// design, since neither should be probed for from outside. The config is stored (0600) for
+// re-apply and never served back.
 func (d Deps) handleEngineConfig(w http.ResponseWriter, r *http.Request) {
 	k := engine.Kind(r.PathValue("kind"))
-	e, ok := d.Engines.Get(k)
-	if !ok {
-		writeErr(w, http.StatusNotFound, "engine_not_found", "no such engine: "+string(k))
-		return
-	}
-	c, ok := e.(engine.Configurable)
-	if !ok {
-		writeErr(w, http.StatusNotFound, "not_configurable", "engine does not accept runtime config: "+string(k))
-		return
-	}
 	var cfg map[string]string
 	if r.Body != nil {
 		defer r.Body.Close()
@@ -157,13 +146,22 @@ func (d Deps) handleEngineConfig(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
-	defer cancel()
-	if err := c.SetConfig(ctx, cfg); err != nil {
-		writeErr(w, http.StatusBadGateway, "engine_error", err.Error())
+	if len(cfg) == 0 {
+		writeErr(w, http.StatusBadRequest, "bad_body", "config must be a non-empty JSON object")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+	switch err := d.Ctl.SetConfig(ctx, k, cfg); {
+	case errors.Is(err, core.ErrEngineNotFound):
+		writeErr(w, http.StatusNotFound, "engine_not_found", "no such engine: "+string(k))
+	case errors.Is(err, core.ErrNotConfigurable):
+		writeErr(w, http.StatusNotFound, "not_configurable", "engine does not accept runtime config: "+string(k))
+	case err != nil:
+		writeErr(w, http.StatusBadGateway, "engine_error", err.Error())
+	default:
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	}
 }
 
 // auth enforces the bearer token for non-loopback clients.
@@ -174,7 +172,7 @@ func (d Deps) auth(next http.Handler) http.Handler {
 			return
 		}
 		got := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if d.Token != "" && got == d.Token {
+		if d.Token != "" && subtle.ConstantTimeCompare([]byte(got), []byte(d.Token)) == 1 {
 			next.ServeHTTP(w, r)
 			return
 		}

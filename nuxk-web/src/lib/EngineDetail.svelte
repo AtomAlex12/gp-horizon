@@ -53,30 +53,46 @@
     return `${x.toFixed(x < 10 && i > 0 ? 1 : 0)} ${units[i]}`;
   }
 
+  let probeErr = $state<string | null>(null);
+
   async function act(action: 'start' | 'stop' | 'restart') {
     busy = true;
     try {
       await api.engineAction(kind, action);
-      await refresh();
+    } catch {
+      // the controller records it as last_error — shown after the refresh
     } finally {
+      await refresh();
       busy = false;
     }
   }
 
   async function probe() {
     probing = true;
+    probeErr = null;
     try {
       await api.engineProbe(kind);
       await refresh();
+    } catch (e) {
+      probeErr = e instanceof Error ? e.message : String(e);
     } finally {
       probing = false;
     }
   }
 
-  const detailEntries = $derived(Object.entries(engine?.detail ?? {}).filter(([k]) => k !== 'items'));
+  const autoLabel = $derived(
+    engine?.want_run === true ? 'держать запущенным' : engine?.want_run === false ? 'держать остановленным' : 'не управляется',
+  );
+
+  const detailEntries = $derived(Object.entries(engine?.detail ?? {}).filter(([k]) => k !== 'items' && k !== 'error'));
 </script>
 
 <div class="panel">
+  {#if !engine}
+    <p class="muted">
+      Движок не подключён в контроллере: скрипт не задан в <span class="mono">nuxk.conf</span> или не установлен.
+    </p>
+  {:else}
   <div class="head">
     <span class="d {dot}"></span>
     <strong>{label}</strong>
@@ -95,6 +111,7 @@
       <dt>endpoint</dt><dd class="mono">{engine.endpoint}</dd>
     {/if}
     <dt>маршруты</dt><dd>{engine?.routes ?? 0}</dd>
+    <dt>автозапуск</dt><dd>{autoLabel}</dd>
     {#if engine?.detail?.rx_bytes}
       <dt>rx / tx</dt><dd class="mono">{fmtBytes(engine.detail.rx_bytes)} / {fmtBytes(engine.detail.tx_bytes)}</dd>
     {/if}
@@ -106,6 +123,16 @@
     <button class="ghost" onclick={() => act('restart')} disabled={busy || !engine?.running}>Рестарт</button>
     <button class="ghost" onclick={probe} disabled={probing}>{probing ? 'Проверка…' : 'Проба'}</button>
   </div>
+
+  {#if engine?.last_error}
+    <p class="err mono">{engine.last_error}</p>
+  {/if}
+  {#if engine?.detail?.error}
+    <p class="err mono">{engine.detail.error}</p>
+  {/if}
+  {#if probeErr}
+    <p class="err mono">проба: {probeErr}</p>
+  {/if}
 
   {#if engine?.probe}
     <div class="probe">
@@ -141,6 +168,7 @@
       </dl>
     {/if}
   {/if}
+  {/if}
 </div>
 
 <style>
@@ -165,6 +193,12 @@
   .muted {
     color: var(--muted);
     font-size: 12px;
+  }
+  .err {
+    color: var(--warn);
+    font-size: 12px;
+    margin: 0 0 12px;
+    word-break: break-word;
   }
   .d {
     width: 9px;

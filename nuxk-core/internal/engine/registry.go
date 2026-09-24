@@ -1,7 +1,6 @@
 package engine
 
 import (
-	"context"
 	"sort"
 	"sync"
 )
@@ -14,10 +13,11 @@ type Registry struct {
 
 func NewRegistry() *Registry { return &Registry{m: map[Kind]Engine{}} }
 
+// Add registers an adapter. Every call into it is serialised (see guarded).
 func (r *Registry) Add(e Engine) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.m[e.Kind()] = e
+	r.m[e.Kind()] = guard(e)
 }
 
 func (r *Registry) Get(k Kind) (Engine, bool) {
@@ -37,19 +37,4 @@ func (r *Registry) Kinds() []Kind {
 	}
 	sort.Slice(ks, func(i, j int) bool { return ks[i] < ks[j] })
 	return ks
-}
-
-// Snapshot gathers Info from every engine. Errors are folded into the Info as
-// Health=unknown so one broken adapter does not fail the whole call.
-func (r *Registry) Snapshot(ctx context.Context) []Info {
-	out := make([]Info, 0)
-	for _, k := range r.Kinds() {
-		e, _ := r.Get(k)
-		info, err := e.Info(ctx)
-		if err != nil {
-			info = Info{Kind: k, Health: HealthUnknown, Detail: map[string]string{"error": err.Error()}}
-		}
-		out = append(out, info)
-	}
-	return out
 }

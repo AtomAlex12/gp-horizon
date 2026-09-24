@@ -162,3 +162,16 @@ func TestApplyRoutingNoEndpoints(t *testing.T) {
 		t.Errorf("inputs = %v, want only apply-desync", f.inputs)
 	}
 }
+
+// nil Domains = endpoints-only push (controller hardening) — the desync list
+// must not be wiped; an empty non-nil Endpoints clears the endpoints list.
+func TestApplyRoutingNilDomainsEmptyEndpoints(t *testing.T) {
+	f := &fakeRunner{}
+	a := &Adapter{x: f}
+	if err := a.ApplyRouting(context.Background(), engine.Routing{Endpoints: []string{}}); err != nil {
+		t.Fatalf("ApplyRouting: %v", err)
+	}
+	if len(f.inputs) != 1 || f.inputs[0] != "apply-endpoints:" {
+		t.Errorf("inputs = %q, want only an empty apply-endpoints", f.inputs)
+	}
+}

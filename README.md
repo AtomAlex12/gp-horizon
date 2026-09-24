@@ -34,9 +34,8 @@
 ## Быстрый старт (без роутера)
 
 ```sh
-# контроллер + мок-движок usque
+# контроллер + мок-движки usque и xray
 cd nuxk-core
-chmod +x testdata/S51usque-mock
 go test ./...
 go run . -config testdata/nuxk.conf -debug        # :4141
 
@@ -46,16 +45,65 @@ npm install
 npm run dev                                        # :5173, /api проксируется на :4141
 ```
 
-Открыть `http://localhost:5173` — карточка движка usque, кнопки start/stop/restart.
-`echo down > nuxk-core/testdata/mock.state` — переключить состояние туннеля.
+Открыть `http://localhost:5173` — карточки движков usque и xray, кнопки start/stop/restart;
+на вкладке xray — задание сервера (ссылка `vless://` или подписка 3x-ui).
+`echo down > nuxk-core/testdata/mock.state` — уронить туннель usque,
+`echo down > nuxk-core/testdata/mock.xray.state` — xray.
 
-## Статус
+## Тестовый стенд (Raspberry Pi 5)
 
-- **Ф.0** — `engines/nuxk-usque` готов (`info`/`probe`/`reregister`, логи, hooks).
-- **MVP-1 ✅** — `nuxk-core` (демон + `/api/v1` + адаптер usque + reconcile-loop),
-  `nuxk-web` (Svelte-дашборд). Не собрано на этой машине — `go vet/test/build` первым делом.
-- **MVP-2** — + адаптер nfqws2 + `nuxk-plane` + пресеты + укрепление транспорта. ← дальше
-- Ф.3 VLESS · Ф.4 автоподбор · Ф.5 lite-веб.
+Первый тест — `deploy/proto`: настоящие usque и nfqws2 в одном контейнере против
+DPI провайдера, без роутера. Включается поэтапно.
+
+```sh
+# на Pi, один раз: модули ядра для nfqws2 (этап C)
+sudo modprobe nfnetlink_queue xt_multiport xt_connbytes xt_NFQUEUE xt_CONNMARK xt_connmark nf_conntrack
+
+git clone <repo> && cd nuxk-horizon
+make proto                                   # сборка образа (версия из VERSION)
+docker compose -f deploy/proto/docker-compose.yml run --rm \
+  --entrypoint /opt/etc/init.d/S51usque-docker nuxk register   # один раз: регистрация WARP
+docker compose -f deploy/proto/docker-compose.yml up -d
+```
+
+Дашборд — `http://<pi>:4242`. Этапы — переменные в `deploy/proto/docker-compose.yml`:
+
+| Этап | Что включить | Что проверить |
+|---|---|---|
+| A | `NUXK_ENABLE_USQUE=1` (по умолчанию) | карточка usque «ok», проба `warp=on`; «Стоп» → через ≤10с ядро само не поднимает (намерение «остановлен»); `docker compose restart` → состояние восстановилось |
+| B | `NUXK_ENABLE_DNS_GLUE=1` | DNS контейнера уходит в WARP: `docker compose exec nuxk /opt/etc/nuxk/routing-glue.sh show` |
+| C | `NUXK_ENABLE_NFQWS2=1` | проба nfqws2 открывает заблокированный домен; в `endpoints.list` сам появился IP WARP |
+
+Состояние ядра (`nuxk-state`) и списки nfqws2 (`nfqws2-lists`) лежат в томах и
+переживают `up --build`. Сброс: `docker compose -f deploy/proto/docker-compose.yml down -v`
+(удалит и регистрацию WARP).
+
+Версия сборки видна в шапке дашборда и в `GET /api/v1/version` (с коммитом).
+
+## Версии и релизы
+
+- Единственный источник версии — файл [`VERSION`](VERSION) (SemVer). Сейчас
+  `0.x`: API и формат `state/` ещё могут меняться. `-alpha.N` — стенд,
+  `-beta.N` — роутер, `-rc.N` — кандидат.
+- `scripts/version.sh set X.Y.Z` — поднять версию (VERSION + `nuxk-web/package.json`),
+  затем раздел в [`CHANGELOG.md`](CHANGELOG.md).
+- `make check` — всё, что гоняет CI; `make release` — бандл в `dist/`:
+  ядро под mips/mipsel/aarch64/x86_64, веб full/lite, `SHA256SUMS`.
+- Тег `vX.Y.Z` на `main` → GitHub Actions собирает релиз и прикладывает бандл.
+
+## Статус — `0.1.0-alpha.1`
+
+- **MVP-1 ✅** — `nuxk-core` (демон + `/api/v1` + адаптер usque), `nuxk-web` (Svelte).
+- **MVP-2 ✅** — адаптер nfqws2 (`apply` списка десинка), прототип на реальных движках
+  (`deploy/proto`), вкладки движков и редактор маршрутов в вебе.
+- **MVP-3 ✅** — адаптер xray (VLESS-Reality), `PUT /api/v1/engines/{kind}/config`,
+  вкладка xray с заданием сервера.
+- **Контроллер ✅** — ядро хранит желаемое состояние и приводит к нему движки:
+  автоперезапуск с backoff, повторное применение после рестарта, авто-hardening
+  апстримов туннелей через nfqws2.
+- **Дальше** — `nuxk-plane` (fwmark/ipset вместо `routing-glue.sh`), ipset/CIDR в nfqws2,
+  настоящий `S52xray`, пакеты opkg, пресеты, `/lists` · `/decisions` · SSE.
+- Ф.4 автоподбор · Ф.5 lite-веб.
 
 Полная презентация — артефакт «nuxk Horizon».
 

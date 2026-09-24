@@ -1,0 +1,39 @@
+# Tag vX.Y.Z[-pre.N] on main → release bundle (`make release`) attached to a
+# GitHub release. The tag must equal v$(cat VERSION); a "-" in it marks a
+# pre-release.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: tag matches VERSION
+        run: |
+          v=$(tr -d ' \n\r' < VERSION)
+          [ "$GITHUB_REF_NAME" = "v$v" ] || { echo "tag $GITHUB_REF_NAME != v$v"; exit 1; }
+          echo "VERSION=$v" >> "$GITHUB_ENV"
+      - run: make check
+      - run: make release
+      - name: release notes from CHANGELOG
+        run: awk -v v="$VERSION" '$0 ~ "^## \\[" v "\\]" {p=1; next} /^## \[/ {p=0} p' CHANGELOG.md > notes.md
+      - uses: softprops/action-gh-release@v2
+        with:
+          body_path: notes.md
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          files: |
+            dist/nuxk-horizon-${{ env.VERSION }}/*
+            dist/nuxk-horizon-${{ env.VERSION }}.tar.gz

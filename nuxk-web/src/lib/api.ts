@@ -34,6 +34,10 @@ export interface Probe {
 export interface EngineState extends EngineInfo {
   probe?: Probe;
   probe_at?: number;
+  // Controller intent: true = keep running (auto-restart), false = keep
+  // stopped, absent = unmanaged. last_error = last failed action, cleared on success.
+  want_run?: boolean;
+  last_error?: string;
 }
 
 export interface Status {
@@ -85,7 +89,7 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
 
 export const api = {
   healthz: () => req<{ status: string }>('GET', '/healthz'),
-  version: () => req<{ version: string; api: string }>('GET', '/version'),
+  version: () => req<{ version: string; commit: string; api: string }>('GET', '/version'),
   status: () => req<Status>('GET', '/status'),
 
   engines: () => req<EngineState[]>('GET', '/engines'),
@@ -95,6 +99,10 @@ export const api = {
   engineProbe: (k: EngineKind) => req<Probe>('POST', `/engines/${k}/probe`),
   applyRouting: (k: EngineKind, routing: Routing) =>
     req<{ status: string }>('POST', `/engines/${k}/apply`, routing),
+
+  // Only engines implementing engine.Configurable (today: xray) accept this; others 404.
+  setConfig: (k: EngineKind, cfg: Record<string, string>) =>
+    req<{ status: string }>('PUT', `/engines/${k}/config`, cfg),
 
   // TODO: lists, decisions, discover, presets, settings, events(SSE)
 };

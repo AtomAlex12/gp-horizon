@@ -29,7 +29,11 @@ import (
 	"nuxk.dev/horizon/core/internal/state"
 )
 
-var version = "0.0.0-dev" // set by -ldflags at build time
+// Set by -ldflags at build time (see VERSION at the repo root and the Makefile).
+var (
+	version = "0.0.0-dev"
+	commit  = "unknown"
+)
 
 func main() {
 	var (
@@ -45,7 +49,7 @@ func main() {
 		lvl = slog.LevelDebug
 	}
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: lvl})))
-	slog.Info("nuxk-core starting", "version", version)
+	slog.Info("nuxk-core starting", "version", version, "commit", commit)
 
 	cfg, err := config.Load(*cfgPath)
 	if err != nil {
@@ -65,25 +69,49 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Engine registry — adapters are wired here as they land.
+	// Engine registry. An engine is wired only when its init script is
+	// configured and present — a box running just usque shouldn't poll two
+	// missing scripts every 5s and show two permanently "unknown" cards.
 	//   MVP-1: usque   MVP-2: + nfqws2   MVP-3: + xray
 	reg := engine.NewRegistry()
-	reg.Add(usque.New(cfg.Engines.Usque))
-	reg.Add(nfqws2.New(cfg.Engines.Nfqws2)) // MVP-2
-	reg.Add(xray.New(cfg.Engines.Xray))     // MVP-3
+	for _, w := range []struct {
+		kind   engine.Kind
+		script string
+		mk     func(string) engine.Engine
+	}{
+		{engine.KindUsque, cfg.Engines.Usque, func(s string) engine.Engine { return usque.New(s) }},
+		{engine.KindNfqws2, cfg.Engines.Nfqws2, func(s string) engine.Engine { return nfqws2.New(s) }},
+		{engine.KindXray, cfg.Engines.Xray, func(s string) engine.Engine { return xray.New(s) }},
+	} {
+		switch _, err := os.Stat(w.script); {
+		case w.script == "":
+			slog.Info("engine disabled in config", "engine", w.kind)
+		case err != nil:
+			slog.Warn("engine script not found, engine not wired", "engine", w.kind, "script", w.script)
+		default:
+			reg.Add(w.mk(w.script))
+			slog.Info("engine wired", "engine", w.kind, "script", w.script)
+		}
+	}
 
 	hub := core.NewHub(version)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	rc := core.NewReconciler(reg, hub, version)
-	go rc.Run(ctx)
+	ctl := core.NewController(reg, st, hub, version)
+	if cfg.InfoEvery > 0 {
+		ctl.InfoEvery = cfg.InfoEvery
+	}
+	if cfg.ProbeEvery > 0 {
+		ctl.ProbeEvery = cfg.ProbeEvery
+	}
+	go ctl.Run(ctx)
 
 	srv := &http.Server{
 		Addr: cfg.Listen,
 		Handler: api.NewRouter(api.Deps{
-			Version: version, State: st, Engines: reg, Hub: hub,
+			Version: version, Commit: commit, Engines: reg, Hub: hub, Ctl: ctl,
 			WebRoot: cfg.WebRoot, Token: cfg.APIToken,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,

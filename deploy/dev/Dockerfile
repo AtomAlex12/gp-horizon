@@ -1,6 +1,6 @@
 # nuxk Horizon — dev / e2e image.
 #
-# Builds nuxk-core + nuxk-web and runs them together against the S51usque mock,
+# Builds nuxk-core + nuxk-web and runs them together against the usque + xray mocks,
 # so the full stack (reconcile loop, /api/v1, dashboard) can be exercised without
 # a router. NOT a production image — the router ships an opkg package, not this.
 #
@@ -25,8 +25,10 @@ WORKDIR /src
 COPY nuxk-core/go.mod ./
 RUN go mod download
 COPY nuxk-core/ ./
-ARG VERSION=dev
-RUN CGO_ENABLED=0 go build -ldflags "-s -w -X main.version=${VERSION}" -o /nuxk-core .
+COPY VERSION /VERSION
+ARG COMMIT=unknown
+RUN CGO_ENABLED=0 go build \
+    -ldflags "-s -w -X main.version=$(cat /VERSION)+dev -X main.commit=${COMMIT}" -o /nuxk-core .
 
 # --- stage: runtime -------------------------------------------------------
 FROM alpine:3.20
@@ -34,8 +36,9 @@ RUN apk add --no-cache curl                     # curl: healthcheck only
 COPY --from=core /nuxk-core /usr/bin/nuxk-core
 COPY --from=web  /src/dist  /web
 COPY nuxk-core/testdata/S51usque-mock /opt/mock/S51usque-mock
+COPY nuxk-core/testdata/S52xray-mock  /opt/mock/S52xray-mock
 COPY deploy/dev/nuxk.conf              /etc/nuxk/nuxk.conf
-RUN chmod +x /opt/mock/S51usque-mock && mkdir -p /var/lib/nuxk
+RUN chmod +x /opt/mock/S51usque-mock /opt/mock/S52xray-mock && mkdir -p /var/lib/nuxk
 
 EXPOSE 4141
 HEALTHCHECK --interval=10s --timeout=3s --start-period=5s \

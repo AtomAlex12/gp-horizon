@@ -7,7 +7,9 @@ package config
 import (
 	"bufio"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 )
 
 type Config struct {
@@ -16,11 +18,17 @@ type Config struct {
 	StateDir string // flat-file state root, e.g. /opt/etc/nuxk
 	WebRoot  string // static build dir for nuxk-web lite; empty = API only
 
+	// Reconcile cadence; 0 = controller defaults (5s / 60s). A MIPS router may
+	// want a slower Info poll — every tick forks one shell per engine.
+	InfoEvery  time.Duration
+	ProbeEvery time.Duration
+
 	Engines EnginesConfig
 }
 
 type EnginesConfig struct {
-	// Each entry is the init-script name the adapter shells to.
+	// Each entry is the init-script the adapter shells to. Empty = engine
+	// disabled; a path that doesn't exist = engine not installed, not wired.
 	Nfqws2 string
 	Usque  string
 	Xray   string
@@ -78,7 +86,21 @@ func Load(path string) (Config, error) {
 			cfg.Engines.Usque = v
 		case "ENGINE_XRAY":
 			cfg.Engines.Xray = v
+		case "INFO_EVERY":
+			cfg.InfoEvery = seconds(v)
+		case "PROBE_EVERY":
+			cfg.ProbeEvery = seconds(v)
 		}
 	}
 	return cfg, sc.Err()
+}
+
+// seconds parses a positive integer number of seconds; anything else is 0
+// (= use the default).
+func seconds(v string) time.Duration {
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		return 0
+	}
+	return time.Duration(n) * time.Second
 }

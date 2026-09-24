@@ -14,6 +14,11 @@ type EngineState struct {
 	engine.Info
 	Probe   *engine.Probe `json:"probe,omitempty"`
 	ProbeAt int64         `json:"probe_at,omitempty"` // unix seconds
+
+	// WantRun is the stored run intent (nil = unmanaged). LastError is the
+	// last failed controller or user action on this engine, cleared on success.
+	WantRun   *bool  `json:"want_run,omitempty"`
+	LastError string `json:"last_error,omitempty"`
 }
 
 // Snapshot is the whole platform state at a moment.
