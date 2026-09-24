@@ -3,6 +3,7 @@
   import EngineCard from './lib/EngineCard.svelte';
   import EngineDetail from './lib/EngineDetail.svelte';
   import NfqwsRouting from './lib/NfqwsRouting.svelte';
+  import XrayConfig from './lib/XrayConfig.svelte';
   import type { EngineKind } from './lib/api';
 
   startPolling();
@@ -77,12 +78,14 @@
   {:else if tab === 'usque'}
     <EngineDetail kind="usque" label="usque — WARP-туннель" engine={byKind.get('usque')} />
   {:else if tab === 'xray'}
-    <div class="panel">
-      <p class="muted">xray (VLESS-Reality) — движок ещё не реализован (Ф.3, после MVP-2).</p>
-    </div>
+    <EngineDetail kind="xray" label="xray — VLESS-Reality" engine={byKind.get('xray')}>
+      {#snippet extra()}
+        <XrayConfig engine={byKind.get('xray')} />
+      {/snippet}
+    </EngineDetail>
   {/if}
 
-  <p class="foot muted">MVP-1+2 — движки: usque, nfqws2. Дальше: VLESS, автоподбор режима.</p>
+  <p class="foot muted">MVP-1…3 — движки: usque, nfqws2, xray. Дальше: nuxk-plane, автоподбор режима.</p>
 </main>
 
 <style>
@@ -183,12 +186,6 @@
   }
   .plane {
     margin-top: 14px;
-  }
-  .panel {
-    background: var(--surface);
-    border: 1px solid var(--line);
-    border-radius: 12px;
-    padding: 16px;
   }
   .foot {
     margin-top: 26px;

@@ -51,7 +51,7 @@ button {
 button.ghost { background: transparent; color: var(--ink); }
 button.warn { background: var(--warn); }
 button:disabled { opacity: 0.45; cursor: default; }
-textarea, input[type=text] {
+textarea, input[type=text], input[type=password] {
   font: 400 13px var(--font-mono);
   padding: 8px 10px;
   border-radius: 8px;
@@ -61,5 +61,5 @@ textarea, input[type=text] {
   width: 100%;
   resize: vertical;
 }
-textarea:focus, input[type=text]:focus { outline: 1px solid var(--accent); }
+textarea:focus, input[type=text]:focus, input[type=password]:focus { outline: 1px solid var(--accent); }
 code, .mono { font-family: var(--font-mono); font-size: 0.9em; }
