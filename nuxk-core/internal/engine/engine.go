@@ -53,7 +53,7 @@ type Info struct {
 	UptimeSec int64             `json:"uptime_sec"`
 	Version   string            `json:"version,omitempty"`
 	Health    Health            `json:"health"`
-	Iface     string            `json:"iface,omitempty"`   // opkgtun0 / tun-xray / ""
+	Iface     string            `json:"iface,omitempty"`    // opkgtun0 / tun-xray / ""
 	Endpoint  string            `json:"endpoint,omitempty"` // upstream the tunnel dials
 	Routes    int               `json:"routes"`             // prefixes currently targeted
 	Detail    map[string]string `json:"detail,omitempty"`
