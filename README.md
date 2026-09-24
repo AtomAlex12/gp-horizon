@@ -34,9 +34,9 @@
 ## Быстрый старт (без роутера)
 
 ```sh
-# контроллер + мок-движок usque
+# контроллер + мок-движки usque и xray
 cd nuxk-core
-chmod +x testdata/S51usque-mock
+chmod +x testdata/S51usque-mock testdata/S52xray-mock
 go test ./...
 go run . -config testdata/nuxk.conf -debug        # :4141
 
@@ -46,16 +46,23 @@ npm install
 npm run dev                                        # :5173, /api проксируется на :4141
 ```
 
-Открыть `http://localhost:5173` — карточка движка usque, кнопки start/stop/restart.
-`echo down > nuxk-core/testdata/mock.state` — переключить состояние туннеля.
+Открыть `http://localhost:5173` — карточки движков usque и xray, кнопки start/stop/restart;
+на вкладке xray — задание сервера (ссылка `vless://` или подписка 3x-ui).
+`echo down > nuxk-core/testdata/mock.state` — уронить туннель usque,
+`echo down > nuxk-core/testdata/mock.xray.state` — xray.
 
 ## Статус
 
 - **Ф.0** — `engines/nuxk-usque` готов (`info`/`probe`/`reregister`, логи, hooks).
 - **MVP-1 ✅** — `nuxk-core` (демон + `/api/v1` + адаптер usque + reconcile-loop),
   `nuxk-web` (Svelte-дашборд). Не собрано на этой машине — `go vet/test/build` первым делом.
-- **MVP-2** — + адаптер nfqws2 + `nuxk-plane` + пресеты + укрепление транспорта. ← дальше
-- Ф.3 VLESS · Ф.4 автоподбор · Ф.5 lite-веб.
+- **MVP-2 ✅** — адаптер nfqws2 (`apply` списка десинка), прототип на реальных движках
+  (`deploy/proto`), вкладки движков и редактор маршрутов в вебе.
+- **MVP-3 ✅** — адаптер xray (VLESS-Reality), `PUT /api/v1/engines/{kind}/config`
+  для настраиваемых движков, вкладка xray с заданием сервера.
+- **Дальше** — `nuxk-plane` (fwmark/ipset вместо заглушки), ipset/CIDR в nfqws2, пресеты,
+  `/lists` · `/decisions` · SSE.
+- Ф.4 автоподбор · Ф.5 lite-веб.
 
 Полная презентация — артефакт «nuxk Horizon».
 
