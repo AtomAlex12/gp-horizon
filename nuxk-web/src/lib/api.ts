@@ -2,7 +2,29 @@
 // The UI has no business logic — it renders these shapes and posts commands.
 
 const BASE = import.meta.env.VITE_API_BASE ?? '';
-const TOKEN = import.meta.env.VITE_API_TOKEN ?? '';
+const TOKEN_KEY = 'nuxk-api-token';
+
+// A token baked in at build time (dev/proto images) wins; otherwise the one the
+// user typed into the login form — the router build ships without a token, the
+// installer prints it once and it lives in this browser only.
+function storedToken(): string {
+  try {
+    return localStorage.getItem(TOKEN_KEY) ?? '';
+  } catch {
+    return '';
+  }
+}
+let TOKEN = import.meta.env.VITE_API_TOKEN || storedToken();
+
+export function setToken(t: string) {
+  TOKEN = t.trim();
+  try {
+    if (TOKEN) localStorage.setItem(TOKEN_KEY, TOKEN);
+    else localStorage.removeItem(TOKEN_KEY);
+  } catch {
+    /* private mode: token lasts for this tab only */
+  }
+}
 
 export type EngineKind = 'nfqws2' | 'usque' | 'xray';
 export type Health = 'ok' | 'degraded' | 'down' | 'unknown';

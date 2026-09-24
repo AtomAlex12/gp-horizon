@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { status, startPolling } from './lib/status.svelte';
+  import { status, startPolling, pollNow } from './lib/status.svelte';
+  import { setToken } from './lib/api';
   import EngineCard from './lib/EngineCard.svelte';
   import EngineDetail from './lib/EngineDetail.svelte';
   import NfqwsRouting from './lib/NfqwsRouting.svelte';
@@ -13,6 +14,14 @@
   const okCount = $derived(engines.filter((e) => e.health === 'ok').length);
 
   let tab = $state<'overview' | EngineKind>('overview');
+  let tokenInput = $state('');
+
+  function login(e: SubmitEvent) {
+    e.preventDefault();
+    setToken(tokenInput);
+    tokenInput = '';
+    pollNow();
+  }
 
   const TABS: { kind: EngineKind; label: string }[] = [
     { kind: 'nfqws2', label: 'nfqws2' },
@@ -57,6 +66,16 @@
 <main>
   {#if status.loading}
     <p class="muted">Подключение к nuxk-core…</p>
+  {:else if status.needToken}
+    <form class="login" onsubmit={login}>
+      <strong>Вход в nuxk</strong>
+      <p class="muted">
+        Введите API-токен. Его показал установщик; он же лежит в <span class="mono">/opt/etc/nuxk/nuxk.conf</span>
+        (строка <span class="mono">API_TOKEN</span>).
+      </p>
+      <input type="password" id="api-token" bind:value={tokenInput} autocomplete="current-password" placeholder="токен" />
+      <button type="submit" disabled={!tokenInput.trim()}>Войти</button>
+    </form>
   {:else if status.error}
     <p class="err">nuxk-core недоступен: {status.error}</p>
   {:else if tab === 'overview'}
@@ -184,6 +203,16 @@
   }
   .err {
     color: var(--warn);
+  }
+  .login {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-width: 420px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 18px 20px;
   }
   .plane {
     margin-top: 14px;
