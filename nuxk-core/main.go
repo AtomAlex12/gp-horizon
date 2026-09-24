@@ -12,6 +12,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -41,8 +42,15 @@ func main() {
 		listen  = flag.String("listen", "", "override API listen address")
 		webRoot = flag.String("web", "", "dir to serve nuxk-web static build (empty = API only)")
 		debug   = flag.Bool("debug", false, "verbose logging")
+		showVer = flag.Bool("version", false, "print version and exit")
 	)
 	flag.Parse()
+	if *showVer {
+		// One machine-readable line — nuxk-installer parses it to decide
+		// whether the router's copy needs an upgrade.
+		fmt.Printf("nuxk-core %s %s\n", version, commit)
+		return
+	}
 
 	lvl := slog.LevelInfo
 	if *debug {

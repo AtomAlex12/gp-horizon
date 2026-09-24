@@ -26,6 +26,7 @@
 | `engines/nuxk-nfqws2/` | обёртка nfqws2 | форк nfqws2-keenetic |
 | `engines/nuxk-usque/` | обёртка usque | наш форк (`feature/web-ui`) |
 | `engines/nuxk-xray/` | обёртка xray | своя тонкая |
+| `nuxk-installer/` | установка на роутер по SSH (веб-форма) | своё |
 | `packaging/` | opkg-репо + Docker-образ | своё |
 
 **Ядра движков** (`nfqws2`, `usque`, `xray-core`) — вендорим из upstream-релизов,
@@ -49,6 +50,18 @@ npm run dev                                        # :5173, /api проксир�
 на вкладке xray — задание сервера (ссылка `vless://` или подписка 3x-ui).
 `echo down > nuxk-core/testdata/mock.state` — уронить туннель usque,
 `echo down > nuxk-core/testdata/mock.xray.state` — xray.
+
+## Бета: Raspberry Pi + роутер
+
+Пошагово — [`docs/BETA.md`](docs/BETA.md). Коротко:
+
+1. Роутер: компоненты «OPKG» и «Модули ядра подсистемы Netfilter», Entware, NTP.
+2. Pi: `git clone … && sh deploy/pi/bootstrap.sh` — стенд на :4242, инсталлятор на :4300.
+3. Форма инсталлятора: адрес роутера, SSH Entware (порт 222), «Проверить роутер» →
+   «Установить выбранное». Ставится только недостающее; в конце — адрес панели и токен.
+
+Инсталлятор есть и отдельным файлом (`make installer` или релиз) для Linux,
+Windows и macOS — для роутера в другой сети.
 
 ## Тестовый стенд (Raspberry Pi 5)
 
@@ -91,7 +104,7 @@ docker compose -f deploy/proto/docker-compose.yml up -d
   ядро под mips/mipsel/aarch64/x86_64, веб full/lite, `SHA256SUMS`.
 - Тег `vX.Y.Z` на `main` → GitHub Actions собирает релиз и прикладывает бандл.
 
-## Статус — `0.1.0-alpha.1`
+## Статус — `0.1.0-beta.1`
 
 - **MVP-1 ✅** — `nuxk-core` (демон + `/api/v1` + адаптер usque), `nuxk-web` (Svelte).
 - **MVP-2 ✅** — адаптер nfqws2 (`apply` списка десинка), прототип на реальных движках
@@ -101,6 +114,8 @@ docker compose -f deploy/proto/docker-compose.yml up -d
 - **Контроллер ✅** — ядро хранит желаемое состояние и приводит к нему движки:
   автоперезапуск с backoff, повторное применение после рестарта, авто-hardening
   апстримов туннелей через nfqws2.
+- **Бета ✅** — инсталлятор на роутер по SSH, прослойка над штатным nfqws2-keenetic,
+  стек для Raspberry Pi.
 - **Дальше** — `nuxk-plane` (fwmark/ipset вместо `routing-glue.sh`), ipset/CIDR в nfqws2,
   настоящий `S52xray`, пакеты opkg, пресеты, `/lists` · `/decisions` · SSE.
 - Ф.4 автоподбор · Ф.5 lite-веб.

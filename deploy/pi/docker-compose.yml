@@ -1,0 +1,33 @@
+# nuxk Horizon — beta stack for the Raspberry Pi (192.168.2.10).
+#
+#   nuxk       real-engine prototype (usque + nfqws2) from deploy/proto — :4242
+#   installer  form that installs nuxk onto a Keenetic router over SSH  — :4300
+#
+# Start with deploy/pi/bootstrap.sh (checks, kernel modules, WARP registration).
+# By hand:
+#   docker compose -f deploy/pi/docker-compose.yml up -d --build
+#   docker compose -f deploy/pi/docker-compose.yml logs installer   # access code
+
+# fixed project name: volumes are nuxk-pi_usque-session etc. whatever the checkout dir
+name: nuxk-pi
+
+include:
+  - ../proto/docker-compose.yml
+
+services:
+  installer:
+    build:
+      context: ../..
+      dockerfile: deploy/pi/Dockerfile.installer
+      args:
+        COMMIT: ${NUXK_COMMIT:-unknown}
+    image: nuxk-horizon-installer
+    ports: ["4300:4300"]
+    environment:
+      # fixed code instead of a random one per restart (optional)
+      NUXK_INSTALLER_CODE: ${NUXK_INSTALLER_CODE:-}
+    # outbound SSH to the router only; no capabilities, read-only rootfs
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped

@@ -57,6 +57,7 @@ func (a *Adapter) Info(ctx context.Context) (engine.Info, error) {
 		Running:   running,
 		PID:       atoi(kv["service.pid"]),
 		UptimeSec: atoi64(kv["service.uptime_s"]),
+		Version:   kv["version.pkg"],
 		Health:    healthFromState(running, fwInstalled),
 		Iface:     kv["config.iface"], // the WAN-egress interface it hooks, not a tunnel
 		Routes:    desync + endpoints,
