@@ -91,13 +91,17 @@ func (a *Adapter) Probe(ctx context.Context) (engine.Probe, error) {
 
 // ApplyRouting writes Domains to the desync hostlist and Endpoints (other
 // engines' tunnel upstream IPs — "WARP через nfqws" endpoint hardening) to
-// the endpoints list. CIDRs/Strategy are intentionally unhandled in this
-// pass — --ipset wiring is deferred (see deploy/proto plan §6/§8).
+// the endpoints list. A nil slice leaves that list untouched (the controller
+// pushes endpoints alone when a tunnel's upstream changes); an empty non-nil
+// slice clears it. CIDRs/Strategy are intentionally unhandled in this pass —
+// --ipset wiring is deferred (see deploy/proto plan §6/§8).
 func (a *Adapter) ApplyRouting(ctx context.Context, r engine.Routing) error {
-	if _, err := a.x.ActionWithInput(ctx, "apply-desync", strings.Join(r.Domains, "\n")); err != nil {
-		return err
+	if r.Domains != nil {
+		if _, err := a.x.ActionWithInput(ctx, "apply-desync", strings.Join(r.Domains, "\n")); err != nil {
+			return err
+		}
 	}
-	if len(r.Endpoints) > 0 {
+	if r.Endpoints != nil {
 		if _, err := a.x.ActionWithInput(ctx, "apply-endpoints", strings.Join(r.Endpoints, "\n")); err != nil {
 			return err
 		}
