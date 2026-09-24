@@ -36,3 +36,6 @@ node_modules/
 .idea/
 .vscode/
 *.swp
+
+# E0 router survey reports (LAN layout — local only)
+e0-report-*.txt
