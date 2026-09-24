@@ -10,6 +10,35 @@
 
 ## [Unreleased]
 
+## [0.1.0-beta.1] — 2026-09-24
+
+Первая бета: стенд на Raspberry Pi и установка nuxk на роутер Keenetic.
+Инструкция — [`docs/BETA.md`](docs/BETA.md).
+
+### Added
+- **nuxk-installer** — веб-форма установки на роутер по SSH Entware. Проверяет
+  роутер только на чтение (архитектура, Entware, место, часы, модули ядра,
+  пакеты, установленный nuxk) и ставит лишь недостающее: `curl`,
+  `ca-certificates`, `ipset`; репозиторий и пакет `nfqws2-keenetic`; nuxk-core
+  под архитектуру роутера, init-скрипт, веб-панель; `nuxk.conf` (0600, адрес
+  только в LAN, новый API-токен); запуск и проверка `/api/v1/healthz`.
+  Код доступа к форме, ключ SSH роутера закрепляется после проверки, пароль
+  нигде не хранится. Сборки: linux arm64/amd64, Windows, macOS.
+- **S51nfqws2-nuxk** — прослойка поверх штатного `nfqws2-keenetic`: запуск и
+  остановка идут в штатный скрипт, `info`/`probe`/`apply-*` работают с его
+  списками. Пакет остаётся штатным и обновляется через `opkg upgrade`.
+- **deploy/pi** — стек беты для Pi: стенд прототипа (:4242) + инсталлятор
+  (:4300), скрипт `bootstrap.sh` (проверки, модули ядра, клон, сборка,
+  регистрация WARP, запуск). Этапы стенда — в `deploy/pi/.env`.
+- nuxk-core: флаг `-version`. nuxk-web: вход по API-токену, если сборка без
+  вшитого токена (роутер).
+
+### Changed
+- `make check` проверяет и инсталлятор (включая сквозной тест через настоящий
+  SSH), `make release` кладёт в бандл сборки инсталлятора.
+- Этапы прототипа задаются переменными `NUXK_ENABLE_*` вместо правки compose.
+- nfqws2: версия пакета видна в карточке движка.
+
 ## [0.1.0-alpha.1] — 2026-09-24
 
 Первая тестовая сборка: стенд `deploy/proto` на Raspberry Pi 5, этапы A–C
@@ -68,5 +97,6 @@
 - Настоящего `S52xray` нет, пакетов opkg нет.
 - Токен прототипа вшит в JS-сборку — только для изолированного стенда.
 
-[Unreleased]: https://github.com/AtomAlex12/nuxk-horizon/compare/v0.1.0-alpha.1...HEAD
+[Unreleased]: https://github.com/AtomAlex12/nuxk-horizon/compare/v0.1.0-beta.1...HEAD
+[0.1.0-beta.1]: https://github.com/AtomAlex12/nuxk-horizon/releases/tag/v0.1.0-beta.1
 [0.1.0-alpha.1]: https://github.com/AtomAlex12/nuxk-horizon/releases/tag/v0.1.0-alpha.1
