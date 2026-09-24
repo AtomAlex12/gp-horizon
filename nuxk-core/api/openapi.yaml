@@ -180,14 +180,17 @@ components:
   schemas:
     Version:
       type: object
-      properties: { version: { type: string }, api: { type: string, const: v1 } }
+      properties:
+        version: { type: string, description: "SemVer from the repo VERSION file, +dev/+proto for images" }
+        commit: { type: string, description: git short sha the binary was built from }
+        api: { type: string, const: v1 }
 
     Status:
       type: object
       properties:
         version: { type: string }
         ts: { type: integer }
-        engines: { type: array, items: { $ref: "#/components/schemas/EngineInfo" } }
+        engines: { type: array, items: { $ref: "#/components/schemas/EngineState" } }
         plane: { type: object, additionalProperties: true }
 
     EngineInfo:
@@ -204,6 +207,21 @@ components:
         endpoint: { type: string }
         routes: { type: integer, description: prefixes currently targeted }
         detail: { type: object, additionalProperties: { type: string } }
+
+    EngineState:
+      description: EngineInfo plus the last probe and the controller's view.
+      allOf:
+        - $ref: "#/components/schemas/EngineInfo"
+        - type: object
+          properties:
+            probe: { $ref: "#/components/schemas/Probe" }
+            probe_at: { type: integer }
+            want_run:
+              type: boolean
+              description: >
+                Stored run intent — true keeps it running (auto-restart with backoff),
+                false keeps it stopped; absent = unmanaged. Set by start/stop/restart.
+            last_error: { type: string, description: last failed controller/user action, cleared on success }
 
     EngineConfig:
       type: object
