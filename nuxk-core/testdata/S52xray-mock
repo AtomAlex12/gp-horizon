@@ -1,12 +1,12 @@
 #!/bin/sh
 # Fake S52xray for local end-to-end testing of nuxk-core without a router.
 #   nuxk-core -config testdata/nuxk.conf -debug
-# State toggles via testdata/mock.state (contents: "up" or "down"), same convention as
-# S51usque-mock. set-config writes testdata/mock.xray-config from stdin (VLESS_URI=... or
+# State toggles via testdata/mock.xray.state (contents: "up" or "down") — same convention as
+# S51usque-mock, but its own file so stopping one mock engine doesn't stop the other. set-config writes testdata/mock.xray-config from stdin (VLESS_URI=... or
 # SUB_URL=...) so TestApplyRouting-style e2e checks can assert it actually took effect.
 
 DIR="$(dirname "$0")"
-STATE_FILE="$DIR/mock.state"
+STATE_FILE="$DIR/mock.xray.state"
 CONFIG_FILE="$DIR/mock.xray-config"
 [ -f "$STATE_FILE" ] || echo up >"$STATE_FILE"
 STATE=$(cat "$STATE_FILE")
