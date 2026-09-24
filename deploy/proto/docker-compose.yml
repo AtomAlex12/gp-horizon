@@ -34,9 +34,11 @@ services:
       # nfqws2 lists, incl. auto.list learned by MODE_AUTO.
       - nfqws2-lists:/opt/etc/nfqws2/lists
     environment:
-      NUXK_ENABLE_USQUE: "1"
-      NUXK_ENABLE_NFQWS2: "0" # Phase A first — flip on for Phase C
-      NUXK_ENABLE_DNS_GLUE: "0" # Phase A first — flip on for Phase B
+      # Phases: A = usque only, B = + DNS via WARP, C = + nfqws2. Override in
+      # an .env next to the compose file you run (deploy/pi/.env on the Pi).
+      NUXK_ENABLE_USQUE: ${NUXK_ENABLE_USQUE:-1}
+      NUXK_ENABLE_DNS_GLUE: ${NUXK_ENABLE_DNS_GLUE:-0}
+      NUXK_ENABLE_NFQWS2: ${NUXK_ENABLE_NFQWS2:-0}
     restart: unless-stopped
 
 networks:

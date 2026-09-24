@@ -1,0 +1,10 @@
+# Build context is the repo root (deploy/*/Dockerfile). Keep it small and
+# never ship local build output or secrets into an image.
+.git
+**/node_modules
+**/dist
+**/dist-lite
+nuxk-installer/payload/*
+!nuxk-installer/payload/README.md
+nuxk-core/testdata/state
+nuxk-core/testdata/mock*
