@@ -19,6 +19,8 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+
+	"nuxk.dev/horizon/core/internal/engine"
 )
 
 type Store struct {
@@ -122,10 +124,74 @@ func (s *Store) WriteList(name string, lines []string) error {
 	return atomicWrite(filepath.Join(s.dir, "lists", name+".list"), []byte(body))
 }
 
-func atomicWrite(path string, b []byte) error {
+func atomicWrite(path string, b []byte) error { return atomicWriteMode(path, b, 0o644) }
+
+func atomicWriteMode(path string, b []byte, mode os.FileMode) error {
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o644); err != nil {
+	if err := os.WriteFile(tmp, b, mode); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmp, mode); err != nil { // WriteFile keeps the mode of a leftover tmp
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+// Desired is what the user asked of one engine — the controller's source of
+// truth, persisted as engines/<kind>.json. The engine's own init script may
+// lose it (container recreated, router flashed, list file wiped); the
+// controller re-applies it. Nil fields are "not managed": nuxk-core leaves
+// that aspect of the engine alone.
+type Desired struct {
+	// Run: true = keep it running (auto-restart with backoff), false = keep it
+	// stopped, nil = never touch start/stop on our own.
+	Run *bool `json:"run,omitempty"`
+	// Routing last applied via POST /engines/{kind}/apply.
+	Routing *engine.Routing `json:"routing,omitempty"`
+	// Config last set via PUT /engines/{kind}/config. May hold secrets (a
+	// vless:// UUID) — the file is written 0600 and never served back.
+	Config map[string]string `json:"config,omitempty"`
+}
+
+// LoadDesired returns engines/<kind>.json, or a zero Desired if absent.
+func (s *Store) LoadDesired(kind engine.Kind) (Desired, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var d Desired
+	b, err := os.ReadFile(s.desiredPath(kind))
+	if os.IsNotExist(err) {
+		return d, nil
+	}
+	if err != nil {
+		return d, err
+	}
+	return d, json.Unmarshal(b, &d)
+}
+
+// UpdateDesired read-modify-writes engines/<kind>.json under the store lock,
+// so concurrent API calls on one engine don't lose each other's fields.
+func (s *Store) UpdateDesired(kind engine.Kind, fn func(*Desired)) (Desired, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var d Desired
+	b, err := os.ReadFile(s.desiredPath(kind))
+	switch {
+	case os.IsNotExist(err):
+	case err != nil:
+		return d, err
+	default:
+		if err := json.Unmarshal(b, &d); err != nil {
+			return d, err
+		}
+	}
+	fn(&d)
+	out, err := json.MarshalIndent(d, "", "  ")
+	if err != nil {
+		return d, err
+	}
+	return d, atomicWriteMode(s.desiredPath(kind), out, 0o600)
+}
+
+func (s *Store) desiredPath(kind engine.Kind) string {
+	return filepath.Join(s.dir, "engines", string(kind)+".json")
 }
