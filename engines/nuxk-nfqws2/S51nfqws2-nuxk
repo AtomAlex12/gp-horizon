@@ -1,0 +1,116 @@
+#!/bin/sh
+# S51nfqws2-nuxk — nuxk adapter shim over the STOCK nfqws2-keenetic package.
+#
+# nuxk-core drives engines through a flat "key value" contract (info / probe /
+# apply-*), which the stock /opt/etc/init.d/S51nfqws2 doesn't speak. Instead of
+# patching the package (and losing every `opkg upgrade`), this file sits next
+# to it: lifecycle calls pass straight through, the contract calls read and
+# write the package's own files. nuxk.conf points ENGINE_NFQWS2 here.
+#
+#   start|stop|restart|reload|status   → stock init script, unchanged
+#   info                                → state as flat "key value" lines
+#   probe                               → does a known SNI-blocked site load
+#   apply-desync   < domains            → lists/user.list, then reload (SIGHUP)
+#   apply-endpoints < ips               → lists/endpoints.list (tunnel upstreams)
+#
+# NUXK_ROOT prefixes every path (tests run it against a fake /opt).
+
+R="${NUXK_ROOT:-}"
+STOCK="${NFQWS2_INIT:-$R/opt/etc/init.d/S51nfqws2}"
+CONF="$R/opt/etc/nfqws2/nfqws2.conf"
+LISTS="$R/opt/etc/nfqws2/lists"
+PIDFILE="$R/opt/var/run/nfqws2.pid"
+IPT_GROUP_POST="nfqws_post"
+
+# conf_get KEY — value from nfqws2.conf.run (runtime, auto-detected WAN) or
+# nfqws2.conf, without sourcing either (they're shell, and not ours).
+conf_get() {
+    for f in "$CONF.run" "$CONF"; do
+        [ -f "$f" ] || continue
+        v=$(sed -n "s/^$1=[\"']\{0,1\}\([^\"']*\)[\"']\{0,1\}.*/\1/p" "$f" | tail -n 1)
+        [ -n "$v" ] && { echo "$v"; return; }
+    done
+}
+
+is_running() {
+    [ -f "$PIDFILE" ] || return 1
+    pid=$(cat "$PIDFILE" 2>/dev/null)
+    [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+}
+
+count() { grep -c . "$1" 2>/dev/null || echo 0; }
+
+info() {
+    running=0; pid=""; uptime=0
+    if is_running; then
+        running=1
+        pid=$(cat "$PIDFILE")
+        started=$(stat -c %Y "$PIDFILE" 2>/dev/null || echo 0)
+        now=$(date +%s)
+        [ "$started" -gt 0 ] && [ "$now" -ge "$started" ] && uptime=$((now - started))
+    fi
+    fw=0
+    iptables -w -t mangle -S "$IPT_GROUP_POST" >/dev/null 2>&1 && fw=1
+    ver=$(opkg list-installed nfqws2-keenetic 2>/dev/null | awk '{print $3}')
+
+    echo "name NFQWS2"
+    echo "service.running $running"
+    echo "service.pid $pid"
+    echo "service.uptime_s $uptime"
+    echo "version.pkg ${ver:-unknown}"
+    echo "config.iface $(conf_get ISP_INTERFACE)"
+    echo "config.nfqueue_num $(conf_get NFQUEUE_NUM)"
+    echo "config.mode $(conf_get NFQWS_EXTRA_ARGS | sed 's/.*\$MODE_\([A-Z]*\).*/\1/' | tr 'A-Z' 'a-z')"
+    echo "firewall.installed $fw"
+    echo "lists.desync_count $(count "$LISTS/user.list")"
+    echo "lists.endpoints_count $(count "$LISTS/endpoints.list")"
+    echo "lists.auto_count $(count "$LISTS/auto.list")"
+    grep . "$LISTS/user.list" 2>/dev/null | while read -r d; do echo "item $d"; done
+}
+
+# The meaningful nfqws2 probe: does a site the ISP SNI-blocks actually load
+# through the router's real egress (egress_ip means nothing — no reroute).
+probe() {
+    target="${NFQWS2_PROBE_TARGET:-browserleaks.com}"
+    t0=$(date +%s%N 2>/dev/null)
+    code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 "https://$target/" 2>/dev/null)
+    t1=$(date +%s%N 2>/dev/null)
+    echo "target $target"
+    if [ -n "$code" ] && [ "$code" != "000" ]; then
+        echo "ok 1"
+        case "$t0$t1" in *N*) ;; *) echo "rtt_ms $(((t1 - t0) / 1000000))" ;; esac
+    else
+        echo "ok 0"
+        echo "reason timeout_or_reset"
+    fi
+    echo "ts $(date +%s)"
+}
+
+apply_list() {
+    mkdir -p "$LISTS"
+    tmp="$LISTS/.$1.nuxk"
+    # one entry per line, trailing newline, no blanks — nuxk-core joins
+    # without a final "\n" and `while read` would drop the last entry
+    { cat; echo; } | sed -e 's/\r$//' -e '/^[[:space:]]*$/d' >"$tmp" && mv "$tmp" "$LISTS/$1"
+    echo "applied $(count "$LISTS/$1")"
+}
+
+case "$1" in
+info) info ;;
+probe) probe ;;
+apply-desync)
+    apply_list user.list
+    # SIGHUP re-reads the lists without dropping the queue
+    is_running && "$STOCK" reload >/dev/null 2>&1
+    exit 0
+    ;;
+apply-endpoints) apply_list endpoints.list ;;
+start | stop | restart | reload | status)
+    [ -x "$STOCK" ] || { echo "stock nfqws2-keenetic init script not found: $STOCK" >&2; exit 1; }
+    exec "$STOCK" "$@"
+    ;;
+*)
+    echo "usage: $0 {start|stop|restart|reload|status|info|probe|apply-desync|apply-endpoints}" >&2
+    exit 1
+    ;;
+esac
