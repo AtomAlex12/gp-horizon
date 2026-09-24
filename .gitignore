@@ -7,6 +7,8 @@
 *.tar.gz
 
 # go
+/nuxk-installer/payload/*
+!/nuxk-installer/payload/README.md
 /nuxk-core/nuxk-core
 /nuxk-core/*.test
 /nuxk-core/coverage.out
@@ -20,6 +22,7 @@ node_modules/
 /engines/*/vendor-bin/
 
 # dev / mock runtime
+/deploy/pi/.env
 /nuxk-core/testdata/state/
 /nuxk-core/testdata/mock.state
 /nuxk-core/testdata/mock.xray.state
