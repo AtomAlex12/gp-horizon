@@ -45,6 +45,10 @@ put fqdn_entries_total "$(echo "$RC" | awk '/^object-group fqdn /{g=1;next} g&&/
 sec "object-group fqdn: one group in full (syntax reference)"
 echo "$RC" | awk '/^object-group fqdn /{p=1} p{print; if (++n>=15) exit} p&&/^!/{exit}'
 
+sec "SYNTAX (verbatim, for the agent generator)"
+echo "$RC" | awk '/^object-group fqdn /{print; c=0; g=1; next} g&&/^ +include /&&c<2{print; c++} /^[^ ]/{g=0}' | head -n 12
+echo "$RC" | grep -E '^ +route object-group|^ip route .*object-group' | head -n 10
+
 sec "entry forms used (domain / wildcard / ip / cidr)"
 echo "$RC" | awk '/^object-group fqdn /{g=1;next} g&&/^ +include /{print $2} /^[^ ]/{g=0}' |
     awk '{ if ($0 ~ /^[0-9.]+\/[0-9]+$/) c++; else if ($0 ~ /^[0-9.]+$/) ip++; else if ($0 ~ /^\*\./) w++; else d++ }
@@ -68,19 +72,24 @@ ip -o link show 2>/dev/null | awk -F': ' '{print $2}' | grep -i opkgtun || echo 
 put opkgtun_config "$(echo "$RC" | grep -cE '^interface OpkgTun')"
 
 # -------------------------------------------------------------------- kernel side
-sec "ipsets created by DNS routing"
-for s in $(ipset list -n 2>/dev/null | grep -iE 'dnsrt|ndm' | head -n 40); do
+sec "ipsets created by DNS routing (_NDM_OGDN_*: one per group, v4 and v6)"
+for s in $(ipset list -n 2>/dev/null | grep -E '^_NDM_OGDN_'); do
     ipset list "$s" -t 2>/dev/null | awk -v s="$s" '
         /^Type:/{t=$2} /^Header:/{sub(/^Header: /,""); h=$0} /^Number of entries:/{e=$4}
         END { printf "%s type=%s entries=%s header=[%s]\n", s, t, e, h }'
 done
-put dnsrt_ipsets "$(ipset list -n 2>/dev/null | grep -ciE 'dnsrt')"
+put ogdn_ipsets "$(ipset list -n 2>/dev/null | grep -cE '^_NDM_OGDN_')"
+put ogdn_ipsets_v4 "$(ipset list -n 2>/dev/null | grep -cE '^_NDM_OGDN_4_')"
+put ogdn_ipsets_v6 "$(ipset list -n 2>/dev/null | grep -cE '^_NDM_OGDN_6_')"
+echo "other ndm ipsets: $(ipset list -n 2>/dev/null | grep -iE 'ndm' | grep -vcE '^_NDM_OGDN_')"
 
-sec "iptables: DNSRT rules (v4)"
-iptables-save 2>/dev/null | grep -iE 'DNSRT' | head -n 60
-sec "iptables: DNSRT rules (v6)"
-ip6tables-save 2>/dev/null | grep -iE 'DNSRT' | head -n 30
-put dnsrt_v6_rules "$(ip6tables-save 2>/dev/null | grep -ciE 'DNSRT')"
+sec "iptables: DNSRT/OGDN rules (v4)"
+iptables-save 2>/dev/null | grep -iE 'DNSRT|OGDN' | head -n 60
+sec "iptables: DNSRT/OGDN rules (v6)"
+ip6tables-save 2>/dev/null | grep -iE 'DNSRT|OGDN' | head -n 30
+put dnsrt_v4_rules "$(iptables-save 2>/dev/null | grep -iE 'DNSRT|OGDN' | grep -ciE 'MARK')"
+# v6 chains may exist without MARK rules: then IPv6 to listed domains is NOT steered
+put dnsrt_v6_mark_rules "$(ip6tables-save 2>/dev/null | grep -iE 'DNSRT|OGDN' | grep -ciE 'MARK')"
 
 sec "where DNSRT sits in mangle PREROUTING (order matters for marks)"
 iptables -t mangle -S PREROUTING 2>/dev/null | head -n 30
