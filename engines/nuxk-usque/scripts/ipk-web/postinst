@@ -1,0 +1,43 @@
+#!/bin/sh
+
+LIGHTTPD_CONF="/opt/etc/lighttpd/lighttpd.conf"
+LIGHTTPD_INIT="/opt/etc/init.d/S80lighttpd"
+CONF_D="/opt/etc/lighttpd/conf.d"
+WWW_DIR="/opt/share/www/usque"
+
+# 1. Make sure conf.d/*.conf is included by the main lighttpd config.
+if [ -f "$LIGHTTPD_CONF" ]; then
+    if ! grep -qE '(include.*conf\.d|conf\.d/\*\.conf)' "$LIGHTTPD_CONF"; then
+        echo "" >>"$LIGHTTPD_CONF"
+        echo "include_shell \"cat $CONF_D/*.conf 2>/dev/null\"" >>"$LIGHTTPD_CONF"
+        echo "Added conf.d include to $LIGHTTPD_CONF"
+    fi
+fi
+
+# 2. Fix conflict with the Keenetic webdav server (see Entware PR #27):
+#    S80lighttpd must match the full binary path, not just "lighttpd".
+if [ -f "$LIGHTTPD_INIT" ]; then
+    sed -i -E "s#^PROCS=lighttpd\$#PROCS=/opt/sbin/lighttpd#" "$LIGHTTPD_INIT"
+fi
+
+# 3. Validate the merged lighttpd config; warn but do not fail the install.
+if command -v lighttpd >/dev/null 2>&1; then
+    if ! lighttpd -tt -f "$LIGHTTPD_CONF" >/tmp/usque-lighttpd-check 2>&1; then
+        echo "WARNING: lighttpd config test failed:"
+        sed 's/^/  /' /tmp/usque-lighttpd-check
+    fi
+    rm -f /tmp/usque-lighttpd-check
+fi
+
+# 4. (Re)start lighttpd.
+if [ -f "$LIGHTTPD_INIT" ]; then
+    "$LIGHTTPD_INIT" restart >/dev/null 2>&1 || "$LIGHTTPD_INIT" start >/dev/null 2>&1
+fi
+
+# 5. Report the URL.
+ip_addr=$(ip -f inet addr show dev br0 2>/dev/null | sed -n 's/.*inet \([0-9.]\+\).*/\1/p' | head -1)
+[ -z "$ip_addr" ] && ip_addr=$(ip -f inet addr show 2>/dev/null | sed -n 's/.*inet \([0-9.]\+\).*/\1/p' | grep -v '^127\.' | head -1)
+echo "usque-keenetic-web installed: http://${ip_addr:-<router-ip>}:91"
+echo "Login: Entware user (default root / keenetic). Disable in /opt/etc/usque_web.conf"
+
+exit 0

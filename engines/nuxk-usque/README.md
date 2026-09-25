@@ -1,0 +1,258 @@
+# usque-keenetic
+
+[![GitHub Release](https://img.shields.io/github/release/side-effect-tm/usque-keenetic?style=flat&color=green)](https://side-effect-tm.github.io/usque-keenetic/releases)
+[![License](https://img.shields.io/github/license/side-effect-tm/usque-keenetic.svg?style=flat&color=orange)](LICENSE)
+
+Адаптация [неофициального Cloudflare WARP клиента с режимом MASQUE](https://github.com/Diniboy1123/usque) для роутеров for Keenetic/Netcaze.
+
+> [!WARNING]
+> Пакет создан в исследовательских целях и предоставляется по схеме "AS IS".
+> Вы можете использовать его на своем оборудовании при условии, что понимаете
+> смысл своих действий, осознаете риски и принимаете их.
+
+## ⚡ Тебования
+
+* Keenetic OS >= 5.0 (предполагается использование встроенной DNS-маршрутизации)
+* Entware
+* Доступ к подсетям Cloudflare (вероятно потребуется nfqws, nfqws2, или другие инструменты)
+
+## 🛠 Подготовка
+
+1. Установите Entware по инструкции к вашему роутеру.
+Рекомендуется установка [на внешний USB-накопитель](https://help.keenetic.com/hc/ru/articles/360021214160),
+но также возможна установка и [на встроенную память роутера](https://help.keenetic.com/hc/ru/articles/360021888880).
+
+2. Убедитесь, что у вас есть доступ к Entware.
+
+    Для подключения используйте ssh (рекомендуется) согласно упомянутой выше инструкции к вашему роутеру.
+    Обычно используется порт 22, а роутер имеет ip адрес 192.168.1.1:
+
+    ```sh
+    ssh root@192.168.1.1
+    ```
+
+    либо порт 222, если 22 уже занят
+
+    ```sh
+    ssh root@192.168.1.1 -p 222
+    ```
+
+    Также можно воспользоваться устаревшим способом подключения через telnet
+
+    ```sh
+    telnet 192.168.1.1
+    exec sh
+    ```
+
+    > [!IMPORTANT]
+    > Важно чтобы вы получили сессию именно в Entware, а не во внутреннем CLI устройства.
+
+## 📦 Установка
+
+1. Подключитесь к Entware.
+2. Зарегистрируйте новый opkg-репозиторий
+
+    ```sh
+    mkdir -p /opt/etc/opkg
+    echo "src/gz usque-keenetic https://side-effect-tm.github.io/usque-keenetic/all" > /opt/etc/opkg/usque-keenetic.conf
+    ```
+
+    Репозиторий универсальный. Поддерживаемые архитектуры: `aarch64`, `mipsel`, `mips`.
+
+    <details>
+      <summary>Или можете выбрать репозиторий под конкретную архитектуру</summary>
+
+      * `aarch64-3.10`
+
+        ```bash
+        mkdir -p /opt/etc/opkg
+        echo "src/gz usque-keenetic https://side-effect-tm.github.io/usque-keenetic/aarch64" > /opt/etc/opkg/usque-keenetic.conf
+        ```
+
+      * `mipsel-3.4`
+
+        ```bash
+        mkdir -p /opt/etc/opkg
+        echo "src/gz usque-keenetic https://side-effect-tm.github.io/usque-keenetic/mipsel" > /opt/etc/opkg/usque-keenetic.conf
+        ```
+
+      * `mips-3.4`
+
+        ```sh
+        mkdir -p /opt/etc/opkg
+        echo "src/gz usque-keenetic https://side-effect-tm.github.io/usque-keenetic/mips" > /opt/etc/opkg/usque-keenetic.conf
+        ```
+
+    </details>
+
+3. Установите пакет
+
+    ```sh
+    opkg update
+    opkg install usque-keenetic
+    ```
+
+## ↻ Обновление
+
+1. Подключитесь к Entware.
+2. Обновите пакет
+
+    ```sh
+    opkg update
+    opkg upgrade usque-keenetic
+    ```
+
+    Или обновите сразу все пакеты
+
+    ```sh
+    opkg update
+    opkg upgrade
+    ```
+
+## 🗑️ Удаление
+
+1. Подключитесь к Entware.
+2. Удалите пакет
+
+    ```sh
+    opkg remove --autoremove usque-keenetic
+    ```
+
+## 🖥 Управление сервисом
+
+* Запуск
+
+    ```sh
+    /opt/etc/init.d/S51usque start
+    ```
+
+* Остановка
+
+    ```sh
+    /opt/etc/init.d/S51usque stop
+    ```
+
+* Перезапуск
+
+    ```sh
+    /opt/etc/init.d/S51usque restart
+    ```
+
+* Статус / состояние / проверка связи
+
+    ```sh
+    /opt/etc/init.d/S51usque status       # человекочитаемо
+    /opt/etc/init.d/S51usque info          # машиночитаемо (key value)
+    /opt/etc/init.d/S51usque probe         # активная проверка через туннель
+    ```
+
+* Перерегистрация device key
+
+    ```sh
+    /opt/etc/init.d/S51usque reregister
+    ```
+
+## ⚙ Конфигурация
+
+Файл конфигурации расположен по пути `/opt/etc/usque/usque.conf`
+
+```sh
+# Интерфейс. Определяется автоматически при установке.
+# Должен быть вида opkgtun*
+IFACE="opkgtun0"
+
+# IP адрес (опционально).
+# По умолчанию адрес выбирается автоматически при запуске сервиса
+# в диапазоне 172.16.1.100 - 172.16.1.200.
+# IFACE_IP="172.16.0.1"
+
+# Маска подсети (опционально).
+# По умолчанию - 255.255.255.255
+# IFACE_MASK="255.255.255.255"
+
+# SNI для маскировки трафика
+SNI="ozon.ru"
+
+# Поддержка HTTP/2
+HTTP2_ENABLE=0
+
+# Версия конфигурации
+# !!! Не изменяйте это значение вручную !!!
+CONFIG_VERSION=1
+```
+
+## ⚙ Настройка маршрутизации
+
+Сервис создает сетевой интерфейс с именем `usque`, доступный в вэб-интерфейсе роутера.
+
+![](doc/images/if-overview.png)
+
+Вы можете перенаправлять на него трафик любым доступным способом.
+Одним из вариантов является использование маршрутизации по IP/CIDR и DNS.
+[Подробнее в отдельной инструкции](doc/dns-routing.md)
+
+## 🖥️ Веб-интерфейс
+
+Опциональный пакет `usque-keenetic-web` — панель мониторинга и управления
+(модель как у `nfqws`: ядро и веб — разные пакеты из одного репозитория,
+`usque-keenetic-web` зависит от `usque-keenetic`).
+
+Показывает: статус сервиса и туннеля (`connected since …`), активную проверку
+через интерфейс (внешний IP, PoP Cloudflare, `warp=on`, RTT), состояние
+интерфейса, трафик со спарклайном, маршруты, направленные в туннель, хвост лога;
+кнопки start / stop / restart / re-register; правку `SNI`, `HTTP2_ENABLE`,
+`IFACE_IP`.
+
+### Установка
+
+```sh
+opkg update
+opkg install ca-certificates curl
+
+mkdir -p /opt/etc/opkg
+echo "src/gz usque-keenetic-web https://side-effect-tm.github.io/usque-keenetic/web" \
+    > /opt/etc/opkg/usque-keenetic-web.conf
+
+opkg update
+opkg install usque-keenetic-web
+```
+
+Адрес: `http://<router_ip>:91` (nfqws-keenetic-web занимает `:90`).
+Вход — по пользователю Entware (по умолчанию `root` / `keenetic`).
+Отключить авторизацию: `enabled = false` в `/opt/etc/usque_web.conf`.
+
+### Что добавляется в ядро для интеграции
+
+* вывод демона пишется в `/opt/var/log/usque.log` (кольцевой, лимит 512 КБ);
+* хуки `usque --on-connect` / `--on-disconnect` пишут `/opt/var/run/usque.state`
+  (достоверное состояние туннеля);
+* `S51usque info` и `S51usque probe` — машиночитаемое состояние (используется вебом
+  и доступно из консоли);
+* `S51usque reregister` — сброс device key.
+
+API описан в OpenAPI 3.1: [`web/openapi.yaml`](web/openapi.yaml), на роутере —
+`http://<router_ip>:91/openapi.yaml`. Архитектура — [`doc/web-ui.md`](doc/web-ui.md).
+
+## Поддержка HTTP/2
+
+В usque реализована поддержка соединения по HTTP/2, но с некоторыми ограничениями.
+В частности, для подключения по ipv4 будет использоваться endpoint с адресом `162.159.198.2`,
+а для ipv6 адрес endpoint нужно указать вручную.
+
+Подробнее в оригинальном репозитории usque:
+
+* [Wiki](https://github.com/Diniboy1123/usque/wiki/HTTP-2-support)
+* [Раздел readme](https://github.com/Diniboy1123/usque/blob/main/README.md#http2-configuration)
+
+Для включения HTTP/2 добавьте опцию в конфиг:
+
+```sh
+HTTP2_ENABLE=1
+```
+
+## Благодарности
+
+Этот проект существует благодаря другим, перечисленным ниже:
+
+1. [Diniboy1123/usque](https://github.com/Diniboy1123/usque) - Спасибо за реализацию Cloudflare WARP client's MASQUE mode и готовые бинарники под aarch64, mips, mipsel;
+2. [nfqws/nfqws2-keenetic](https://github.com/nfqws/nfqws2-keenetic) - Спасибо за иллюстрацию сборки ipk пакетов, организацию opkg репозитория, а также некоторые скрипты.

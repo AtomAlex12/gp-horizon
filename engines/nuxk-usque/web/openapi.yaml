@@ -1,0 +1,293 @@
+openapi: 3.1.0
+
+info:
+  title: usque-keenetic-web
+  version: 0.4.0
+  description: >
+    Command-style JSON API in front of `/opt/etc/init.d/S51usque`.
+    Every request is `POST /api/index.php` with an
+    `application/x-www-form-urlencoded` body; the `cmd` field selects the
+    operation. Responses are JSON and always carry an integer `status`
+    (`0` = ok). When `[auth] enabled = true` in `/opt/etc/usque_web.conf`
+    every command except `login` needs the PHP session cookie obtained from
+    `login`.
+  license:
+    name: MIT
+
+servers:
+  - url: http://{host}:91
+    variables:
+      host:
+        default: 192.168.1.1
+        description: Router LAN address
+
+tags:
+  - name: status
+  - name: control
+  - name: config
+  - name: auth
+
+security:
+  - session: []
+
+paths:
+  /api/index.php:
+    post:
+      operationId: command
+      summary: Command endpoint (dispatch on `cmd`)
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              oneOf:
+                - $ref: '#/components/schemas/CmdSimple'
+                - $ref: '#/components/schemas/CmdLog'
+                - $ref: '#/components/schemas/CmdConfigSet'
+                - $ref: '#/components/schemas/CmdLogin'
+              discriminator:
+                propertyName: cmd
+                mapping:
+                  status:     '#/components/schemas/CmdSimple'
+                  probe:      '#/components/schemas/CmdSimple'
+                  config_get: '#/components/schemas/CmdSimple'
+                  start:      '#/components/schemas/CmdSimple'
+                  stop:       '#/components/schemas/CmdSimple'
+                  restart:    '#/components/schemas/CmdSimple'
+                  reregister: '#/components/schemas/CmdSimple'
+                  logout:     '#/components/schemas/CmdSimple'
+                  log:        '#/components/schemas/CmdLog'
+                  config_set: '#/components/schemas/CmdConfigSet'
+                  login:      '#/components/schemas/CmdLogin'
+            examples:
+              status:
+                value: { cmd: status }
+              probe:
+                value: { cmd: probe }
+              restart:
+                value: { cmd: restart }
+              config_set:
+                value: { cmd: config_set, sni: ozon.ru, http2: '0', iface_ip: '' }
+              login:
+                value: { cmd: login, user: root, password: keenetic }
+      responses:
+        '200':
+          description: Command result (shape depends on `cmd`)
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/StatusResponse'
+                  - $ref: '#/components/schemas/ProbeResponse'
+                  - $ref: '#/components/schemas/LogResponse'
+                  - $ref: '#/components/schemas/ConfigGetResponse'
+                  - $ref: '#/components/schemas/ActionResponse'
+                  - $ref: '#/components/schemas/OkResponse'
+        '400':
+          description: Unknown `cmd`
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '401':
+          description: Not authenticated (or bad credentials for `cmd=login`)
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+        '405':
+          description: Non-POST request
+          content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+
+  /openapi.yaml:
+    get:
+      operationId: openapiSpec
+      summary: This document
+      security: []
+      tags: [status]
+      responses:
+        '200':
+          description: OpenAPI spec
+          content:
+            application/yaml:
+              schema: { type: string }
+
+components:
+  securitySchemes:
+    session:
+      type: apiKey
+      in: cookie
+      name: PHPSESSID
+      description: Set by `cmd=login`. Absent/expired → HTTP 401.
+
+  schemas:
+
+    # ---- requests -------------------------------------------------------
+    Cmd:
+      type: string
+      enum: [status, probe, log, config_get, config_set, start, stop, restart, reregister, login, logout]
+
+    CmdSimple:
+      type: object
+      required: [cmd]
+      properties:
+        cmd:
+          type: string
+          enum: [status, probe, config_get, start, stop, restart, reregister, logout]
+
+    CmdLog:
+      type: object
+      required: [cmd]
+      properties:
+        cmd: { type: string, enum: [log] }
+        lines:
+          type: integer
+          minimum: 10
+          maximum: 2000
+          default: 400
+          description: Tail length. Content is returned newest-line-first.
+
+    CmdConfigSet:
+      type: object
+      required: [cmd]
+      description: At least one of `sni` / `http2` / `iface_ip` must be present. Applies the change and restarts the service.
+      properties:
+        cmd: { type: string, enum: [config_set] }
+        sni:
+          type: string
+          pattern: '^[a-zA-Z0-9._-]{0,253}$'
+        http2:
+          type: string
+          enum: ['0', '1']
+        iface_ip:
+          type: string
+          description: IPv4 or empty string for auto.
+
+    CmdLogin:
+      type: object
+      required: [cmd, user, password]
+      properties:
+        cmd: { type: string, enum: [login] }
+        user: { type: string, description: Entware system user (default `root`). }
+        password: { type: string }
+
+    # ---- responses ----------------------------------------------------
+    StatusResponse:
+      type: object
+      required: [status, service, tunnel, iface, traffic, routes]
+      properties:
+        status: { type: integer, description: '0 = `S51usque info` ran ok' }
+        anonym: { type: boolean, description: 'true when auth is disabled' }
+        web_version: { type: string }
+        name: { type: string, example: USQUE }
+        version:
+          type: object
+          properties:
+            pkg: { type: string, example: '0.4.0' }
+            usque: { type: string, example: '4.2.0' }
+            config: { type: integer, example: 1 }
+        service:
+          type: object
+          properties:
+            running: { type: integer, enum: [0, 1] }
+            pid: { oneOf: [{ type: integer }, { type: string }] }
+            uptime_s: { type: integer }
+        tunnel:
+          type: object
+          properties:
+            state:
+              type: string
+              enum: [connected, disconnected, unknown, stopped]
+              description: >
+                `connected`/`disconnected` come from the usque
+                --on-connect/--on-disconnect hooks; `unknown` when the
+                installed usque has no hook support; `stopped` when the
+                service is down.
+            since: { type: integer, description: epoch of last state change }
+            event: { type: string }
+            endpoint: { type: string, description: 'Cloudflare MASQUE endpoint IP (best-effort)' }
+        iface:
+          type: object
+          properties:
+            name: { type: string, example: opkgtun0 }
+            ndm_name: { type: string, example: OpkgTun0 }
+            label: { type: string, example: usque }
+            ip: { type: string }
+            mtu: { oneOf: [{ type: integer }, { type: string }] }
+            link: { type: string, example: up }
+            ndm_state: { type: string }
+        traffic:
+          type: object
+          properties:
+            rx_bytes: { type: integer }
+            tx_bytes: { type: integer }
+            rx_packets: { type: integer }
+            tx_packets: { type: integer }
+            rx_errors: { type: integer }
+            tx_errors: { type: integer }
+            rx_dropped: { type: integer }
+            tx_dropped: { type: integer }
+        config:
+          type: object
+          properties:
+            sni: { type: string }
+            http2: { type: integer, enum: [0, 1] }
+            iface_ip: { type: string }
+        routes:
+          type: object
+          properties:
+            count: { type: integer }
+            list:
+              type: array
+              items: { type: string, description: 'CIDR or host prefix routed via the interface' }
+
+    ProbeResponse:
+      type: object
+      required: [status, ok, ts]
+      properties:
+        status: { type: integer, enum: [0] }
+        ok: { type: integer, enum: [0, 1], description: '1 = got an answer through the tunnel' }
+        egress_ip: { type: string }
+        warp: { type: string, example: 'on' }
+        colo: { type: string, example: DME }
+        loc: { type: string, example: RU }
+        sni: { type: string }
+        rtt_ms: { type: string, description: 'ping RTT via the interface, ms' }
+        reason: { type: string, enum: [no-curl, no-response], description: present when ok = 0 }
+        ts: { type: integer }
+
+    LogResponse:
+      type: object
+      required: [status, content]
+      properties:
+        status: { type: integer, enum: [0] }
+        content: { type: string, description: 'Log tail, newest line first' }
+
+    ConfigGetResponse:
+      type: object
+      required: [status, SNI, HTTP2_ENABLE, IFACE_IP, IFACE]
+      properties:
+        status: { type: integer, enum: [0] }
+        SNI: { type: string }
+        HTTP2_ENABLE: { type: string, enum: ['0', '1'] }
+        IFACE_IP: { type: string }
+        IFACE: { type: string }
+
+    ActionResponse:
+      description: 'Reply to start / stop / restart / reregister / config_set'
+      type: object
+      required: [status]
+      properties:
+        status: { type: integer, description: 'S51usque exit code (0 = ok)' }
+        output:
+          type: array
+          items: { type: string }
+
+    OkResponse:
+      description: 'Reply to login / logout'
+      type: object
+      required: [status]
+      properties:
+        status: { type: integer, enum: [0, 1] }
+        anonym: { type: boolean }
+
+    Error:
+      type: object
+      required: [status]
+      properties:
+        status: { type: integer, enum: [1] }
+        error: { type: string }

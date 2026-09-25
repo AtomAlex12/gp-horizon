@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>usque — панель</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="login" class="overlay hidden">
+    <form id="login-form" class="card login">
+      <h2 data-i18n="login.title">Вход</h2>
+      <p class="muted" data-i18n="login.hint">Пользователь и пароль Entware</p>
+      <label><span data-i18n="login.user">Пользователь</span>
+        <input type="text" id="login-user" autocomplete="username" value="root"></label>
+      <label><span data-i18n="login.password">Пароль</span>
+        <input type="password" id="login-password" autocomplete="current-password"></label>
+      <div id="login-error" class="error hidden" data-i18n="login.error">Неверные данные</div>
+      <button type="submit" data-i18n="login.submit">Войти</button>
+    </form>
+  </div>
+
+  <header>
+    <div class="brand">
+      <span class="dot" id="hdr-dot"></span>
+      <strong>usque</strong>
+      <span class="muted" id="hdr-sub">MASQUE / Cloudflare WARP</span>
+    </div>
+    <div class="hdr-right">
+      <span class="muted" id="hdr-ver"></span>
+      <a class="ghost btn" href="openapi.yaml" target="_blank" rel="noopener">API</a>
+      <button class="ghost" id="btn-lang">EN</button>
+      <button class="ghost hidden" id="btn-logout" data-i18n="header.logout">Выход</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="grid">
+      <div class="card" id="card-service">
+        <h3 data-i18n="service.title">Сервис</h3>
+        <div class="big" id="svc-state">—</div>
+        <dl>
+          <dt data-i18n="service.pid">PID</dt><dd id="svc-pid">—</dd>
+          <dt data-i18n="service.uptime">Аптайм</dt><dd id="svc-uptime">—</dd>
+          <dt data-i18n="service.tunnel">Туннель</dt><dd id="svc-tunnel">—</dd>
+          <dt data-i18n="service.usque">usque</dt><dd id="svc-usque">—</dd>
+          <dt data-i18n="service.config">Конфиг</dt><dd id="svc-config">—</dd>
+        </dl>
+        <div class="actions">
+          <button id="btn-start" data-i18n="action.start">Запуск</button>
+          <button id="btn-stop" class="warn" data-i18n="action.stop">Стоп</button>
+          <button id="btn-restart" data-i18n="action.restart">Рестарт</button>
+          <button id="btn-reregister" class="ghost" data-i18n="action.reregister">Ре-регистрация</button>
+        </div>
+      </div>
+
+      <div class="card" id="card-health">
+        <h3 data-i18n="health.title">Здоровье</h3>
+        <div class="big" id="hl-warp">—</div>
+        <dl>
+          <dt data-i18n="health.egress">Внешний IP</dt><dd id="hl-ip">—</dd>
+          <dt data-i18n="health.pop">PoP Cloudflare</dt><dd id="hl-pop">—</dd>
+          <dt data-i18n="health.rtt">RTT</dt><dd id="hl-rtt">—</dd>
+          <dt data-i18n="health.checked">Проверено</dt><dd id="hl-ts">—</dd>
+        </dl>
+        <div class="actions">
+          <button id="btn-probe" data-i18n="health.probe">Проверить сейчас</button>
+        </div>
+      </div>
+
+      <div class="card" id="card-iface">
+        <h3 data-i18n="iface.title">Интерфейс</h3>
+        <dl>
+          <dt data-i18n="iface.name">Имя</dt><dd id="if-name">—</dd>
+          <dt data-i18n="iface.ip">IP</dt><dd id="if-ip">—</dd>
+          <dt data-i18n="iface.mtu">MTU</dt><dd id="if-mtu">—</dd>
+          <dt data-i18n="iface.link">Link</dt><dd id="if-link">—</dd>
+          <dt data-i18n="iface.ndm">NDM</dt><dd id="if-ndm">—</dd>
+          <dt data-i18n="iface.endpoint">Endpoint</dt><dd id="if-endpoint">—</dd>
+        </dl>
+      </div>
+
+      <div class="card" id="card-traffic">
+        <h3 data-i18n="traffic.title">Трафик</h3>
+        <canvas id="spark" height="64"></canvas>
+        <dl>
+          <dt>↓ <span data-i18n="traffic.rate">скорость</span></dt><dd id="tf-rx-rate">—</dd>
+          <dt>↑ <span data-i18n="traffic.rate">скорость</span></dt><dd id="tf-tx-rate">—</dd>
+          <dt data-i18n="traffic.total">Всего ↓ / ↑</dt><dd id="tf-total">—</dd>
+          <dt data-i18n="traffic.errors">Ошибки / дропы</dt><dd id="tf-err">—</dd>
+        </dl>
+      </div>
+
+      <div class="card wide" id="card-routes">
+        <h3><span data-i18n="routes.title">Маршруты в туннель</span> <span class="badge" id="rt-count">0</span></h3>
+        <div class="routes" id="rt-list"></div>
+      </div>
+
+      <div class="card wide" id="card-config">
+        <h3 data-i18n="config.title">Конфиг</h3>
+        <form id="config-form" class="config">
+          <label>SNI <input type="text" id="cfg-sni" placeholder="ozon.ru"></label>
+          <label>IFACE_IP <input type="text" id="cfg-ip" placeholder="auto"></label>
+          <label class="check"><input type="checkbox" id="cfg-http2"> HTTP/2</label>
+          <button type="submit" data-i18n="config.save">Сохранить и перезапустить</button>
+        </form>
+      </div>
+
+      <div class="card wide" id="card-log">
+        <h3><span data-i18n="log.title">Лог</span>
+          <label class="check inline"><input type="checkbox" id="log-follow" checked> <span data-i18n="log.follow">следить</span></label>
+        </h3>
+        <pre id="log-view" class="log">—</pre>
+      </div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <dialog id="confirm">
+    <form method="dialog">
+      <p id="confirm-text"></p>
+      <menu>
+        <button value="cancel" class="ghost" data-i18n="confirm.cancel">Отмена</button>
+        <button value="ok" class="warn" data-i18n="confirm.ok">Подтвердить</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>
