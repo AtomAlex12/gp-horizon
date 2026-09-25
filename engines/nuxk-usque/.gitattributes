@@ -1,0 +1,7 @@
+# Shell scripts, Makefiles and web assets must stay LF on every platform —
+# they are shipped verbatim into .ipk packages and run on the router.
+* text=auto eol=lf
+
+*.png binary
+*.ipk binary
+*.gz binary

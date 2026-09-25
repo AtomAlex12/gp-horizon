@@ -1,0 +1,21 @@
+#!/bin/sh
+# Entware startup script
+
+PATH=/opt/sbin:/opt/bin:/opt/usr/sbin:/opt/usr/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+NAME="USQUE"
+USQUE_BIN="/opt/usr/bin/usque"
+PIDFILE="/opt/var/run/usque.pid"
+CONFIG_FILE="/opt/etc/usque/usque.conf"
+SESSION_FILE="/opt/etc/usque/session.conf"
+
+# --- observability / web-ui integration ---
+LOG_FILE="/opt/var/log/usque.log"
+LOG_MAX_BYTES=524288
+STATE_FILE="/opt/var/run/usque.state"
+RUN_WRAPPER="/opt/var/run/usque.run.sh"
+HOOK_DIR="/opt/etc/usque/hooks"
+HOOK_CONNECT="$HOOK_DIR/on-connect.sh"
+HOOK_DISCONNECT="$HOOK_DIR/on-disconnect.sh"
+PKG_VERSION_FILE="/opt/etc/usque/version"
+USQUE_VERSION_FILE="/opt/etc/usque/usque-version"
