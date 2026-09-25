@@ -123,10 +123,18 @@ func main() {
 	switch cfg.Plane.Backend {
 	case "", "off":
 	case "keenetic":
-		pm = plane.NewManager(keenetic.New(cfg.Plane.RCI), st, plane.Config{
+		pc := plane.Config{
 			Ifaces: map[plane.Mode]string{plane.ModeWarp: cfg.Plane.IfaceWarp, plane.ModeVless: cfg.Plane.IfaceVless},
 			Apply:  cfg.Plane.Apply, V6Deny: cfg.Plane.V6Deny, Every: cfg.Plane.Every,
-		})
+		}
+		if _, ok := reg.Get(engine.KindNfqws2); ok {
+			// «DPI» list → nfqws2 hostlist, through the controller so it is
+			// stored and restored like any other routing change
+			pc.Desync = func(ctx context.Context, doms []string) error {
+				return ctl.Apply(ctx, engine.KindNfqws2, engine.Routing{Domains: append([]string{}, doms...)})
+			}
+		}
+		pm = plane.NewManager(keenetic.New(cfg.Plane.RCI), st, pc)
 		ctl.PlaneStatus = func() any { return pm.Status() }
 		slog.Info("routing plane", "backend", "keenetic", "apply", cfg.Plane.Apply, "v6deny", cfg.Plane.V6Deny)
 		go pm.Run(ctx)

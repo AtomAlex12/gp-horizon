@@ -14,27 +14,64 @@ import (
 )
 
 // Mode is where a list's traffic goes. Desync is not a route (nfqws2 works on
-// the WAN path), so only routed modes get firmware objects.
+// the WAN path): its domains go to nfqws2's hostlist, and only routed modes
+// get firmware objects.
 type Mode string
 
 const (
-	ModeWarp  Mode = "warp"  // usque tunnel (OpkgTun0)
-	ModeVless Mode = "vless" // xray tunnel (OpkgTun1)
+	ModeDesync Mode = "desync" // «DPI»: nfqws2 desync, no reroute
+	ModeWarp   Mode = "warp"   // «WARP»: usque tunnel (OpkgTun0)
+	ModeVless  Mode = "vless"  // «VLESS»: xray tunnel (OpkgTun1)
 )
 
-func (m Mode) Valid() bool { return m == ModeWarp || m == ModeVless }
+func (m Mode) Valid() bool { return m == ModeDesync || m.Routed() }
+
+// Routed modes send traffic into a tunnel interface.
+func (m Mode) Routed() bool { return m == ModeWarp || m == ModeVless }
+
+// WarpDomains are the Cloudflare hosts usque talks to (registration API and
+// MASQUE endpoint). With a WARP tunnel configured they are always desynced:
+// that is the "WARP через nfqws" tandem — the ISP's DPI can't pin the tunnel's
+// own handshake. The endpoint IPs are covered separately (controller harden).
+var WarpDomains = []string{"cloudflareclient.com"}
+
+// OnDown is what a routed list does while its tunnel is down.
+type OnDown string
+
+const (
+	OnDownDirect OnDown = "direct" // fall back to the default route (firmware "auto")
+	OnDownBlock  OnDown = "block"  // stay on the dead tunnel: nothing leaks past it
+)
+
+func (o OnDown) Valid() bool { return o == OnDownDirect || o == OnDownBlock }
 
 // List is one desired domain list.
 type List struct {
 	Name    string   `json:"name"`             // shown in UI; free text
-	Mode    Mode     `json:"mode"`             // warp | vless
+	Mode    Mode     `json:"mode"`             // desync | warp | vless
 	Domains []string `json:"domains"`          // hosts; subdomains are covered by the firmware
 	Source  string   `json:"source,omitempty"` // manual | imported:<group> | preset:<id>
 }
 
 // Desired is the whole plane intent, stored as state/plane.json.
 type Desired struct {
-	Lists []List `json:"lists"`
+	Lists  []List `json:"lists"`
+	OnDown OnDown `json:"on_down,omitempty"` // "" = direct
+}
+
+// Desync returns the domains for nfqws2's hostlist: every desync list, plus
+// WarpDomains when warp is on (a WARP interface is configured).
+func Desync(d Desired, warp bool) []string {
+	var doms []string
+	for _, l := range d.Lists {
+		if l.Mode == ModeDesync {
+			doms = append(doms, l.Domains...)
+		}
+	}
+	if warp {
+		doms = append(doms, WarpDomains...)
+	}
+	return Normalize(doms)
 }
 
 // Group is the firmware-side object nuxk wants for one mode: one group per
@@ -43,6 +80,7 @@ type Group struct {
 	Name      string   `json:"name"`      // nuxk-<mode>
 	Mode      Mode     `json:"mode"`      //
 	Interface string   `json:"interface"` // route target
+	Block     bool     `json:"block"`     // on tunnel down: true = drop, false = go direct
 	Domains   []string `json:"domains"`   // normalised, deduplicated, subdomains folded
 }
 
@@ -58,7 +96,7 @@ func Owned(name string) bool { return strings.HasPrefix(name, GroupPrefix) }
 func Build(d Desired, ifaces map[Mode]string) []Group {
 	byMode := map[Mode][]string{}
 	for _, l := range d.Lists {
-		if l.Mode.Valid() {
+		if l.Mode.Routed() {
 			byMode[l.Mode] = append(byMode[l.Mode], l.Domains...)
 		}
 	}
@@ -69,7 +107,7 @@ func Build(d Desired, ifaces map[Mode]string) []Group {
 		if len(doms) == 0 || iface == "" {
 			continue
 		}
-		out = append(out, Group{Name: GroupPrefix + string(m), Mode: m, Interface: iface, Domains: doms})
+		out = append(out, Group{Name: GroupPrefix + string(m), Mode: m, Interface: iface, Block: d.OnDown == OnDownBlock, Domains: doms})
 	}
 	return out
 }
@@ -160,6 +198,7 @@ type Op struct {
 	Kind      OpKind   `json:"kind"`
 	Group     string   `json:"group,omitempty"`
 	Interface string   `json:"interface,omitempty"`
+	Block     bool     `json:"block,omitempty"` // add-route: no "auto" — traffic stays on a dead tunnel
 	Domains   []string `json:"domains,omitempty"`
 	Groups    []string `json:"groups,omitempty"` // ensure-v6-deny: the full set of groups to deny
 }
@@ -247,14 +286,18 @@ func Plan(want []Group, obs Observed, v6deny bool) ([]Op, []Conflict) {
 			if r.Group != g.Name {
 				continue
 			}
-			if r.Interface == g.Interface {
+			if r.Interface == g.Interface && r.Auto != g.Block {
 				hasRoute = true
+			} else if r.Interface == g.Interface {
+				// on-down policy changed: re-add in place, right away (a
+				// deferred delete would drop the fresh route again)
+				ops = append(ops, Op{Kind: OpDelRoute, Group: r.Group, Interface: r.Interface})
 			} else {
 				tail = append(tail, Op{Kind: OpDelRoute, Group: r.Group, Interface: r.Interface})
 			}
 		}
 		if !hasRoute {
-			ops = append(ops, Op{Kind: OpAddRoute, Group: g.Name, Interface: g.Interface})
+			ops = append(ops, Op{Kind: OpAddRoute, Group: g.Name, Interface: g.Interface, Block: g.Block})
 		}
 	}
 

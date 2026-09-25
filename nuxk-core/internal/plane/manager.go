@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -21,6 +22,9 @@ type Config struct {
 	Apply  bool            // PLANE_APPLY=1: change the router; otherwise plan only
 	V6Deny bool            // PLANE_V6=deny (default): refuse IPv6 to nuxk groups
 	Every  time.Duration   // reconcile period
+	// Desync pushes the DPI hostlist to nfqws2 (nil = no nfqws2 engine). An
+	// empty non-nil slice clears the list.
+	Desync func(ctx context.Context, domains []string) error
 }
 
 // Status is what /api/v1/plane and the Hub show.
@@ -28,7 +32,11 @@ type Status struct {
 	Backend   string          `json:"backend"`
 	Apply     bool            `json:"apply"`
 	Ifaces    map[Mode]string `json:"ifaces"`
+	OnDown    OnDown          `json:"on_down"`
 	Groups    []Group         `json:"groups"`              // wanted firmware groups
+	Desync    []string        `json:"desync"`              // wanted nfqws2 hostlist
+	DesyncOK  bool            `json:"desync_ok"`           // nfqws2 has exactly Desync
+	Lists     []List          `json:"lists"`               // desired lists as stored
 	Pending   []Op            `json:"pending"`             // plan not applied (plan-only mode, or failed)
 	Conflicts []Conflict      `json:"conflicts,omitempty"` // held back: still in a user list
 	Foreign   []Foreign       `json:"foreign,omitempty"`   // user groups with routes — importable
@@ -52,9 +60,10 @@ type Manager struct {
 	Store Store
 	Cfg   Config
 
-	kick chan struct{}
-	mu   sync.Mutex // one reconcile at a time; guards st
-	st   Status
+	kick   chan struct{}
+	mu     sync.Mutex // one reconcile at a time; guards st, pushed
+	st     Status
+	pushed []string // last desync list nfqws2 accepted; nil = not pushed yet
 }
 
 const stateName = "plane"
@@ -80,10 +89,18 @@ func (m *Manager) Desired() (Desired, error) {
 	return d, err
 }
 
-var ErrBadList = errors.New("list needs a name, mode warp|vless and at least one domain")
+var ErrBadList = errors.New("list needs a name, mode desync|warp|vless and at least one domain")
+
+var ErrBadOnDown = errors.New("on_down must be direct or block")
 
 // SetDesired replaces the desired lists and reconciles right away.
 func (m *Manager) SetDesired(d Desired) error {
+	if d.OnDown == "" {
+		d.OnDown = OnDownDirect
+	}
+	if !d.OnDown.Valid() {
+		return ErrBadOnDown
+	}
 	for i, l := range d.Lists {
 		l.Domains = Normalize(l.Domains)
 		if l.Name == "" || !l.Mode.Valid() || len(l.Domains) == 0 {
@@ -181,6 +198,15 @@ func (m *Manager) Reconcile(ctx context.Context) {
 		fail(err)
 		return
 	}
+	st.Lists, st.OnDown = d.Lists, d.OnDown
+	if st.OnDown == "" {
+		st.OnDown = OnDownDirect
+	}
+	st.Desync = Desync(d, m.Cfg.Ifaces[ModeWarp] != "")
+	st.DesyncOK = m.pushed != nil && slices.Equal(m.pushed, st.Desync)
+	if st.Desync == nil {
+		st.Desync = []string{}
+	}
 	want := Build(d, m.Cfg.Ifaces)
 	if obs.Interfaces != nil {
 		// a route to a missing interface fails the whole pass: skip that mode
@@ -202,6 +228,15 @@ func (m *Manager) Reconcile(ctx context.Context) {
 		st.Pending = pendingOnly(ops)
 		m.st = st
 		return
+	}
+	// DPI first: it is cheap, local and independent of the firmware objects
+	if m.Cfg.Desync != nil && !st.DesyncOK {
+		if err := m.Cfg.Desync(ctx, st.Desync); err != nil {
+			st.Warnings = append(st.Warnings, "список DPI не передан в nfqws2: "+err.Error())
+		} else {
+			m.pushed, st.DesyncOK = slices.Clone(st.Desync), true
+			slog.Info("plane: desync list pushed to nfqws2", "domains", len(st.Desync))
+		}
 	}
 	for i, op := range ops {
 		if err := m.B.Apply(ctx, op); err != nil {

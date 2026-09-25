@@ -208,11 +208,13 @@ func fqdn(group string, body map[string]any) map[string]any {
 	return map[string]any{"object-group": map[string]any{"fqdn": map[string]any{group: body}}}
 }
 
-func route(group, iface string, no bool) map[string]any {
+// route: "auto" makes the firmware skip the route while the interface is
+// down (traffic goes direct); without it traffic stays on the dead tunnel.
+func route(group, iface string, no, block bool) map[string]any {
 	r := map[string]any{"group": group, "interface": iface}
 	if no {
 		r["no"] = true
-	} else {
+	} else if !block {
 		r["auto"] = true
 	}
 	return map[string]any{"dns-proxy": map[string]any{"route": r}}
@@ -237,9 +239,9 @@ func (b *Backend) Apply(ctx context.Context, op plane.Op) error {
 	case plane.OpDelDomains:
 		return b.post(ctx, fqdn(op.Group, map[string]any{"include": addrs(op.Domains, true)}))
 	case plane.OpAddRoute:
-		return b.post(ctx, route(op.Group, op.Interface, false))
+		return b.post(ctx, route(op.Group, op.Interface, false, op.Block))
 	case plane.OpDelRoute:
-		return b.post(ctx, route(op.Group, op.Interface, true))
+		return b.post(ctx, route(op.Group, op.Interface, true, false))
 	case plane.OpDeleteGroup:
 		return b.post(ctx, fqdn(op.Group, map[string]any{"no": true}))
 	case plane.OpEnsureV6Deny:

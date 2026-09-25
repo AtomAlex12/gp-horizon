@@ -237,7 +237,7 @@ func (d Deps) handlePlaneSetLists(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := d.Plane.SetDesired(des); err != nil {
 		code := http.StatusInternalServerError
-		if errors.Is(err, plane.ErrBadList) {
+		if errors.Is(err, plane.ErrBadList) || errors.Is(err, plane.ErrBadOnDown) {
 			code = http.StatusBadRequest
 		}
 		writeErr(w, code, "bad_list", err.Error())

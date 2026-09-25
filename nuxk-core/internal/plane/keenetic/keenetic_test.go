@@ -3,8 +3,10 @@ package keenetic
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -130,7 +132,8 @@ func (f *fakeRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			enc.Encode(map[string]any{"dns-proxy": map[string]any{"route": errStatus("unknown object-group")}})
 			return
 		}
-		f.routes = append(f.routes, plane.Route{Group: g, Interface: i, Auto: true, Index: "new"})
+		auto, _ := rt["auto"].(bool)
+		f.routes = append(f.routes, plane.Route{Group: g, Interface: i, Auto: auto, Index: "new"})
 		enc.Encode(map[string]any{"dns-proxy": map[string]any{"route": msg("4456748", "added the DNS route.")}})
 	}
 }
@@ -343,5 +346,75 @@ func TestMissingInterfaceSkippedWithWarning(t *testing.T) {
 	}
 	if _, ok := f.groups["nuxk-vless"]; !ok || st.LastError != "" {
 		t.Errorf("vless not applied: %v err=%q", f.groups, st.LastError)
+	}
+}
+
+func TestDesyncListAndWarpDomainsGoToNfqws2(t *testing.T) {
+	_, m := setup(t, true)
+	var got [][]string
+	fail := true
+	m.Cfg.Desync = func(_ context.Context, d []string) error {
+		got = append(got, d)
+		if fail {
+			fail = false
+			return errors.New("shim down")
+		}
+		return nil
+	}
+	m.Cfg.Ifaces[plane.ModeWarp] = "OpkgTun0"
+	m.SetDesired(plane.Desired{Lists: []plane.List{
+		{Name: "dpi", Mode: plane.ModeDesync, Domains: []string{"www.youtube.com", "youtube.com", "rutracker.org"}},
+	}})
+	ctx := context.Background()
+	m.Reconcile(ctx)
+	st := m.Status()
+	want := []string{"cloudflareclient.com", "rutracker.org", "youtube.com"}
+	if !reflect.DeepEqual(st.Desync, want) || st.DesyncOK || len(st.Warnings) != 1 {
+		t.Fatalf("first pass (push fails): %+v", st)
+	}
+	m.Reconcile(ctx)
+	m.Reconcile(ctx) // converged: no third push
+	if st := m.Status(); !st.DesyncOK || len(got) != 2 || !reflect.DeepEqual(got[1], want) {
+		t.Fatalf("pushes=%v status=%+v", got, st)
+	}
+	// a desync list never becomes a firmware group
+	for _, g := range m.Status().Groups {
+		if g.Mode == plane.ModeDesync {
+			t.Errorf("desync group built: %+v", g)
+		}
+	}
+}
+
+func TestOnDownBlockDropsAuto(t *testing.T) {
+	f, m := setup(t, true)
+	ctx := context.Background()
+	lists := []plane.List{{Name: "v", Mode: plane.ModeVless, Domains: []string{"y.com"}}}
+	m.SetDesired(plane.Desired{Lists: lists})
+	m.Reconcile(ctx)
+	auto := func() (bool, int) {
+		n, a := 0, false
+		for _, r := range f.routes {
+			if r.Group == "nuxk-vless" {
+				n++
+				a = r.Auto
+			}
+		}
+		return a, n
+	}
+	if a, n := auto(); !a || n != 1 {
+		t.Fatalf("direct: auto=%v routes=%d", a, n)
+	}
+	if err := m.SetDesired(plane.Desired{Lists: lists, OnDown: "sometimes"}); err == nil {
+		t.Error("bad on_down accepted")
+	}
+	m.SetDesired(plane.Desired{Lists: lists, OnDown: plane.OnDownBlock})
+	m.Reconcile(ctx)
+	if a, n := auto(); a || n != 1 || m.Status().LastError != "" {
+		t.Fatalf("block: auto=%v routes=%d err=%q", a, n, m.Status().LastError)
+	}
+	before := f.posts
+	m.Reconcile(ctx)
+	if f.posts != before {
+		t.Error("block policy not converged")
 	}
 }

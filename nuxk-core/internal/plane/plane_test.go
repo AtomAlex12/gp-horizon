@@ -106,7 +106,7 @@ func TestPlanUpdatesInPlace(t *testing.T) {
 		t.Errorf("ops = %+v", ops)
 	}
 	// converged: nothing but the idempotent v6 check
-	obs2 := Observed{Groups: map[string][]string{"nuxk-vless": {"a.com", "new.com"}}, Routes: []Route{{Group: "nuxk-vless", Interface: "Wireguard1"}}}
+	obs2 := Observed{Groups: map[string][]string{"nuxk-vless": {"a.com", "new.com"}}, Routes: []Route{{Group: "nuxk-vless", Interface: "Wireguard1", Auto: true}}}
 	ops2, _ := Plan(want, obs2, true)
 	if Changes(ops2) != 0 {
 		t.Errorf("converged plan = %v", kinds(ops2))
