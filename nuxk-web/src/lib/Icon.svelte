@@ -1,6 +1,11 @@
 <script lang="ts">
   // Line icons (24×24, stroke = currentColor).
   const P: Record<string, string> = {
+    devices: '<rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/>',
+    results: '<path d="M3 3v18h18"/><path d="M7 15l4-4 3 3 5-6"/>',
+    strategies: '<path d="M13 2 4 14h6l-1 8 9-12h-6z"/>',
+    dns: '<path d="M4 7h16M4 12h16M4 17h16"/>',
+    logs: '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/>',
     overview: '<rect x="3" y="3" width="7" height="8" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="11" width="7" height="10" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/>',
     conns: '<path d="M22 12h-4l-3 8L9 4l-3 8H2"/>',
     runs: '<path d="M6 4l14 8-14 8z"/>',

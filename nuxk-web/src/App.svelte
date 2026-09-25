@@ -1,40 +1,56 @@
 <script lang="ts">
-  import { status, startPolling, pollNow } from './lib/status.svelte';
+  import { status, node, startPolling, pollNow } from './lib/status.svelte';
   import { setToken, type EngineKind } from './lib/api';
   import Icon from './lib/Icon.svelte';
-  import EngineDetail from './lib/EngineDetail.svelte';
-  import NfqwsRouting from './lib/NfqwsRouting.svelte';
-  import XrayConfig from './lib/XrayConfig.svelte';
-  import Overview from './lib/views/Overview.svelte';
+  import Dashboard from './lib/views/Dashboard.svelte';
+  import Connections from './lib/views/Connections.svelte';
+  import EngineView from './lib/views/EngineView.svelte';
   import Lists from './lib/views/Lists.svelte';
+  import Logs from './lib/views/Logs.svelte';
   import System from './lib/views/System.svelte';
   import Soon from './lib/views/Soon.svelte';
-  import { planeOf, healthDot } from './lib/ui';
+  import { planeOf, healthDot, roleLabel, last } from './lib/ui';
+  import { history as hist } from './lib/status.svelte';
 
   startPolling();
 
   const TABS: Record<string, { label: string; icon: string }> = {
-    overview: { label: 'Обзор', icon: 'overview' },
+    dashboard: { label: 'Дашборд', icon: 'overview' },
     conns: { label: 'Соединения', icon: 'conns' },
-    lists: { label: 'Списки', icon: 'lists' },
-    runs: { label: 'Подбор стратегий', icon: 'runs' },
+    devices: { label: 'Устройства', icon: 'devices' },
+    runs: { label: 'Прогоны', icon: 'runs' },
+    results: { label: 'Результаты', icon: 'results' },
+    strategies: { label: 'Стратегии', icon: 'strategies' },
     decisions: { label: 'Решения', icon: 'decisions' },
-    nfqws2: { label: 'nfqws2 (DPI)', icon: 'nfqws2' },
+    lists: { label: 'Списки', icon: 'lists' },
+    dns: { label: 'DNS', icon: 'dns' },
+    nfqws2: { label: 'nfqws2', icon: 'nfqws2' },
     usque: { label: 'usque (WARP)', icon: 'usque' },
     xray: { label: 'xray (VLESS)', icon: 'xray' },
+    logs: { label: 'Логи', icon: 'logs' },
     system: { label: 'Система', icon: 'system' },
   };
   const NAV = [
-    { title: 'Статус', items: ['overview', 'conns'] },
-    { title: 'Маршрутизация', items: ['lists', 'runs', 'decisions'] },
+    { title: 'Статус', items: ['dashboard', 'conns', 'devices'] },
+    { title: 'Подбор', items: ['runs', 'results', 'strategies', 'decisions'] },
+    { title: 'Списки и данные', items: ['lists', 'dns'] },
     { title: 'Движки', items: ['nfqws2', 'usque', 'xray'] },
-    { title: 'Управление', items: ['system'] },
+    { title: 'Управление', items: ['logs', 'system'] },
   ];
+  // screens the design has but the agent doesn't feed yet — said plainly
+  const SOON: Record<string, string> = {
+    devices: 'Устройства LAN и что у каждого не открывается — появится вместе со списком соединений.',
+    runs: 'Прогоны стратегий nfqws2 по вашим доменам: какая стратегия пробивает DPI вашего провайдера.',
+    results: 'Результаты прогонов: какие стратегии сработали, с какой задержкой, для каких доменов.',
+    strategies: 'Библиотека стратегий nfqws2 (zapret2) с описанием, откуда каждая и когда помогает.',
+    decisions: 'Автоматический выбор пути для домена — десинк, туннель или напрямую — с объяснением, почему.',
+    dns: 'DNS на роутере обслуживает сам Keenetic (списки работают через его маршрутизацию по доменам). Экран настроек DNS — позже.',
+  };
 
   // #lists etc. — a reload keeps the page
   const fromHash = () => {
     const h = location.hash.slice(1);
-    return TABS[h] ? h : 'overview';
+    return TABS[h] ? h : h === 'overview' ? 'dashboard' : 'dashboard';
   };
   let tab = $state(fromHash());
   let menuOpen = $state(false);
@@ -77,6 +93,10 @@
   const byKind = $derived(new Map(engines.map((e) => [e.kind, e])));
   const plane = $derived(planeOf(status.data));
   const conflicts = $derived((plane?.conflicts ?? []).length);
+  const conns = $derived(hist.h?.conntrack.length ? last(hist.h.conntrack) : null);
+  const where = $derived(
+    node.info?.role === 'router' && node.info.firmware ? `KeeneticOS ${node.info.firmware}` : node.info?.hostname ?? location.host,
+  );
 
   let tokenInput = $state('');
   function login(e: SubmitEvent) {
@@ -99,7 +119,7 @@
           stroke-width="2"
         /><circle cx="14" cy="10" r="3" fill="var(--accent)" /></svg
       >
-      <div><b>nuxk Horizon</b><small>Keenetic · {location.hostname}</small></div>
+      <div><b>nuxk Horizon</b><small>{roleLabel(node.info)} · {where}</small></div>
     </div>
     {#each NAV as g (g.title)}
       <div class="nav-group">
@@ -112,7 +132,9 @@
             {#if e}
               <span class="dot {healthDot(e)} end"></span>
             {:else if k === 'lists' && conflicts}
-              <span class="count end">{conflicts}</span>
+              <span class="count end warnc">{conflicts}</span>
+            {:else if k === 'conns' && conns !== null}
+              <span class="count end">{conns}</span>
             {/if}
           </button>
         {/each}
@@ -125,8 +147,14 @@
       <button class="ghost sm menu-btn" onclick={() => (menuOpen = true)} aria-label="Меню"><Icon name="menu" size={16} /></button>
       <h1>{TABS[tab].label}</h1>
       <span class="spacer"></span>
+      {#if node.info?.role === 'stand'}
+        <span class="chip deg" title="Тестовый стенд в Docker на Pi — не роутер">стенд, не роутер</span>
+      {/if}
       {#if status.data}
-        <span class="chip"><span class="dot {status.error ? 'warn' : 'ok'}"></span>контроллер</span>
+        <span class="chip" title={node.via === 'controller' ? 'Интерфейс открыт через nuxk-controller на Pi' : 'Интерфейс открыт напрямую с узла'}>
+          <span class="dot {status.error || (node.agent && !node.agent.reachable) ? 'warn' : 'ok'}" class:pulse={status.live}></span>
+          {node.via === 'controller' ? 'контроллер' : 'агент'}
+        </span>
         <span class="muted mono ver">core {status.data.version}</span>
       {/if}
       <button class="ghost sm" onclick={toggleTheme} aria-label="Сменить тему"><Icon name={theme === 'dark' ? 'sun' : 'moon'} size={15} /></button>
@@ -149,39 +177,20 @@
         <p class="err-text">nuxk-core недоступен: {status.error}</p>
       {:else}
         {#if status.error}<div class="banner warn">Нет связи с nuxk-core: {status.error}. Показаны последние данные.</div>{/if}
-        {#if tab === 'overview'}
-          <Overview {go} />
+        {#if tab === 'dashboard'}
+          <Dashboard {go} />
+        {:else if tab === 'conns'}
+          <Connections />
         {:else if tab === 'lists'}
           <Lists />
+        {:else if tab === 'logs'}
+          <Logs />
         {:else if tab === 'system'}
           <System />
-        {:else if tab === 'conns'}
-          <Soon title="Соединения" what="Живой список соединений LAN-устройств: куда, каким путём (DPI / WARP / VLESS / напрямую), с какой задержкой." />
-        {:else if tab === 'runs'}
-          <Soon title="Подбор стратегий" what="Прогоны стратегий nfqws2 по вашим доменам: какая стратегия пробивает DPI вашего провайдера." />
-        {:else if tab === 'decisions'}
-          <Soon title="Решения" what="Автоматический выбор пути для домена: десинк, туннель или напрямую — с объяснением, почему." />
-        {:else if tab === 'nfqws2'}
-          <EngineDetail kind="nfqws2" label="nfqws2 — DPI-десинк" engine={byKind.get('nfqws2')}>
-            {#snippet extra()}
-              {#if plane}
-                <p class="hint">
-                  Домены для десинка задаются в <button class="linkbtn" onclick={() => go('lists')}>Списки → DPI</button>: nuxk сам
-                  передаёт их nfqws2 (сейчас {(plane.desync ?? []).length}).
-                </p>
-              {:else}
-                <NfqwsRouting engine={byKind.get('nfqws2')} />
-              {/if}
-            {/snippet}
-          </EngineDetail>
-        {:else if tab === 'usque'}
-          <EngineDetail kind="usque" label="usque — WARP-туннель" engine={byKind.get('usque')} />
-        {:else if tab === 'xray'}
-          <EngineDetail kind="xray" label="xray — VLESS-Reality" engine={byKind.get('xray')}>
-            {#snippet extra()}
-              <XrayConfig engine={byKind.get('xray')} />
-            {/snippet}
-          </EngineDetail>
+        {:else if tab === 'nfqws2' || tab === 'usque' || tab === 'xray'}
+          <EngineView kind={tab as EngineKind} {go} />
+        {:else if SOON[tab]}
+          <Soon title={TABS[tab].label} what={SOON[tab]} />
         {/if}
       {/if}
     </main>
@@ -266,6 +275,9 @@
   .count {
     font-size: 11px;
     font-family: var(--font-mono);
+    color: var(--muted);
+  }
+  .count.warnc {
     color: var(--degraded);
   }
   .main {

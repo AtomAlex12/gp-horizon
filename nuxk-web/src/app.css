@@ -23,6 +23,11 @@
   --m-desync: #0f7a76;
   --m-warp: #b8651b;
   --m-vless: #5a5ec4;
+  /* chart series — validated (lightness band, chroma, CVD, contrast) per theme */
+  --s1: #008f86;
+  --s2: #b8651b;
+  --s3: #5a5ec4;
+  --grid: #e8e4da;
   --shadow: 0 1px 2px rgba(40, 34, 20, 0.06), 0 4px 16px rgba(40, 34, 20, 0.05);
   --font-ui: "IBM Plex Sans", ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
@@ -36,6 +41,7 @@
     --ok: #46b985; --ok-soft: #183327; --warn: #f0645a; --warn-soft: #3a1f1d;
     --degraded: #e0a530; --degraded-soft: #362b14; --idle: #7e7669;
     --m-direct: #948d82; --m-desync: #3fb2ac; --m-warp: #e0914a; --m-vless: #8f93f0;
+    --s1: #12a198; --s2: #c97a36; --s3: #7c80e0; --grid: #26282d;
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 4px 16px rgba(0, 0, 0, 0.2);
   }
 }
@@ -47,6 +53,7 @@
   --ok: #46b985; --ok-soft: #183327; --warn: #f0645a; --warn-soft: #3a1f1d;
   --degraded: #e0a530; --degraded-soft: #362b14; --idle: #7e7669;
   --m-direct: #948d82; --m-desync: #3fb2ac; --m-warp: #e0914a; --m-vless: #8f93f0;
+  --s1: #12a198; --s2: #c97a36; --s3: #7c80e0; --grid: #26282d;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 4px 16px rgba(0, 0, 0, 0.2);
 }
 
@@ -128,6 +135,16 @@ input[type=text], input[type=password] { width: 100%; }
 .dot.ok { background: var(--ok); }
 .dot.warn { background: var(--warn); }
 .dot.deg { background: var(--degraded); }
+.dot.pulse { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 60%, transparent); animation: pulse 2s infinite; }
+@keyframes pulse { 70% { box-shadow: 0 0 0 6px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
+@media (prefers-reduced-motion: reduce) { .dot.pulse { animation: none; } }
+
+.bar { height: 6px; background: var(--surface-3); border-radius: 99px; overflow: hidden; }
+.bar-fill { height: 100%; background: var(--accent); border-radius: 99px; }
+.rowlink { cursor: pointer; }
+.rowlink:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+label.field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+.divider { height: 1px; background: var(--line); margin: 2px 0; }
 
 .kpi { display: flex; flex-direction: column; gap: 2px; }
 .kpi .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 600; }

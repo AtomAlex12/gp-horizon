@@ -1,12 +1,56 @@
-// Typed client for nuxk-core /api/v1. Mirrors nuxk-core/api/openapi.yaml.
-// The UI has no business logic — it renders these shapes and posts commands.
+// Typed client for the nuxk-core agent API. Types come from
+// nuxk-core/api/openapi.yaml via `npm run gen:api` (src/lib/schema.d.ts) —
+// the spec is the contract, this file only wires calls to it.
+//
+// The same UI runs in two places:
+//   - served by nuxk-core on the router  → talks to the agent directly;
+//   - served by nuxk-controller on the Pi → the controller proxies /api/v1/*
+//     to the router's agent and adds /ctl/v1/* (history, agent state).
+import type { components } from './schema';
+
+type S = components['schemas'];
+export type Status = S['Status'];
+export type EngineState = S['EngineState'];
+export type EngineInfo = S['EngineInfo'];
+export type EngineKind = S['EngineKind'];
+export type Health = S['Health'];
+export type Probe = S['Probe'];
+export type Routing = S['Routing'];
+export type NodeInfo = S['NodeInfo'];
+export type Metrics = S['Metrics'];
+export type LogEntry = S['LogEntry'];
+export type PlaneStatus = S['PlaneStatus'];
+export type PlaneDesired = S['PlaneDesired'];
+export type PlaneList = S['PlaneList'];
+export type PlaneOp = S['PlaneOp'];
+export type ListMode = S['ListMode'];
+export type OnDown = S['OnDown'];
+
+// nuxk-controller's own API (not part of the agent contract).
+export interface AgentState {
+  url: string;
+  reachable: boolean;
+  last_ok?: number;
+  last_error?: string;
+  info?: NodeInfo;
+  controller_version: string;
+}
+export interface History {
+  wan: string;
+  ts: number[];
+  wan_rx_bps: number[];
+  wan_tx_bps: number[];
+  nfq_pps: number[];
+  conntrack: number[];
+  load1: number[];
+  tunnels: Record<string, { rx_bps: number[]; tx_bps: number[] }>;
+}
 
 const BASE = import.meta.env.VITE_API_BASE ?? '';
 const TOKEN_KEY = 'nuxk-api-token';
 
 // A token baked in at build time (dev/proto images) wins; otherwise the one the
-// user typed into the login form — the router build ships without a token, the
-// installer prints it once and it lives in this browser only.
+// user typed into the login form — it lives in this browser only.
 function storedToken(): string {
   try {
     return localStorage.getItem(TOKEN_KEY) ?? '';
@@ -22,131 +66,11 @@ export function setToken(t: string) {
     if (TOKEN) localStorage.setItem(TOKEN_KEY, TOKEN);
     else localStorage.removeItem(TOKEN_KEY);
   } catch {
-    /* private mode: token lasts for this tab only */
+    /* private mode: the token lasts for this tab only */
   }
 }
 
-export type EngineKind = 'nfqws2' | 'usque' | 'xray';
-export type Health = 'ok' | 'degraded' | 'down' | 'unknown';
-export type Mode = 'direct' | 'desync' | 'warp' | 'vless';
-
-export interface EngineInfo {
-  kind: EngineKind;
-  running: boolean;
-  pid?: number;
-  uptime_sec: number;
-  version?: string;
-  health: Health;
-  iface?: string;
-  endpoint?: string;
-  routes: number;
-  detail?: Record<string, string>;
-}
-
-export interface Probe {
-  ok: boolean;
-  egress_ip?: string;
-  rtt_ms?: number;
-  detail?: Record<string, string>;
-  reason?: string;
-  ts: number;
-}
-
-// What /status and /engines return: Info plus the last active probe.
-export interface EngineState extends EngineInfo {
-  probe?: Probe;
-  probe_at?: number;
-  // Controller intent: true = keep running (auto-restart), false = keep
-  // stopped, absent = unmanaged. last_error = last failed action, cleared on success.
-  want_run?: boolean;
-  last_error?: string;
-}
-
-export interface Status {
-  version: string;
-  ts: number;
-  engines: EngineState[];
-  plane?: PlaneStatus | null; // absent/null when PLANE is off
-}
-
-// --- routing plane (nuxk-core/internal/plane) --------------------------------
-
-export type ListMode = 'desync' | 'warp' | 'vless';
-export type OnDown = 'direct' | 'block';
-
-export interface PlaneList {
-  name: string;
-  mode: ListMode;
-  domains: string[];
-  source?: string; // manual | imported:<group> | preset:<id>
-}
-
-export interface PlaneDesired {
-  lists: PlaneList[];
-  on_down?: OnDown;
-}
-
-export interface PlaneGroup {
-  name: string;
-  mode: ListMode;
-  interface: string;
-  block: boolean;
-  domains: string[];
-}
-
-export interface PlaneOp {
-  kind: string;
-  group?: string;
-  interface?: string;
-  block?: boolean;
-  domains?: string[];
-  groups?: string[];
-}
-
-export interface PlaneConflict {
-  domain: string;
-  group: string;
-  user_group: string;
-}
-
-export interface PlaneForeign {
-  group: string;
-  description?: string;
-  interface: string;
-  domains: string[];
-}
-
-export interface PlaneStatus {
-  backend: string;
-  apply: boolean;
-  ifaces: Partial<Record<ListMode, string>>;
-  on_down: OnDown;
-  lists: PlaneList[] | null;
-  groups: PlaneGroup[] | null;
-  desync: string[] | null;
-  desync_ok: boolean;
-  pending: PlaneOp[] | null;
-  conflicts?: PlaneConflict[];
-  foreign?: PlaneForeign[];
-  warnings?: string[];
-  last_error?: string;
-  checked_at?: number;
-  applied_at?: number;
-}
-
-// Mirrors engine.Routing (nuxk-core/internal/engine/engine.go).
-export interface Routing {
-  domains?: string[];
-  cidrs?: string[];
-  endpoints?: string[];
-  strategy?: string;
-}
-
-export interface ApiError {
-  error: { code: string; message: string };
-}
-
-class HttpError extends Error {
+export class HttpError extends Error {
   constructor(
     public status: number,
     public code: string,
@@ -156,49 +80,84 @@ class HttpError extends Error {
   }
 }
 
+function headers(json: boolean): Record<string, string> {
+  return {
+    ...(json ? { 'Content-Type': 'application/json' } : {}),
+    ...(TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {}),
+  };
+}
+
 async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const res = await fetch(`${BASE}/api/v1${path}`, {
+  const res = await fetch(`${BASE}${path}`, {
     method,
-    headers: {
-      ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
-      ...(TOKEN ? { Authorization: `Bearer ${TOKEN}` } : {}),
-    },
+    headers: headers(body !== undefined),
     body: body !== undefined ? JSON.stringify(body) : undefined,
   });
   const text = await res.text();
-  const json = text ? JSON.parse(text) : null;
+  let json: unknown = null;
+  try {
+    json = text ? JSON.parse(text) : null;
+  } catch {
+    /* non-JSON error page */
+  }
   if (!res.ok) {
-    const e = (json as ApiError | null)?.error;
+    const e = (json as S['Error'] | null)?.error;
     throw new HttpError(res.status, e?.code ?? 'error', e?.message ?? res.statusText);
   }
   return json as T;
 }
 
+const v1 = (p: string) => `/api/v1${p}`;
+
 export const api = {
-  healthz: () => req<{ status: string }>('GET', '/healthz'),
-  version: () => req<{ version: string; commit: string; api: string }>('GET', '/version'),
-  status: () => req<Status>('GET', '/status'),
+  status: () => req<Status>('GET', v1('/status')),
+  info: () => req<NodeInfo>('GET', v1('/info')),
+  metrics: () => req<Metrics>('GET', v1('/metrics')),
+  logs: (after = 0) => req<LogEntry[]>('GET', v1(`/logs?after=${after}&limit=500`)),
 
-  engines: () => req<EngineState[]>('GET', '/engines'),
-  engine: (k: EngineKind) => req<EngineInfo>('GET', `/engines/${k}`),
   engineAction: (k: EngineKind, action: 'start' | 'stop' | 'restart') =>
-    req<{ status: string }>('POST', `/engines/${k}/${action}`),
-  engineProbe: (k: EngineKind) => req<Probe>('POST', `/engines/${k}/probe`),
-  applyRouting: (k: EngineKind, routing: Routing) =>
-    req<{ status: string }>('POST', `/engines/${k}/apply`, routing),
+    req<S['Ok']>('POST', v1(`/engines/${k}/${action}`)),
+  engineProbe: (k: EngineKind) => req<Probe>('POST', v1(`/engines/${k}/probe`)),
+  applyRouting: (k: EngineKind, routing: Routing) => req<S['Ok']>('POST', v1(`/engines/${k}/apply`), routing),
+  setConfig: (k: EngineKind, cfg: Record<string, string>) => req<S['Ok']>('PUT', v1(`/engines/${k}/config`), cfg),
 
-  // Only engines implementing engine.Configurable (today: xray) accept this; others 404.
-  setConfig: (k: EngineKind, cfg: Record<string, string>) =>
-    req<{ status: string }>('PUT', `/engines/${k}/config`, cfg),
+  plane: () => req<PlaneStatus>('GET', v1('/plane')),
+  planeLists: () => req<PlaneDesired>('GET', v1('/plane/lists')),
+  setPlaneLists: (d: PlaneDesired) => req<S['Ok']>('PUT', v1('/plane/lists'), d),
+  planeImport: (groups: string[], mode: ListMode) => req<PlaneDesired>('POST', v1('/plane/import'), { groups, mode }),
 
-  // Routing plane: 404 plane_off when PLANE= is empty in nuxk.conf.
-  plane: () => req<PlaneStatus>('GET', '/plane'),
-  planeLists: () => req<PlaneDesired>('GET', '/plane/lists'),
-  setPlaneLists: (d: PlaneDesired) => req<{ status: string }>('PUT', '/plane/lists', d),
-  planeImport: (groups: string[], mode: ListMode) =>
-    req<PlaneDesired>('POST', '/plane/import', { groups, mode }),
-
-  // TODO: decisions, discover, presets, events(SSE)
+  // controller only (404 when the UI is served by the agent itself)
+  agent: () => req<AgentState>('GET', '/ctl/v1/agent'),
+  history: () => req<History>('GET', '/ctl/v1/history'),
 };
 
-export { HttpError };
+/**
+ * Server-Sent Events over fetch — EventSource can't send the Authorization
+ * header. Calls onEvent per event until the stream ends or signal aborts.
+ */
+export async function streamEvents(
+  signal: AbortSignal,
+  onEvent: (event: string, data: string) => void,
+): Promise<void> {
+  const res = await fetch(`${BASE}${v1('/events')}`, { headers: headers(false), signal });
+  if (!res.ok || !res.body) throw new HttpError(res.status, 'stream', res.statusText);
+  const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+  let buf = '';
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) return;
+    buf += value;
+    let i: number;
+    while ((i = buf.indexOf('\n\n')) >= 0) {
+      const block = buf.slice(0, i);
+      buf = buf.slice(i + 2);
+      let event = 'message';
+      const data: string[] = [];
+      for (const line of block.split('\n')) {
+        if (line.startsWith('event: ')) event = line.slice(7);
+        else if (line.startsWith('data: ')) data.push(line.slice(6));
+      }
+      if (data.length) onEvent(event, data.join('\n'));
+    }
+  }
+}
