@@ -27,6 +27,8 @@ import (
 	"nuxk.dev/horizon/core/internal/engine/nfqws2"
 	"nuxk.dev/horizon/core/internal/engine/usque"
 	"nuxk.dev/horizon/core/internal/engine/xray"
+	"nuxk.dev/horizon/core/internal/plane"
+	"nuxk.dev/horizon/core/internal/plane/keenetic"
 	"nuxk.dev/horizon/core/internal/state"
 )
 
@@ -114,12 +116,30 @@ func main() {
 	if cfg.ProbeEvery > 0 {
 		ctl.ProbeEvery = cfg.ProbeEvery
 	}
+
+	// Routing plane: drives the firmware's DNS routing. Off unless configured,
+	// plan-only unless PLANE_APPLY=1.
+	var pm *plane.Manager
+	switch cfg.Plane.Backend {
+	case "", "off":
+	case "keenetic":
+		pm = plane.NewManager(keenetic.New(cfg.Plane.RCI), st, plane.Config{
+			Ifaces: map[plane.Mode]string{plane.ModeWarp: cfg.Plane.IfaceWarp, plane.ModeVless: cfg.Plane.IfaceVless},
+			Apply:  cfg.Plane.Apply, V6Deny: cfg.Plane.V6Deny, Every: cfg.Plane.Every,
+		})
+		ctl.PlaneStatus = func() any { return pm.Status() }
+		slog.Info("routing plane", "backend", "keenetic", "apply", cfg.Plane.Apply, "v6deny", cfg.Plane.V6Deny)
+		go pm.Run(ctx)
+	default:
+		slog.Error("unknown PLANE backend", "plane", cfg.Plane.Backend)
+		os.Exit(1)
+	}
 	go ctl.Run(ctx)
 
 	srv := &http.Server{
 		Addr: cfg.Listen,
 		Handler: api.NewRouter(api.Deps{
-			Version: version, Commit: commit, Engines: reg, Hub: hub, Ctl: ctl,
+			Version: version, Commit: commit, Engines: reg, Hub: hub, Ctl: ctl, Plane: pm,
 			WebRoot: cfg.WebRoot, Token: cfg.APIToken,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,

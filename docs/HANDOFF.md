@@ -266,6 +266,40 @@ GET /rci/dns-proxy     → {"route": [{"group": "<имя>", "interface": "Wiregu
 - Дальше — **E1** (облачная сессия пишет код): плоскость в nuxk-core,
   бэкенд `keenetic` через RCI, по умолчанию «только план», импорт списков.
 
+## Задача 4 — E1 на роутере: плоскость в режиме «только план», затем перенос одного домена
+
+Код E1 в ветке (облачная сессия): `nuxk-core/internal/plane`. На роутере
+nuxk-core пока не стоит — ставим инсталлятором (он же пишет `PLANE_*` в
+`nuxk.conf`, `PLANE_APPLY="0"`). Каждый шаг, меняющий роутер, — с согласия.
+
+1. На Pi: `git pull` и пересобрать инсталлятор —
+   `docker compose -f deploy/pi/docker-compose.yml up -d --build installer`,
+   код доступа — `docker compose -f deploy/pi/docker-compose.yml logs installer`.
+2. Форма `http://192.168.2.10:4300`: роутер 192.168.2.1, **порт 22**,
+   «Проверить роутер» → «Установить выбранное». nfqws2 уже стоит — ставятся
+   только nuxk-core, веб, конфиг. Сохранить API-токен.
+3. Только план: `curl -s -H "Authorization: Bearer $TOKEN" http://192.168.2.1:4141/api/v1/plane`
+   — ожидаем `foreign` с `domain-list0` (AI) и `domain-list1` (Meta) на
+   `Wireguard1`, `pending` пустой, `last_error` пустой.
+4. Импорт AI как VLESS и временная цель `Wireguard1` (usque/xray на роутере
+   ещё нет; маршрут тот же, что сейчас — перенос ничего не меняет для
+   трафика, но проверяет механику):
+   - в `/opt/etc/nuxk/nuxk.conf`: `PLANE_IFACE_VLESS="Wireguard1"`,
+     затем `/opt/etc/init.d/S99nuxk-core restart`;
+   - `curl -s -H "Authorization: Bearer $TOKEN" -d '{"groups":["domain-list0"],"mode":"vless"}' http://192.168.2.1:4141/api/v1/plane/import`;
+   - `GET /api/v1/plane` → все 49 доменов в `conflicts` (они ещё в domain-list0),
+     `pending` пуст — роутер не тронут.
+5. Перенос одного домена (с согласия): `PLANE_APPLY="1"`, restart; в веб-
+   интерфейсе Keenetic убрать из domain-list0 один домен, например
+   `githubcopilot.com`. В течение минуты: группа `nuxk-vless` с ним,
+   маршрут на `Wireguard1`, цепочка `ip6tables -S NUXK_V6_DENY` с двумя
+   правилами. Проверить `dig @192.168.2.1 githubcopilot.com` → IP в
+   `_NDM_OGDN_4_@nuxk-vless`; `curl -6 -m 5 https://githubcopilot.com` —
+   отказ сразу.
+6. Откат: `curl -X PUT -d '{"lists":[]}' …/api/v1/plane/lists` → группа,
+   маршрут и правила v6 исчезают; вернуть домен в domain-list0;
+   `PLANE_APPLY="0"`. Прислать облачной сессии `GET /api/v1/plane` до и после.
+
 ## Задача 3 — отчёт пользователю
 
 Сводка в чат: по каждому пункту «подтвердилось / не так, а вот как», плюс

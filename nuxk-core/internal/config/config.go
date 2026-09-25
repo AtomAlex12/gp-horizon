@@ -24,6 +24,20 @@ type Config struct {
 	ProbeEvery time.Duration
 
 	Engines EnginesConfig
+	Plane   PlaneConfig
+}
+
+// PlaneConfig drives the routing plane (internal/plane). Off unless PLANE is
+// set; plan-only unless PLANE_APPLY=1 — a fresh install never changes the
+// router's routing by itself.
+type PlaneConfig struct {
+	Backend    string        // PLANE: "" / off | keenetic
+	RCI        string        // PLANE_RCI: KeeneticOS RCI base URL
+	Apply      bool          // PLANE_APPLY=1
+	V6Deny     bool          // PLANE_V6=deny (default) | off
+	IfaceWarp  string        // PLANE_IFACE_WARP, default OpkgTun0 (usque)
+	IfaceVless string        // PLANE_IFACE_VLESS, default OpkgTun1 (xray)
+	Every      time.Duration // PLANE_EVERY seconds, default 60
 }
 
 type EnginesConfig struct {
@@ -43,6 +57,10 @@ func Defaults() Config {
 			Nfqws2: "/opt/etc/init.d/S51nfqws2",
 			Usque:  "/opt/etc/init.d/S51usque",
 			Xray:   "/opt/etc/init.d/S52xray",
+		},
+		Plane: PlaneConfig{
+			RCI: "http://127.0.0.1:79", V6Deny: true,
+			IfaceWarp: "OpkgTun0", IfaceVless: "OpkgTun1",
 		},
 	}
 }
@@ -90,6 +108,20 @@ func Load(path string) (Config, error) {
 			cfg.InfoEvery = seconds(v)
 		case "PROBE_EVERY":
 			cfg.ProbeEvery = seconds(v)
+		case "PLANE":
+			cfg.Plane.Backend = v
+		case "PLANE_RCI":
+			cfg.Plane.RCI = v
+		case "PLANE_APPLY":
+			cfg.Plane.Apply = v == "1" || v == "yes" || v == "true"
+		case "PLANE_V6":
+			cfg.Plane.V6Deny = v != "off"
+		case "PLANE_IFACE_WARP":
+			cfg.Plane.IfaceWarp = v
+		case "PLANE_IFACE_VLESS":
+			cfg.Plane.IfaceVless = v
+		case "PLANE_EVERY":
+			cfg.Plane.Every = seconds(v)
 		}
 	}
 	return cfg, sc.Err()

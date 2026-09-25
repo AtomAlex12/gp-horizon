@@ -195,3 +195,29 @@ func (s *Store) UpdateDesired(kind engine.Kind, fn func(*Desired)) (Desired, err
 func (s *Store) desiredPath(kind engine.Kind) string {
 	return filepath.Join(s.dir, "engines", string(kind)+".json")
 }
+
+// LoadJSON reads <name>.json from the state root into v. A missing file
+// leaves v untouched and is not an error.
+func (s *Store) LoadJSON(name string, v any) error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	b, err := os.ReadFile(filepath.Join(s.dir, name+".json"))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(b, v)
+}
+
+// SaveJSON writes v as <name>.json atomically.
+func (s *Store) SaveJSON(name string, v any) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	b, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return err
+	}
+	return atomicWrite(filepath.Join(s.dir, name+".json"), b)
+}

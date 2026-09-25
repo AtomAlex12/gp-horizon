@@ -51,6 +51,37 @@ make cross     # → dist/nuxk-core-{mips,mipsel,aarch64,x86_64}  (CGO off, GOMI
 | `fs/` | package payload: `S99nuxk-core` init + default `nuxk.conf` |
 | `api/openapi.yaml` | draft v1 contract |
 
+## Routing plane (`internal/plane`)
+
+nuxk doesn't run its own resolver or marks on a Keenetic: the firmware already
+binds DNS answers to routes (object-group fqdn + dns-proxy route → ipset →
+mark → table). The plane keeps the firmware's **`nuxk-*` objects** equal to the
+desired lists through RCI (`http://127.0.0.1:79/rci/`, no password from the
+router itself) and never touches anything else.
+
+```
+state/plane.json (lists: name, mode warp|vless, domains)
+        │ Build: one group per routed mode, subdomains folded into parents
+        ▼
+nuxk-warp  → dns-proxy route → PLANE_IFACE_WARP  (OpkgTun0, usque)
+nuxk-vless → dns-proxy route → PLANE_IFACE_VLESS (OpkgTun1, xray)
+        + ip6tables NUXK_V6_DENY: REJECT v6 to _NDM_OGDN_6_@nuxk-*
+          (the firmware routes only IPv4; clients fall back to it at once)
+```
+
+- **Plan-only by default.** `PLANE_APPLY=1` lets it change the router;
+  otherwise `GET /api/v1/plane` shows the pending ops.
+- **Migration from the user's own lists without overlap.** A domain still in a
+  routed user group is held back as a *conflict* until removed there.
+- **Order is the safety:** create/extend → routes → v6 rules → drop stale
+  routes/domains → delete stale groups. Unknown firmware (not 4.x/5.x) is
+  refused. A missing target interface skips that mode with a warning.
+
+Config: `PLANE` (off | keenetic), `PLANE_APPLY` (0/1), `PLANE_V6` (deny | off),
+`PLANE_IFACE_WARP`, `PLANE_IFACE_VLESS`, `PLANE_RCI`, `PLANE_EVERY` (s, 60).
+API: `GET /api/v1/plane`, `GET|PUT /api/v1/plane/lists`,
+`POST /api/v1/plane/import {"groups":[…],"mode":"vless"}`.
+
 ## Desired state
 
 ```

@@ -207,6 +207,15 @@ ENGINE_XRAY=""
 # A router CPU is slow: poll engines every 10 s, probe every 2 min.
 INFO_EVERY="10"
 PROBE_EVERY="120"
+
+# Routing plane: drives KeeneticOS's built-in DNS routing (object-group fqdn +
+# dns-proxy route) through RCI on 127.0.0.1:79. It only ever touches nuxk-*
+# objects. PLANE_APPLY="0" = plan only: /api/v1/plane shows what it would do.
+PLANE="keenetic"
+PLANE_APPLY="0"
+PLANE_V6="deny"
+PLANE_IFACE_WARP="OpkgTun0"
+PLANE_IFACE_VLESS="OpkgTun1"
 `, version, time.Now().Format("2006-01-02"), listenAddr(r), newToken(), pWeb, pShim, usque)
 	emit(Event{Kind: "out", Text: pConf + " (права 0600)"})
 	return c.Upload(pConf, []byte(conf), "0600")
