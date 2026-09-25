@@ -80,6 +80,7 @@ esac
 		t.Fatal(err)
 	}
 	write("S51nfqws2-nuxk", string(shim), 0o755)
+	write("usque-keenetic-x86_64.ipk", "fake ipk", 0o644)
 	write("web/index.html", "<!doctype html><title>nuxk</title>", 0o644)
 	write("web/assets/app-1.js", "console.log(1)", 0o644)
 	p, err := NewPayload(dir)
@@ -200,7 +201,16 @@ case "$1" in
 print-architecture) echo "arch all 1"; echo "arch noarch 1"; echo "arch x64-3.2 10" ;;
 list-installed) [ -n "$2" ] && grep "^$2 " "$S" || cat "$S" ;;
 update) echo "Downloading ..." ;;
-install) shift; for p in "$@"; do echo "Installing $p"; echo "$p - 1.0-test" >>"$S";
+install) shift; for p in "$@"; do case "$p" in --*) continue ;; esac; echo "Installing $p"
+  if [ "${p%.ipk}" != "$p" ]; then
+    # usque-keenetic ipk: its postinst leaves an init with the nuxk contract and a tunnel
+    [ "$(cat "$p")" = "fake ipk" ] || exit 1
+    echo "usque-keenetic - 0.4.0" >>"$S"
+    mkdir -p "` + root + `/opt/etc/usque"; echo 'IFACE="opkgtun0"' >"` + root + `/opt/etc/usque/usque.conf"
+    printf '#!/bin/sh\n[ "$1" = info ] && { echo "service.running 1"; echo "tunnel.state connected"; }\ntrue\n' >"` + root + `/opt/etc/init.d/S51usque"
+    chmod +x "` + root + `/opt/etc/init.d/S51usque"; continue
+  fi
+  echo "$p - 1.0-test" >>"$S";
   if [ "$p" = nfqws2-keenetic ]; then printf '#!/bin/sh\necho stock $1\n' >"` + root + `/opt/etc/init.d/S51nfqws2"; chmod +x "` + root + `/opt/etc/init.d/S51nfqws2"; fi; done ;;
 esac
 `,
@@ -408,5 +418,69 @@ func TestEndToEndInstall(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(fr.root, "opt/usr/bin/nuxk-core.prev")); err != nil {
 		t.Error("reinstall must keep the previous binary as .prev")
+	}
+}
+
+func TestPlanUsqueIsOptIn(t *testing.T) {
+	p, _ := testPayload(t, "0.1.0-beta.1")
+	r := Report{Entware: true, Arch: "x86_64", OptFreeKB: 500000, Pkgs: map[string]string{}, Kmods: map[string]string{}, Init: map[string]bool{}}
+	it := item(BuildPlan(r, p), "usque")
+	if it.Status != StInstall || !it.Selectable || it.Selected || !strings.Contains(it.Detail, "Cloudflare") {
+		t.Errorf("usque = %+v, want installable, not preselected, with the consent text", it)
+	}
+	r.Arch = "mips" // no ipk for it in this payload
+	if it := item(BuildPlan(r, p), "usque"); it.Selectable || it.Status != StInfo {
+		t.Errorf("usque without ipk = %+v", it)
+	}
+}
+
+func TestEndToEndUsque(t *testing.T) {
+	fr := newFakeRouter(t)
+	p, _ := testPayload(t, "0.1.0-beta.1")
+	lists := filepath.Join(fr.root, "opt/etc/nfqws2/lists")
+	must(t, os.MkdirAll(lists, 0o755))
+	must(t, os.WriteFile(filepath.Join(lists, "user.list"), []byte("# mine\nyoutube.com\n"), 0o644))
+
+	pinned := fr.target()
+	c, err := Dial(pinned)
+	must(t, err)
+	_, err = Install(c, p, []string{"deps", "nfqws2", "core", "config", "start"}, func(Event) {})
+	must(t, err)
+	// first start seeds the «DPI» list from nfqws2's own list
+	seed, _ := os.ReadFile(filepath.Join(fr.root, "opt/etc/nuxk/plane.json"))
+	if !strings.Contains(string(seed), `"youtube.com"`) || !strings.Contains(string(seed), `"desync"`) || strings.Contains(string(seed), "mine") {
+		t.Errorf("plane.json = %s", seed)
+	}
+
+	var events []Event
+	_, err = Install(c, p, []string{"usque"}, func(e Event) { events = append(events, e) })
+	c.Close()
+	if err != nil {
+		for _, e := range events {
+			t.Log(e.Kind, e.Text)
+		}
+		t.Fatal(err)
+	}
+	ul, _ := os.ReadFile(filepath.Join(lists, "user.list"))
+	if !strings.Contains(string(ul), "youtube.com") || !strings.Contains(string(ul), "cloudflareclient.com") {
+		t.Errorf("user.list = %q: WARP hosts must be added, the user's kept", ul)
+	}
+	conf, _ := os.ReadFile(filepath.Join(fr.root, "opt/etc/nuxk/nuxk.conf"))
+	for _, want := range []string{`ENGINE_USQUE="/opt/etc/init.d/S51usque"`, `PLANE_IFACE_WARP="OpkgTun0"`} {
+		if !strings.Contains(string(conf), want) {
+			t.Errorf("nuxk.conf lacks %s", want)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(fr.root, "opt/tmp/usque-keenetic.ipk")); err == nil {
+		t.Error("ipk left in /opt/tmp")
+	}
+	started := false
+	for _, e := range events {
+		if e.Kind == "ok" && strings.HasPrefix(e.Text, "Запуск и проверка") {
+			started = true
+		}
+	}
+	if !started {
+		t.Error("installing usque must restart nuxk-core")
 	}
 }

@@ -26,6 +26,7 @@ type Report struct {
 	Kmods      map[string]string `json:"kmods"` // loaded | available | missing
 	Init       map[string]bool   `json:"init"`
 	UsqueReady bool              `json:"usque_contract"`
+	UsqueIface string            `json:"usque_iface,omitempty"` // ndm name, e.g. OpkgTun0
 
 	NuxkCore    string `json:"nuxk_core,omitempty"` // installed version, "" = none
 	NuxkConf    bool   `json:"nuxk_conf"`
@@ -58,6 +59,7 @@ func ParseReport(out string, at time.Time) Report {
 		Kmods:      map[string]string{},
 		Init:       map[string]bool{},
 		UsqueReady: kv["usque_contract"] == "1",
+		UsqueIface: ndmName(kv["usque_iface"]),
 		NuxkCore:   kv["nuxk_core"],
 		NuxkConf:   kv["nuxk_conf"] == "1",
 		NuxkListen: kv["nuxk_listen"],
@@ -120,4 +122,13 @@ func firstNonEmpty(ss ...string) string {
 func atoi(s string) int {
 	n, _ := strconv.Atoi(strings.TrimSpace(s))
 	return n
+}
+
+// ndmName turns a Linux tun name into the Keenetic interface name the way
+// usque-keenetic does: opkgtun0 → OpkgTun0.
+func ndmName(iface string) string {
+	if !strings.HasPrefix(iface, "opkgtun") {
+		return iface
+	}
+	return "OpkgTun" + strings.TrimPrefix(iface, "opkgtun")
 }

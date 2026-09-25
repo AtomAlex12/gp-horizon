@@ -37,13 +37,12 @@ _pkg-download-usque:
 	if [ -f $(USQUE_ZIP) ]; then
 		echo "Using cached: $(USQUE_ZIP)";
 	else
-		url=$$(curl -s "https://api.github.com/repos/Diniboy1123/usque/releases/tags/v$(USQUE_VERSION)" | \
-			grep 'browser_download_url' | grep -E "linux_$(USQUE_ARCH)\." | \
-			cut -d '"' -f 4);
+		# direct asset URL: the GitHub API is rate-limited (and blocked in some CI)
+		url="https://github.com/Diniboy1123/usque/releases/download/v$(USQUE_VERSION)/usque_$(USQUE_VERSION)_linux_$(USQUE_ARCH).zip"
 		#
 		echo "Downloading: $$url"
 		mkdir -p $$(dirname $(USQUE_ZIP))
-		@curl -sSL $$url -o $(USQUE_ZIP)
+		curl -fsSL $$url -o $(USQUE_ZIP) || { rm -f $(USQUE_ZIP); exit 1; }
 	fi
 	#
 	echo "Unpacking $(USQUE_ZIP)"
@@ -135,8 +134,8 @@ pkg-aarch64:
 	make \
 		BUILD_DIR=aarch64 \
 		PKG_ARCH=aarch64-3.10 \
-		TARGET_ARCH=mips \
-		USQUE_ARCH=mips \
+		TARGET_ARCH=aarch64 \
+		USQUE_ARCH=arm64 \
 		FILENAME=usque-keenetic_$(VERSION)_aarch64-3.10.ipk \
 		_pkg-prepare _pkg-build-aarch64 _pkg-content _pkg-pack _pkg-cleanup
 
@@ -155,8 +154,8 @@ pkg-dev:
 	make \
 		BUILD_DIR=aarch64 \
 		PKG_ARCH=aarch64-3.10 \
-		TARGET_ARCH=mips \
-		USQUE_ARCH=mips \
+		TARGET_ARCH=aarch64 \
+		USQUE_ARCH=arm64 \
 		FILENAME=usque-keenetic_$(VERSION)_aarch64-3.10.ipk \
 		_pkg-prepare _pkg-build-aarch64 _pkg-content _pkg-cleanup
 

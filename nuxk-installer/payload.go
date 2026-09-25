@@ -62,6 +62,16 @@ func (p *Payload) WebFiles() ([]string, error) {
 	return out, err
 }
 
+// UsqueIPK is the usque-keenetic package for a router arch ("" = none in
+// this build: the package is optional, WARP is then skipped).
+func (p *Payload) UsqueIPK(arch string) string {
+	name := "usque-keenetic-" + arch + ".ipk"
+	if _, err := fs.Stat(p.fs, name); err != nil {
+		return ""
+	}
+	return name
+}
+
 // Missing returns required payload files that aren't there.
 func (p *Payload) Missing() []string {
 	var miss []string

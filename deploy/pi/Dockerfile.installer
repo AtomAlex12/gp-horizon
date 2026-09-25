@@ -1,6 +1,7 @@
 # nuxk-installer image for the Raspberry Pi stack (deploy/pi). Builds the
 # router payload from source — nuxk-core for every router arch, the lite web
-# build, the nfqws2 adapter shim — embeds it, and runs the installer form.
+# build, the nfqws2 adapter shim, the usque-keenetic ipk (WARP) — embeds it,
+# and runs the installer form.
 #
 #   docker compose -f deploy/pi/docker-compose.yml up -d --build installer
 #   docker compose -f deploy/pi/docker-compose.yml logs installer   # access code
@@ -24,12 +25,22 @@ RUN for t in mips:mips mipsle:mipsel arm64:aarch64 amd64:x86_64; do \
         -o /payload/nuxk-core-$name . || exit 1; \
     done
 
+FROM alpine:3.20 AS usque
+RUN apk add --no-cache make curl unzip tar
+WORKDIR /src
+COPY engines/nuxk-usque/ ./
+RUN make pkg-mips pkg-mipsel pkg-aarch64 && mkdir -p /payload && \
+    for a in mips mipsel aarch64; do \
+      cp out/tmp/usque-keenetic_$(cat VERSION)_$a-3.*.ipk /payload/usque-keenetic-$a.ipk || exit 1; \
+    done
+
 FROM golang:1.24-alpine AS installer
 WORKDIR /src
 COPY nuxk-installer/go.mod nuxk-installer/go.sum ./
 RUN go mod download
 COPY nuxk-installer/ ./
 COPY --from=core /payload/ ./payload/
+COPY --from=usque /payload/ ./payload/
 COPY --from=web /src/dist-lite ./payload/web
 COPY nuxk-core/fs/opt/etc/init.d/S99nuxk-core engines/nuxk-nfqws2/S51nfqws2-nuxk ./payload/
 COPY VERSION ./payload/VERSION

@@ -36,7 +36,9 @@ type Plan struct {
 }
 
 // Step IDs, in execution order.
-var stepOrder = []string{"deps", "nfqws2", "core", "config", "start"}
+// usque goes after nfqws2 (its hosts are desynced before it registers) and
+// before config (the config names its tunnel).
+var stepOrder = []string{"deps", "nfqws2", "core", "usque", "config", "start"}
 
 var depPkgs = []string{"curl", "ca-certificates", "ipset"}
 
@@ -142,14 +144,31 @@ func BuildPlan(r Report, p *Payload) Plan {
 			Detail: "будет создан: адрес " + listenAddr(r) + ", новый API-токен", Selectable: true, Selected: true})
 	}
 
+	// WARP is opt-in: installing it registers a device with Cloudflare (their
+	// terms of service) and creates an OpkgTun interface, saved in the
+	// router's config. Ticking the box is the consent.
+	usque := Item{ID: "usque", Title: "usque (WARP)"}
+	ipk := p.UsqueIPK(r.Arch)
+	const consent = " Регистрирует устройство в Cloudflare WARP (вы принимаете их условия), создаёт интерфейс OpkgTun и сохраняет конфигурацию роутера."
 	switch {
 	case r.UsqueReady:
-		add(Item{ID: "usque", Title: "usque (WARP)", Status: StOK, Detail: "найден S51usque с контрактом nuxk — будет подключён"})
+		usque.Status = StOK
+		usque.Detail = "установлен, контракт nuxk есть — будет подключён" + strOr(" · интерфейс "+r.UsqueIface, r.UsqueIface != "")
+		if ipk != "" && r.Pkgs["usque-keenetic"] != "" {
+			usque.Detail += " · отметьте, чтобы переустановить из этой сборки"
+			usque.Selectable = true
+		}
+	case ipk == "":
+		usque.Status = StInfo
+		usque.Detail = "в этой сборке инсталлятора нет usque-keenetic для " + firstNonEmpty(r.Arch, r.ArchRaw)
 	case r.Init["S51usque"]:
-		add(Item{ID: "usque", Title: "usque (WARP)", Status: StInfo, Detail: "установлен usque-keenetic без контракта nuxk (info/probe) — пока не подключается"})
+		usque.Status, usque.Selectable = StUpgrade, true
+		usque.Detail = "установлен usque без контракта nuxk — заменить на форк nuxk (usque.conf сохранится)." + consent
 	default:
-		add(Item{ID: "usque", Title: "usque (WARP)", Status: StInfo, Detail: "не установлен; в beta.1 на роутер не ставится — WARP работает на стенде Raspberry Pi"})
+		usque.Status, usque.Selectable = StInstall, true
+		usque.Detail = "не установлен. Отметьте, чтобы включить список «WARP»." + consent
 	}
+	add(usque)
 	add(Item{ID: "xray", Title: "xray (VLESS)", Status: StInfo, Detail: "в beta.1 на роутер не ставится"})
 
 	willChange := false
@@ -162,7 +181,7 @@ func BuildPlan(r Report, p *Payload) Plan {
 		add(Item{ID: "start", Title: "Запуск и проверка", Status: StInstall,
 			Detail: "S99nuxk-core restart, затем /api/v1/healthz", Selectable: true, Selected: true})
 	} else {
-		add(Item{ID: "start", Title: "Запуск и проверка", Status: StOK, Detail: "nuxk-core работает"})
+		add(Item{ID: "start", Title: "Запуск и проверка", Status: StOK, Detail: "nuxk-core работает — отметьте, чтобы перезапустить", Selectable: true})
 	}
 
 	if pl.Blocked {

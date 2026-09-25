@@ -30,7 +30,7 @@ kv clock "$(date +%s)"
 kv lan_ip "$(ip -4 -o addr show br0 2>/dev/null | awk '{sub(/\/.*/, "", $4); print $4; exit}')"
 
 # --- packages -----------------------------------------------------------------
-for p in curl ca-certificates ipset iptables nfqws2-keenetic; do
+for p in curl ca-certificates ipset iptables nfqws2-keenetic usque-keenetic; do
     v=""
     have opkg && v=$(opkg list-installed "$p" 2>/dev/null | awk -v p="$p" '$1 == p {print $3}')
     kv "pkg.$p" "$v"
@@ -58,6 +58,8 @@ if [ -x "$R/opt/etc/init.d/S51usque" ] && "$R/opt/etc/init.d/S51usque" info 2>/d
 else
     kv usque_contract 0
 fi
+# tunnel the usque package picked (opkgtun0 → ndm name OpkgTun0)
+kv usque_iface "$(sed -n 's/^IFACE="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "$R/opt/etc/usque/usque.conf" 2>/dev/null | tail -n 1)"
 
 # --- nuxk itself ----------------------------------------------------------------
 if [ -x "$R/opt/usr/bin/nuxk-core" ]; then
