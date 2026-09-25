@@ -32,8 +32,8 @@
   }
 </script>
 
-<div class="xcfg">
-  <strong>Сервер VLESS-Reality</strong>
+<section class="card xcfg">
+  <div class="card-head"><h2>Сервер VLESS-Reality</h2></div>
   <p class="hint muted">
     Текущий:
     <span class="mono">{engine?.endpoint || '— не задан'}</span>
@@ -63,14 +63,9 @@
       <span class={message.ok ? 'ok-msg' : 'err-msg'}>{message.text}</span>
     {/if}
   </div>
-</div>
+</section>
 
 <style>
-  .xcfg strong {
-    display: block;
-    font-size: 13px;
-    margin-bottom: 4px;
-  }
   .hint {
     margin: 0 0 8px;
   }

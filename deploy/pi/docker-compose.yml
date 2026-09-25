@@ -1,7 +1,9 @@
 # nuxk Horizon — beta stack for the Raspberry Pi (192.168.2.10).
 #
-#   nuxk       real-engine prototype (usque + nfqws2) from deploy/proto — :4242
-#   installer  form that installs nuxk onto a Keenetic router over SSH  — :4300
+#   nuxk        real-engine prototype (usque + nfqws2) from deploy/proto — :4242
+#   installer   form that installs nuxk onto a Keenetic router over SSH  — :4300
+#   controller  full web UI + history for the ROUTER's nuxk-core         — :4200
+#               (profile "controller": needs AGENT_URL / AGENT_TOKEN in .env)
 #
 # Start with deploy/pi/bootstrap.sh (checks, kernel modules, WARP registration).
 # By hand:
@@ -31,3 +33,26 @@ services:
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     restart: unless-stopped
+
+  controller:
+    profiles: ["controller"]
+    build:
+      context: ../..
+      dockerfile: deploy/pi/Dockerfile.controller
+      args:
+        COMMIT: ${NUXK_COMMIT:-unknown}
+    image: nuxk-horizon-controller
+    ports: ["4200:4200"]
+    environment:
+      AGENT_URL: ${AGENT_URL:-}
+      AGENT_TOKEN: ${AGENT_TOKEN:-}
+      CONTROLLER_TOKEN: ${CONTROLLER_TOKEN:-}
+    volumes:
+      - controller-data:/var/lib/nuxk-controller
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+
+volumes:
+  controller-data:

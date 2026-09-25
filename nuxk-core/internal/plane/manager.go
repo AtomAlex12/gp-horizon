@@ -36,6 +36,7 @@ type Status struct {
 	Groups    []Group         `json:"groups"`              // wanted firmware groups
 	Desync    []string        `json:"desync"`              // wanted nfqws2 hostlist
 	DesyncOK  bool            `json:"desync_ok"`           // nfqws2 has exactly Desync
+	DesyncOn  bool            `json:"desync_managed"`      // nuxk owns nfqws2's hostlist (see Desired.ManageDesync)
 	Lists     []List          `json:"lists"`               // desired lists as stored
 	Pending   []Op            `json:"pending"`             // plan not applied (plan-only mode, or failed)
 	Conflicts []Conflict      `json:"conflicts,omitempty"` // held back: still in a user list
@@ -61,9 +62,10 @@ type Manager struct {
 	Cfg   Config
 
 	kick   chan struct{}
-	mu     sync.Mutex // one reconcile at a time; guards st, pushed
+	run    sync.Mutex // one reconcile at a time; guards pushed
+	pushed []string   // last desync list nfqws2 accepted; nil = not pushed yet
+	mu     sync.Mutex // guards st only: Status never waits for a slow pass
 	st     Status
-	pushed []string // last desync list nfqws2 accepted; nil = not pushed yet
 }
 
 const stateName = "plane"
@@ -110,6 +112,12 @@ func (m *Manager) SetDesired(d Desired) error {
 			l.Source = "manual"
 		}
 		d.Lists[i] = l
+		if l.Mode == ModeDesync {
+			d.ManageDesync = true
+		}
+	}
+	if prev, err := m.Desired(); err == nil && prev.ManageDesync {
+		d.ManageDesync = true
 	}
 	if err := m.Store.SaveJSON(stateName, d); err != nil {
 		return err
@@ -176,16 +184,24 @@ func (m *Manager) Run(ctx context.Context) {
 // Reconcile observes the firmware, plans, and — with Apply — executes the
 // plan op by op, stopping at the first failure (the next pass retries).
 func (m *Manager) Reconcile(ctx context.Context) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.run.Lock()
+	defer m.run.Unlock()
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 
-	st := Status{Backend: m.B.Name(), Apply: m.Cfg.Apply, Ifaces: m.Cfg.Ifaces, AppliedAt: m.st.AppliedAt, CheckedAt: time.Now().Unix()}
+	prev := m.Status()
+	st := Status{Backend: m.B.Name(), Apply: m.Cfg.Apply, Ifaces: m.Cfg.Ifaces, AppliedAt: prev.AppliedAt, CheckedAt: time.Now().Unix()}
+	publish := func() {
+		m.mu.Lock()
+		m.st = st
+		m.mu.Unlock()
+	}
 	fail := func(err error) {
 		st.LastError = err.Error()
-		slog.Warn("plane", "err", err)
-		m.st = st
+		if err.Error() != prev.LastError { // a persistent failure is logged once
+			slog.Warn("plane", "err", err)
+		}
+		publish()
 	}
 
 	d, err := m.Desired()
@@ -202,6 +218,7 @@ func (m *Manager) Reconcile(ctx context.Context) {
 		fail(err)
 		return
 	}
+	st.DesyncOn = d.ManageDesync && m.Cfg.Desync != nil
 	st.Desync = Desync(d, m.Cfg.Ifaces[ModeWarp] != "")
 	st.DesyncOK = m.pushed != nil && slices.Equal(m.pushed, st.Desync)
 	if st.Desync == nil {
@@ -226,11 +243,11 @@ func (m *Manager) Reconcile(ctx context.Context) {
 
 	if !m.Cfg.Apply {
 		st.Pending = pendingOnly(ops)
-		m.st = st
+		publish()
 		return
 	}
 	// DPI first: it is cheap, local and independent of the firmware objects
-	if m.Cfg.Desync != nil && !st.DesyncOK {
+	if m.Cfg.Desync != nil && !st.DesyncOK && d.ManageDesync {
 		if err := m.Cfg.Desync(ctx, st.Desync); err != nil {
 			st.Warnings = append(st.Warnings, "список DPI не передан в nfqws2: "+err.Error())
 		} else {
@@ -251,7 +268,7 @@ func (m *Manager) Reconcile(ctx context.Context) {
 	if Changes(ops) > 0 {
 		st.AppliedAt = time.Now().Unix()
 	}
-	m.st = st
+	publish()
 }
 
 // pendingOnly drops the idempotent v6 check from what's shown as pending.

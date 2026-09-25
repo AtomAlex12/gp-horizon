@@ -12,7 +12,7 @@ VERSION := $(shell tr -d ' \n\r' < VERSION)
 COMMIT  := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)$(shell git diff --quiet 2>/dev/null || echo -dirty)
 OUT     := dist/nuxk-horizon-$(VERSION)
 
-.PHONY: version version-check check core-check web-check installer-check installer-payload installer release proto pi dev clean
+.PHONY: version version-check check core-check web-check installer-check controller-check installer-payload installer release proto pi dev clean
 
 version:
 	@echo $(VERSION)
@@ -24,13 +24,16 @@ core-check:
 	$(MAKE) -C nuxk-core fmt-check vet test
 
 web-check:
-	cd nuxk-web && npm install --no-audit --no-fund && npm run check
+	cd nuxk-web && npm install --no-audit --no-fund && npm run check:api && npm run check
 
 installer-check:
 	cd nuxk-installer && gofmt -l . | (! grep .) && go vet ./... && go test ./...
 	sh engines/nuxk-nfqws2/shim_test.sh
 
-check: version-check core-check web-check installer-check
+controller-check:
+	cd nuxk-controller && gofmt -l . | (! grep .) && go vet ./... && go test ./...
+
+check: version-check core-check web-check installer-check controller-check
 
 # Router files the installer embeds and pushes over SSH.
 PAYLOAD := nuxk-installer/payload
@@ -62,12 +65,15 @@ release: version-check installer
 	rm -rf $(OUT) && mkdir -p $(OUT)
 	cp nuxk-core/dist/nuxk-core-* $(OUT)/
 	cp dist/nuxk-installer-* $(OUT)/
+	cd nuxk-controller && for arch in arm64 amd64; do \
+	  CGO_ENABLED=0 GOOS=linux GOARCH=$$arch go build -ldflags "-s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT)" -o ../$(OUT)/nuxk-controller-linux-$$arch . || exit 1; \
+	done
 	cd nuxk-web && npm install --no-audit --no-fund && npm run build && npm run build:lite
 	tar -C nuxk-web/dist      -czf $(OUT)/nuxk-web-full-$(VERSION).tar.gz .
 	tar -C nuxk-web/dist-lite -czf $(OUT)/nuxk-web-lite-$(VERSION).tar.gz .
 	cp CHANGELOG.md $(OUT)/
 	printf 'version %s\ncommit %s\n' '$(VERSION)' '$(COMMIT)' > $(OUT)/BUILD
-	cd $(OUT) && sha256sum nuxk-core-* nuxk-installer-* *.tar.gz BUILD > SHA256SUMS
+	cd $(OUT) && sha256sum nuxk-core-* nuxk-installer-* nuxk-controller-* *.tar.gz BUILD > SHA256SUMS
 	tar -C dist -czf dist/nuxk-horizon-$(VERSION).tar.gz nuxk-horizon-$(VERSION)
 	@ls -lh $(OUT) dist/nuxk-horizon-$(VERSION).tar.gz
 

@@ -232,11 +232,17 @@ func (c *Controller) observe(ctx context.Context, k engine.Kind, doProbe bool) E
 	st := c.last[k]
 	c.mu.Unlock()
 
+	prevErr := st.Detail["error"]
 	if inf, err := e.Info(ctx); err != nil {
-		slog.Warn("reconcile info", "engine", k, "err", err)
+		if err.Error() != prevErr { // a persistent failure is logged once, not every tick
+			slog.Warn("reconcile info", "engine", k, "err", err)
+		}
 		st.Info = engine.Info{Kind: k, Health: engine.HealthUnknown,
 			Detail: map[string]string{"error": err.Error()}}
 	} else {
+		if prevErr != "" {
+			slog.Info("reconcile info: engine answers again", "engine", k)
+		}
 		st.Info = inf
 	}
 	if doProbe {

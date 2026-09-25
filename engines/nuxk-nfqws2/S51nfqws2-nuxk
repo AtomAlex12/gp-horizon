@@ -65,7 +65,9 @@ info() {
     echo "lists.desync_count $(count "$LISTS/user.list")"
     echo "lists.endpoints_count $(count "$LISTS/endpoints.list")"
     echo "lists.auto_count $(count "$LISTS/auto.list")"
-    grep . "$LISTS/user.list" 2>/dev/null | while read -r d; do echo "item $d"; done
+    # first entries only: the full list can be thousands of lines (presets)
+    # and info runs every few seconds; lists.desync_count has the real size
+    grep . "$LISTS/user.list" 2>/dev/null | head -n 200 | while read -r d; do echo "item $d"; done
 }
 
 # The meaningful nfqws2 probe: does a site the ISP SNI-blocks actually load

@@ -305,7 +305,7 @@ func stepStart(c *Conn, r Report, emit func(Event)) error {
 	}
 	cmd := fmt.Sprintf("i=0; while [ $i -lt 15 ]; do curl -fsS -m 2 http://%s/api/v1/healthz && exit 0; i=$((i+1)); sleep 1; done; exit 1", health)
 	if err := run(c, emit, cmd); err != nil {
-		_ = run(c, emit, "tail -n 20 "+c.P(pLog)+" 2>/dev/null")
+		_ = run(c, emit, "tail -n 20 "+c.P(pLog)+" 2>/dev/null; tail -n 20 "+c.P(pLog[:len(pLog)-len(".log")]+".crash")+" 2>/dev/null; true")
 		return errors.New("nuxk-core не ответил на /api/v1/healthz за 15 секунд — последние строки лога выше")
 	}
 	return nil
@@ -331,6 +331,7 @@ func seedPlane(c *Conn, emit func(Event)) error {
 	d := map[string]any{"on_down": "direct", "lists": []any{}}
 	if len(doms) > 0 {
 		d["lists"] = []any{map[string]any{"name": "DPI", "mode": "desync", "domains": doms, "source": "imported:nfqws2"}}
+		d["manage_desync"] = true // nuxk owns user.list from now on (see plane.Desired)
 	}
 	b, _ := json.MarshalIndent(d, "", "  ")
 	emit(Event{Kind: "out", Text: fmt.Sprintf("%s: список «DPI» из nfqws2 user.list (%d доменов)", pPlane, len(doms))})

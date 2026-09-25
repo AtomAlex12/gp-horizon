@@ -76,7 +76,7 @@ td.sel { width: 28px; }
       <div class="row" style="margin-bottom:12px">
         <span class="muted" style="font-size:12.5px">Быстрый выбор:</span>
         <button type="button" class="ghost chip" data-host="192.168.1.1">Дом · 192.168.1.1</button>
-        <button type="button" class="ghost chip" data-host="192.168.2.1">Квартира · 192.168.2.1</button>
+        <button type="button" class="ghost chip" data-host="192.168.2.1" data-port="22">Квартира · 192.168.2.1</button>
       </div>
       <div class="grid">
         <label for="host">Адрес роутера<input id="host" required value="192.168.1.1"></label>
@@ -96,7 +96,7 @@ td.sel { width: 28px; }
         <button type="submit" id="check">Проверить роутер</button>
         <span class="hint" style="margin:0">Только чтение: проверка ничего не меняет на роутере.</span>
       </div>
-      <p class="hint">Это SSH Entware (порт 222 по умолчанию), а не CLI Keenetic на порту 22. Код доступа напечатан в логе инсталлятора при запуске. Пароль нигде не сохраняется.</p>
+      <p class="hint">Это SSH Entware (по умолчанию порт 222; на роутере в квартире Entware слушает 22), а не CLI Keenetic. Код доступа напечатан в логе инсталлятора при запуске. Пароль нигде не сохраняется.</p>
       <p class="err" id="err" hidden></p>
     </form>
   </section>
@@ -128,7 +128,7 @@ td.sel { width: 28px; }
   let target = null, plan = null;
 
   try { const c = sessionStorage.getItem('nuxk-installer-code'); if (c) $('code').value = c; } catch (e) {}
-  document.querySelectorAll('[data-host]').forEach((b) => b.addEventListener('click', () => { $('host').value = b.dataset.host; }));
+  document.querySelectorAll('[data-host]').forEach((b) => b.addEventListener('click', () => { $('host').value = b.dataset.host; $('port').value = b.dataset.port || '222'; }));
 
   function readTarget() {
     return {

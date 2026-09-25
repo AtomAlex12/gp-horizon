@@ -126,15 +126,37 @@ func (s *Store) WriteList(name string, lines []string) error {
 
 func atomicWrite(path string, b []byte) error { return atomicWriteMode(path, b, 0o644) }
 
+// atomicWriteMode writes via a synced temp file and a rename, then syncs the
+// directory: a router losing power mid-write keeps either the old or the new
+// file, never an empty one.
 func atomicWriteMode(path string, b []byte, mode os.FileMode) error {
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, b, mode); err != nil {
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
+	if err != nil {
 		return err
 	}
-	if err := os.Chmod(tmp, mode); err != nil { // WriteFile keeps the mode of a leftover tmp
+	_, werr := f.Write(b)
+	if werr == nil {
+		werr = f.Sync()
+	}
+	if cerr := f.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr != nil {
+		os.Remove(tmp)
+		return werr
+	}
+	if err := os.Chmod(tmp, mode); err != nil { // OpenFile keeps the mode of a leftover tmp
 		return err
 	}
-	return os.Rename(tmp, path)
+	if err := os.Rename(tmp, path); err != nil {
+		return err
+	}
+	if d, err := os.Open(filepath.Dir(path)); err == nil {
+		d.Sync()
+		d.Close()
+	}
+	return nil
 }
 
 // Desired is what the user asked of one engine — the controller's source of

@@ -15,6 +15,8 @@ import (
 
 	"nuxk.dev/horizon/core/internal/core"
 	"nuxk.dev/horizon/core/internal/engine"
+	"nuxk.dev/horizon/core/internal/logbuf"
+	"nuxk.dev/horizon/core/internal/node"
 	"nuxk.dev/horizon/core/internal/plane"
 )
 
@@ -27,29 +29,53 @@ type Deps struct {
 	Plane   *plane.Manager   // nil when PLANE is off
 	WebRoot string           // static nuxk-web build; "" = API only
 	Token   string           // "" = allow localhost only
+	Node    *node.Node       // /info, /metrics
+	Logs    *logbuf.Ring     // /logs, log events on /events
 }
+
+// Route is one API endpoint. Routes is the single list the mux is built from
+// and api/openapi.yaml is checked against (TestOpenAPIMatchesRoutes).
+type Route struct {
+	Pattern string // "METHOD /path"
+	Public  bool   // no token (liveness only)
+	handler func(Deps) http.HandlerFunc
+}
+
+var Routes = []Route{
+	{"GET /api/v1/healthz", true, func(Deps) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+		}
+	}},
+	{"GET /api/v1/version", false, func(d Deps) http.HandlerFunc { return d.handleVersion }},
+	{"GET /api/v1/info", false, func(d Deps) http.HandlerFunc { return d.handleInfo }},
+	{"GET /api/v1/status", false, func(d Deps) http.HandlerFunc { return d.handleStatus }},
+	{"GET /api/v1/metrics", false, func(d Deps) http.HandlerFunc { return d.handleMetrics }},
+	{"GET /api/v1/logs", false, func(d Deps) http.HandlerFunc { return d.handleLogs }},
+	{"GET /api/v1/events", false, func(d Deps) http.HandlerFunc { return d.handleEvents }},
+	{"GET /api/v1/engines", false, func(d Deps) http.HandlerFunc { return d.handleEngines }},
+	{"GET /api/v1/engines/{kind}", false, func(d Deps) http.HandlerFunc { return d.handleEngine }},
+	{"POST /api/v1/engines/{kind}/{action}", false, func(d Deps) http.HandlerFunc { return d.handleEngineAction }},
+	{"PUT /api/v1/engines/{kind}/config", false, func(d Deps) http.HandlerFunc { return d.handleEngineConfig }},
+	{"GET /api/v1/plane", false, func(d Deps) http.HandlerFunc { return d.handlePlane }},
+	{"GET /api/v1/plane/lists", false, func(d Deps) http.HandlerFunc { return d.handlePlaneLists }},
+	{"PUT /api/v1/plane/lists", false, func(d Deps) http.HandlerFunc { return d.handlePlaneSetLists }},
+	{"POST /api/v1/plane/import", false, func(d Deps) http.HandlerFunc { return d.handlePlaneImport }},
+}
+
+// maxBody bounds every request body (the largest is a full set of lists).
+const maxBody = 4 << 20
 
 func NewRouter(d Deps) http.Handler {
 	mux := http.NewServeMux()
-
-	// --- unauthenticated liveness ---
-	mux.HandleFunc("GET /api/v1/healthz", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-	})
-
-	// --- v1 (authenticated) ---
 	v1 := http.NewServeMux()
-	v1.HandleFunc("GET /api/v1/version", d.handleVersion)
-	v1.HandleFunc("GET /api/v1/status", d.handleStatus)
-	v1.HandleFunc("GET /api/v1/engines", d.handleEngines)
-	v1.HandleFunc("GET /api/v1/engines/{kind}", d.handleEngine)
-	v1.HandleFunc("POST /api/v1/engines/{kind}/{action}", d.handleEngineAction)
-	v1.HandleFunc("PUT /api/v1/engines/{kind}/config", d.handleEngineConfig)
-	v1.HandleFunc("GET /api/v1/plane", d.handlePlane)
-	v1.HandleFunc("GET /api/v1/plane/lists", d.handlePlaneLists)
-	v1.HandleFunc("PUT /api/v1/plane/lists", d.handlePlaneSetLists)
-	v1.HandleFunc("POST /api/v1/plane/import", d.handlePlaneImport)
-	// TODO: /lists/{kind}, /decisions, /discover, /apply, /presets, /settings, /events(SSE)
+	for _, rt := range Routes {
+		if rt.Public {
+			mux.HandleFunc(rt.Pattern, rt.handler(d))
+		} else {
+			v1.HandleFunc(rt.Pattern, rt.handler(d))
+		}
+	}
 	mux.Handle("/api/v1/", d.auth(v1))
 
 	// --- static web (optional) ---
@@ -58,7 +84,22 @@ func NewRouter(d Deps) http.Handler {
 		mux.Handle("/", spaFallback(d.WebRoot, fs))
 	}
 
-	return logging(mux)
+	return logging(secure(mux))
+}
+
+// secure bounds request bodies and sets the headers a router admin page needs:
+// no framing (clickjacking), no MIME sniffing, no referrer leaking the LAN.
+func secure(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Referrer-Policy", "no-referrer")
+		if r.Body != nil {
+			r.Body = http.MaxBytesReader(w, r.Body, maxBody)
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func (d Deps) handleVersion(w http.ResponseWriter, r *http.Request) {

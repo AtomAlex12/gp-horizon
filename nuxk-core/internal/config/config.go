@@ -17,6 +17,7 @@ type Config struct {
 	APIToken string // bearer token for non-localhost clients; empty = localhost only
 	StateDir string // flat-file state root, e.g. /opt/etc/nuxk
 	WebRoot  string // static build dir for nuxk-web lite; empty = API only
+	NodeRole string // NODE_ROLE: router | stand | host; "" = detect (ndmc → router)
 
 	// Reconcile cadence; 0 = controller defaults (5s / 60s). A MIPS router may
 	// want a slower Info poll — every tick forks one shell per engine.
@@ -98,6 +99,8 @@ func Load(path string) (Config, error) {
 			cfg.StateDir = v
 		case "WEB_ROOT":
 			cfg.WebRoot = v
+		case "NODE_ROLE":
+			cfg.NodeRole = v
 		case "ENGINE_NFQWS2":
 			cfg.Engines.Nfqws2 = v
 		case "ENGINE_USQUE":
