@@ -193,14 +193,14 @@ func (m *Manager) Reconcile(ctx context.Context) {
 		fail(err)
 		return
 	}
+	st.Lists, st.OnDown = d.Lists, d.OnDown
+	if st.OnDown == "" {
+		st.OnDown = OnDownDirect
+	}
 	obs, err := m.B.Observe(ctx)
 	if err != nil {
 		fail(err)
 		return
-	}
-	st.Lists, st.OnDown = d.Lists, d.OnDown
-	if st.OnDown == "" {
-		st.OnDown = OnDownDirect
 	}
 	st.Desync = Desync(d, m.Cfg.Ifaces[ModeWarp] != "")
 	st.DesyncOK = m.pushed != nil && slices.Equal(m.pushed, st.Desync)

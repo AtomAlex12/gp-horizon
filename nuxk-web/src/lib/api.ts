@@ -66,7 +66,72 @@ export interface Status {
   version: string;
   ts: number;
   engines: EngineState[];
-  plane: Record<string, unknown>;
+  plane?: PlaneStatus | null; // absent/null when PLANE is off
+}
+
+// --- routing plane (nuxk-core/internal/plane) --------------------------------
+
+export type ListMode = 'desync' | 'warp' | 'vless';
+export type OnDown = 'direct' | 'block';
+
+export interface PlaneList {
+  name: string;
+  mode: ListMode;
+  domains: string[];
+  source?: string; // manual | imported:<group> | preset:<id>
+}
+
+export interface PlaneDesired {
+  lists: PlaneList[];
+  on_down?: OnDown;
+}
+
+export interface PlaneGroup {
+  name: string;
+  mode: ListMode;
+  interface: string;
+  block: boolean;
+  domains: string[];
+}
+
+export interface PlaneOp {
+  kind: string;
+  group?: string;
+  interface?: string;
+  block?: boolean;
+  domains?: string[];
+  groups?: string[];
+}
+
+export interface PlaneConflict {
+  domain: string;
+  group: string;
+  user_group: string;
+}
+
+export interface PlaneForeign {
+  group: string;
+  description?: string;
+  interface: string;
+  domains: string[];
+}
+
+export interface PlaneStatus {
+  backend: string;
+  apply: boolean;
+  ifaces: Partial<Record<ListMode, string>>;
+  on_down: OnDown;
+  lists: PlaneList[] | null;
+  groups: PlaneGroup[] | null;
+  desync: string[] | null;
+  desync_ok: boolean;
+  pending: PlaneOp[] | null;
+  conflicts?: PlaneConflict[];
+  foreign?: PlaneForeign[];
+  warnings?: string[];
+  last_error?: string;
+  checked_at?: number;
+  applied_at?: number;
 }
 
 // Mirrors engine.Routing (nuxk-core/internal/engine/engine.go).
@@ -126,7 +191,14 @@ export const api = {
   setConfig: (k: EngineKind, cfg: Record<string, string>) =>
     req<{ status: string }>('PUT', `/engines/${k}/config`, cfg),
 
-  // TODO: lists, decisions, discover, presets, settings, events(SSE)
+  // Routing plane: 404 plane_off when PLANE= is empty in nuxk.conf.
+  plane: () => req<PlaneStatus>('GET', '/plane'),
+  planeLists: () => req<PlaneDesired>('GET', '/plane/lists'),
+  setPlaneLists: (d: PlaneDesired) => req<{ status: string }>('PUT', '/plane/lists', d),
+  planeImport: (groups: string[], mode: ListMode) =>
+    req<PlaneDesired>('POST', '/plane/import', { groups, mode }),
+
+  // TODO: decisions, discover, presets, events(SSE)
 };
 
 export { HttpError };
