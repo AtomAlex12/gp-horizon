@@ -1,163 +1,251 @@
 openapi: 3.1.0
 
 info:
-  title: nuxk-core API
-  version: "0.1.0-draft"
+  title: nuxk-core agent API
+  version: "1"
   description: >
-    Internal control API for nuxk Horizon. Single-tenant. `nuxk-web` is the only
-    client. Bearer token required for non-loopback callers (`API_TOKEN` in
-    `/opt/etc/nuxk/nuxk.conf`); loopback with no token configured is allowed.
-    Flat responses — a resource is returned directly; errors are
-    `{"error":{"code","message"}}` plus the HTTP status.
-    DRAFT — only /healthz, /version, /status, /engines* are implemented so far.
+    The contract between the nuxk-core agent (on the router, or the Pi test
+    stand) and its clients: the lite web UI served by the agent itself and
+    nuxk-controller on the Pi.
+
+    Single-tenant. Every path except /healthz needs `Authorization: Bearer
+    <API_TOKEN>` (`/opt/etc/nuxk/nuxk.conf`); a loopback caller is let in
+    without a token only when no token is configured. Responses are the
+    resource itself; errors are `{"error":{"code","message"}}` plus the HTTP
+    status. Request bodies are capped at 4 MiB.
+
+    This file is checked against the agent's route table in CI
+    (TestOpenAPIMatchesRoutes): an endpoint exists here if and only if the
+    agent serves it. Planned endpoints are not listed until they exist.
   license: { name: MIT }
 
 servers:
   - url: http://{host}:4141
-    variables: { host: { default: 127.0.0.1 } }
+    variables: { host: { default: 192.168.1.1 } }
 
 security:
   - bearer: []
 
 tags:
-  - { name: core }
-  - { name: engines }
-  - { name: routing }
-  - { name: discovery }
+  - { name: agent, description: the box itself — liveness, identity, counters, log, live events }
+  - { name: engines, description: nfqws2 / usque / xray }
+  - { name: plane, description: "routing plane: the DPI / WARP / VLESS lists" }
 
 paths:
   /api/v1/healthz:
     get:
-      tags: [core]
+      tags: [agent]
+      operationId: healthz
+      summary: Liveness (no token)
       security: []
-      summary: Liveness
-      responses: { "200": { description: alive } }
+      responses:
+        "200":
+          description: alive
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties: { status: { type: string, const: ok } }
 
   /api/v1/version:
     get:
-      tags: [core]
+      tags: [agent]
+      operationId: version
       responses:
         "200":
+          description: build
           content: { application/json: { schema: { $ref: "#/components/schemas/Version" } } }
+        "401": { $ref: "#/components/responses/Error" }
+
+  /api/v1/info:
+    get:
+      tags: [agent]
+      operationId: info
+      summary: What box this is (router or test stand), firmware, uptime
+      responses:
+        "200":
+          description: node
+          content: { application/json: { schema: { $ref: "#/components/schemas/NodeInfo" } } }
+        "401": { $ref: "#/components/responses/Error" }
 
   /api/v1/status:
     get:
-      tags: [core]
-      summary: Aggregate — every engine + the routing plane + core version
+      tags: [agent]
+      operationId: status
+      summary: Whole platform state — every engine plus the routing plane
+      description: Served from memory (the reconcile loop keeps it fresh); never blocks on an engine.
       responses:
         "200":
+          description: snapshot
           content: { application/json: { schema: { $ref: "#/components/schemas/Status" } } }
+        "401": { $ref: "#/components/responses/Error" }
+
+  /api/v1/metrics:
+    get:
+      tags: [agent]
+      operationId: metrics
+      summary: Raw counters from /proc — rates are the reader's job
+      responses:
+        "200":
+          description: counters
+          content: { application/json: { schema: { $ref: "#/components/schemas/Metrics" } } }
+        "401": { $ref: "#/components/responses/Error" }
+
+  /api/v1/logs:
+    get:
+      tags: [agent]
+      operationId: logs
+      summary: The agent's recent log (last 500 entries kept in memory)
+      parameters:
+        - { name: after, in: query, description: only entries with a larger seq, schema: { type: integer, minimum: 0 } }
+        - { name: limit, in: query, description: "at most this many, newest (default 200, max 500)", schema: { type: integer, minimum: 1, maximum: 500 } }
+      responses:
+        "200":
+          description: entries, oldest first
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/LogEntry" } }
+        "401": { $ref: "#/components/responses/Error" }
+
+  /api/v1/events:
+    get:
+      tags: [agent]
+      operationId: events
+      summary: Live stream (Server-Sent Events)
+      description: >
+        `event: status` with a Status snapshot on connect and on every change;
+        `event: log` with a LogEntry per new log line; a `: ping` comment every
+        20 s. The stream stays open until the client goes away.
+      responses:
+        "200":
+          description: text/event-stream
+          content: { text/event-stream: { schema: { type: string } } }
+        "401": { $ref: "#/components/responses/Error" }
 
   /api/v1/engines:
     get:
       tags: [engines]
+      operationId: engines
       responses:
         "200":
+          description: every wired engine
           content:
             application/json:
-              schema: { type: array, items: { $ref: "#/components/schemas/EngineInfo" } }
+              schema: { type: array, items: { $ref: "#/components/schemas/EngineState" } }
+        "401": { $ref: "#/components/responses/Error" }
 
   /api/v1/engines/{kind}:
-    parameters: [{ $ref: "#/components/parameters/kind" }]
     get:
       tags: [engines]
+      operationId: engine
+      summary: One engine, read live (not from the snapshot)
+      parameters: [{ $ref: "#/components/parameters/kind" }]
       responses:
-        "200": { content: { application/json: { schema: { $ref: "#/components/schemas/EngineInfo" } } } }
-        "404": { $ref: "#/components/responses/Error" }
-
-  /api/v1/engines/{kind}/{action}:
-    parameters:
-      - { $ref: "#/components/parameters/kind" }
-      - name: action
-        in: path
-        required: true
-        schema: { type: string, enum: [start, stop, restart, probe] }
-    post:
-      tags: [engines]
-      summary: start / stop / restart (202) — or probe (200 with result)
-      responses:
-        "200": { description: probe result, content: { application/json: { schema: { $ref: "#/components/schemas/Probe" } } } }
-        "202": { description: action accepted }
+        "200":
+          description: live info
+          content: { application/json: { schema: { $ref: "#/components/schemas/EngineInfo" } } }
         "404": { $ref: "#/components/responses/Error" }
         "502": { $ref: "#/components/responses/Error" }
 
-  /api/v1/engines/{kind}/config:
-    parameters: [{ $ref: "#/components/parameters/kind" }]
-    put:
+  /api/v1/engines/{kind}/{action}:
+    post:
       tags: [engines]
-      summary: >
-        Set an engine's runtime target. Only engines implementing internal Configurable accept
-        this today (xray: vless_uri or sub_url); others get 404 identically to an unknown kind.
+      operationId: engineAction
+      summary: start | stop | restart | probe | apply
+      description: >
+        start/stop/restart also record the run intent (the controller keeps it
+        with backoff). probe runs an active check and returns it. apply takes a
+        Routing body.
+      parameters:
+        - { $ref: "#/components/parameters/kind" }
+        - { name: action, in: path, required: true, schema: { type: string, enum: [start, stop, restart, probe, apply] } }
       requestBody:
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/EngineConfig" }
-            examples:
-              vlessUri: { value: { vless_uri: "vless://uuid@host:443?type=tcp&security=reality&fp=chrome" } }
-              subUrl: { value: { sub_url: "https://panel.example/sub/xxxx" } }
+        required: false
+        content: { application/json: { schema: { $ref: "#/components/schemas/Routing" } } }
       responses:
-        "200": { description: applied }
+        "200":
+          description: probe result
+          content: { application/json: { schema: { $ref: "#/components/schemas/Probe" } } }
+        "202":
+          description: done
+          content: { application/json: { schema: { $ref: "#/components/schemas/Ok" } } }
         "400": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
         "502": { $ref: "#/components/responses/Error" }
 
-  # ---- not yet implemented — contract sketch ----
-  /api/v1/lists/{name}:
-    parameters:
-      - name: name
-        in: path
+  /api/v1/engines/{kind}/config:
+    put:
+      tags: [engines]
+      operationId: engineConfig
+      summary: Runtime config (xray only today); stored 0600, never served back
+      parameters: [{ $ref: "#/components/parameters/kind" }]
+      requestBody:
         required: true
-        schema: { type: string, enum: [nfqws2, usque, xray, exclude] }
+        content: { application/json: { schema: { $ref: "#/components/schemas/EngineConfig" } } }
+      responses:
+        "200":
+          description: applied
+          content: { application/json: { schema: { $ref: "#/components/schemas/Ok" } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "502": { $ref: "#/components/responses/Error" }
+
+  /api/v1/plane:
     get:
-      tags: [routing]
-      summary: "TODO — read a routing list (domain / ip / cidr, one per line)"
-      responses: { "200": { description: list body } }
+      tags: [plane]
+      operationId: plane
+      responses:
+        "200":
+          description: plane status
+          content: { application/json: { schema: { $ref: "#/components/schemas/PlaneStatus" } } }
+        "404": { description: "plane is off (PLANE= in nuxk.conf)", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
+  /api/v1/plane/lists:
+    get:
+      tags: [plane]
+      operationId: planeLists
+      responses:
+        "200":
+          description: desired lists
+          content: { application/json: { schema: { $ref: "#/components/schemas/PlaneDesired" } } }
+        "404": { $ref: "#/components/responses/Error" }
     put:
-      tags: [routing]
-      summary: "TODO — replace the list, then recompute the plane"
-      responses: { "200": { description: replaced } }
+      tags: [plane]
+      operationId: setPlaneLists
+      summary: Replace every list and the tunnel-down policy; the plane reconciles right away
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/PlaneDesired" } } }
+      responses:
+        "200":
+          description: stored
+          content: { application/json: { schema: { $ref: "#/components/schemas/Ok" } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
 
-  /api/v1/decisions:
-    get:
-      tags: [discovery]
-      summary: "TODO — the learned domain→mode cache"
-      responses: { "200": { description: decisions } }
-
-  /api/v1/decisions/{domain}:
-    parameters: [{ name: domain, in: path, required: true, schema: { type: string } }]
-    put:
-      tags: [discovery]
-      summary: "TODO — pin a domain to a mode (source=manual, never auto-changed)"
-      responses: { "200": { description: pinned } }
-    delete:
-      tags: [discovery]
-      summary: "TODO — forget / unpin"
-      responses: { "204": { description: forgotten } }
-
-  /api/v1/discover:
+  /api/v1/plane/import:
     post:
-      tags: [discovery]
-      summary: "TODO — queue an out-of-band ladder sweep for a domain or service group"
-      responses: { "202": { description: "{ job_id }" } }
-
-  /api/v1/discover/{job_id}:
-    parameters: [{ name: job_id, in: path, required: true, schema: { type: string } }]
-    get:
-      tags: [discovery]
-      summary: "TODO — sweep progress + per-rung result"
-      responses: { "200": { description: job } }
-
-  /api/v1/apply:
-    post:
-      tags: [routing]
-      summary: "TODO — recompute nuxk-plane from all lists + decisions"
-      responses: { "200": { description: "{ per-engine: { domains, prefixes } }" } }
-
-  /api/v1/events:
-    get:
-      tags: [core]
-      summary: "TODO — SSE stream of state changes for the live UI"
-      responses: { "200": { description: "text/event-stream" } }
+      tags: [plane]
+      operationId: planeImport
+      summary: Copy the user's own routed Keenetic lists into a nuxk list
+      description: The user's groups stay untouched; their domains are held back as conflicts until removed there.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [groups, mode]
+              properties:
+                groups: { type: array, items: { type: string }, minItems: 1 }
+                mode: { $ref: "#/components/schemas/ListMode" }
+      responses:
+        "200":
+          description: the new desired lists
+          content: { application/json: { schema: { $ref: "#/components/schemas/PlaneDesired" } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
 
 components:
   securitySchemes:
@@ -168,7 +256,7 @@ components:
       name: kind
       in: path
       required: true
-      schema: { type: string, enum: [nfqws2, usque, xray] }
+      schema: { $ref: "#/components/schemas/EngineKind" }
 
   responses:
     Error:
@@ -178,57 +266,137 @@ components:
           schema: { $ref: "#/components/schemas/Error" }
 
   schemas:
+    Ok:
+      type: object
+      required: [status]
+      properties: { status: { type: string } }
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+
     Version:
       type: object
+      required: [version, commit, api]
       properties:
-        version: { type: string, description: "SemVer from the repo VERSION file, +dev/+proto for images" }
-        commit: { type: string, description: git short sha the binary was built from }
+        version: { type: string }
+        commit: { type: string }
         api: { type: string, const: v1 }
+
+    NodeInfo:
+      type: object
+      required: [role, hostname, arch, kernel, uptime_sec, core_since, version, commit]
+      properties:
+        role:
+          type: string
+          enum: [router, stand, host]
+          description: "router = Keenetic; stand = Docker prototype on the Pi"
+        hostname: { type: string }
+        model: { type: string, description: Keenetic model (router only) }
+        firmware: { type: string, description: KeeneticOS release (router only) }
+        arch: { type: string }
+        kernel: { type: string }
+        uptime_sec: { type: integer, description: the box }
+        core_since: { type: integer, description: unix seconds nuxk-core started }
+        version: { type: string }
+        commit: { type: string }
+
+    Metrics:
+      type: object
+      required: [ts, ifaces, nfqueues, conntrack, conntrack_max, load1, mem_total_kb, mem_avail_kb, core_rss_kb]
+      properties:
+        ts: { type: integer, description: unix milliseconds }
+        wan: { type: string, description: interface of the IPv4 default route }
+        ifaces:
+          type: object
+          additionalProperties: { $ref: "#/components/schemas/IfaceCounters" }
+        nfqueues: { type: array, items: { $ref: "#/components/schemas/NFQueue" } }
+        conntrack: { type: integer }
+        conntrack_max: { type: integer }
+        load1: { type: number }
+        mem_total_kb: { type: integer }
+        mem_avail_kb: { type: integer }
+        core_rss_kb: { type: integer }
+
+    IfaceCounters:
+      type: object
+      required: [rx, tx]
+      properties:
+        rx: { type: integer, description: bytes received }
+        tx: { type: integer, description: bytes sent }
+
+    NFQueue:
+      type: object
+      required: [num, packets, dropped, waiting]
+      properties:
+        num: { type: integer }
+        packets: { type: integer, description: packets through the queue since boot }
+        dropped: { type: integer }
+        waiting: { type: integer }
+
+    LogEntry:
+      type: object
+      required: [seq, ts, level, msg]
+      properties:
+        seq: { type: integer }
+        ts: { type: integer, description: unix milliseconds }
+        level: { type: string, enum: [debug, info, warn, error] }
+        msg: { type: string }
+        attrs: { type: string }
 
     Status:
       type: object
+      required: [version, ts, engines, plane]
       properties:
         version: { type: string }
         ts: { type: integer }
         engines: { type: array, items: { $ref: "#/components/schemas/EngineState" } }
-        plane: { type: object, additionalProperties: true }
+        plane:
+          description: PlaneStatus, or {"backend":"off"} when the plane is off
+          oneOf:
+            - $ref: "#/components/schemas/PlaneStatus"
+            - $ref: "#/components/schemas/PlaneOff"
+
+    PlaneOff:
+      type: object
+      required: [backend]
+      properties: { backend: { type: string, const: "off" } }
+
+    EngineKind: { type: string, enum: [nfqws2, usque, xray] }
+    Health: { type: string, enum: [ok, degraded, down, unknown] }
 
     EngineInfo:
       type: object
-      required: [kind, running, health]
+      required: [kind, running, uptime_sec, health, routes]
       properties:
-        kind: { type: string, enum: [nfqws2, usque, xray] }
+        kind: { $ref: "#/components/schemas/EngineKind" }
         running: { type: boolean }
         pid: { type: integer }
         uptime_sec: { type: integer }
         version: { type: string }
-        health: { type: string, enum: [ok, degraded, down, unknown] }
-        iface: { type: string, description: "opkgtun0 / tun-xray / ''" }
-        endpoint: { type: string }
-        routes: { type: integer, description: prefixes currently targeted }
+        health: { $ref: "#/components/schemas/Health" }
+        iface: { type: string, description: "tunnel (opkgtun0) or, for nfqws2, the WAN it hooks" }
+        endpoint: { type: string, description: upstream the tunnel dials }
+        routes: { type: integer }
         detail: { type: object, additionalProperties: { type: string } }
 
     EngineState:
-      description: EngineInfo plus the last probe and the controller's view.
+      description: EngineInfo plus the last probe and the controller's view
       allOf:
         - $ref: "#/components/schemas/EngineInfo"
         - type: object
           properties:
             probe: { $ref: "#/components/schemas/Probe" }
             probe_at: { type: integer }
-            want_run:
-              type: boolean
-              description: >
-                Stored run intent — true keeps it running (auto-restart with backoff),
-                false keeps it stopped; absent = unmanaged. Set by start/stop/restart.
-            last_error: { type: string, description: last failed controller/user action, cleared on success }
-
-    EngineConfig:
-      type: object
-      description: >
-        Free-form key/value — shape is engine-specific (xray: vless_uri XOR sub_url). Unknown
-        keys are ignored; the engine's own init script validates.
-      additionalProperties: { type: string }
+            want_run: { type: boolean, description: "run intent: true keep running, false keep stopped, absent unmanaged" }
+            last_error: { type: string }
 
     Probe:
       type: object
@@ -241,13 +409,101 @@ components:
         reason: { type: string }
         ts: { type: integer }
 
-    Error:
+    Routing:
       type: object
-      required: [error]
       properties:
-        error:
-          type: object
-          required: [code, message]
-          properties:
-            code: { type: string }
-            message: { type: string }
+        domains: { type: array, items: { type: string } }
+        cidrs: { type: array, items: { type: string } }
+        endpoints: { type: array, items: { type: string } }
+        strategy: { type: string }
+
+    EngineConfig:
+      type: object
+      description: engine-specific (xray — vless_uri or sub_url)
+      additionalProperties: { type: string }
+
+    ListMode:
+      type: string
+      enum: [desync, warp, vless]
+      description: "desync = «DPI» (nfqws2, direct); warp = usque tunnel; vless = xray tunnel"
+
+    OnDown:
+      type: string
+      enum: [direct, block]
+      description: what WARP/VLESS lists do while their tunnel is down
+
+    PlaneList:
+      type: object
+      required: [name, mode, domains]
+      properties:
+        name: { type: string }
+        mode: { $ref: "#/components/schemas/ListMode" }
+        domains: { type: array, items: { type: string }, minItems: 1 }
+        source: { type: string, description: "manual | imported:<group> | preset:<id>" }
+
+    PlaneDesired:
+      type: object
+      required: [lists]
+      properties:
+        lists: { type: array, items: { $ref: "#/components/schemas/PlaneList" } }
+        on_down: { $ref: "#/components/schemas/OnDown" }
+        manage_desync: { type: boolean, description: nuxk owns nfqws2's hostlist (set by the first DPI list) }
+
+    PlaneGroup:
+      type: object
+      required: [name, mode, interface, block, domains]
+      properties:
+        name: { type: string }
+        mode: { $ref: "#/components/schemas/ListMode" }
+        interface: { type: string }
+        block: { type: boolean }
+        domains: { type: array, items: { type: string } }
+
+    PlaneOp:
+      type: object
+      required: [kind]
+      properties:
+        kind: { type: string, enum: [create-group, add-domains, del-domains, add-route, del-route, delete-group, ensure-v6-deny] }
+        group: { type: string }
+        interface: { type: string }
+        block: { type: boolean }
+        domains: { type: array, items: { type: string } }
+        groups: { type: array, items: { type: string } }
+
+    PlaneConflict:
+      type: object
+      required: [domain, group, user_group]
+      properties:
+        domain: { type: string }
+        group: { type: string }
+        user_group: { type: string }
+
+    PlaneForeign:
+      type: object
+      required: [group, interface, domains]
+      properties:
+        group: { type: string }
+        description: { type: string }
+        interface: { type: string }
+        domains: { type: array, items: { type: string } }
+
+    PlaneStatus:
+      type: object
+      required: [backend, apply, ifaces, on_down, groups, desync, desync_ok, desync_managed, lists, pending]
+      properties:
+        backend: { type: string }
+        apply: { type: boolean, description: "PLANE_APPLY=1; false = plan only" }
+        ifaces: { type: object, additionalProperties: { type: string } }
+        on_down: { $ref: "#/components/schemas/OnDown" }
+        groups: { type: [array, "null"], items: { $ref: "#/components/schemas/PlaneGroup" } }
+        desync: { type: [array, "null"], items: { type: string } }
+        desync_ok: { type: boolean }
+        desync_managed: { type: boolean }
+        lists: { type: [array, "null"], items: { $ref: "#/components/schemas/PlaneList" } }
+        pending: { type: [array, "null"], items: { $ref: "#/components/schemas/PlaneOp" } }
+        conflicts: { type: array, items: { $ref: "#/components/schemas/PlaneConflict" } }
+        foreign: { type: array, items: { $ref: "#/components/schemas/PlaneForeign" } }
+        warnings: { type: array, items: { type: string } }
+        last_error: { type: string }
+        checked_at: { type: integer }
+        applied_at: { type: integer }

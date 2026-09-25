@@ -24,7 +24,7 @@ core-check:
 	$(MAKE) -C nuxk-core fmt-check vet test
 
 web-check:
-	cd nuxk-web && npm install --no-audit --no-fund && npm run check
+	cd nuxk-web && npm install --no-audit --no-fund && npm run check:api && npm run check
 
 installer-check:
 	cd nuxk-installer && gofmt -l . | (! grep .) && go vet ./... && go test ./...

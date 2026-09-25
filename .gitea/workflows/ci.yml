@@ -60,6 +60,7 @@ jobs:
         with:
           node-version: "22"
       - run: npm install --no-audit --no-fund
+      - run: npm run check:api    # schema.d.ts is generated from nuxk-core/api/openapi.yaml
       - run: npm run check
       - run: npm run build        # full  -> dist/
       - run: npm run build:lite   # lite  -> dist-lite/

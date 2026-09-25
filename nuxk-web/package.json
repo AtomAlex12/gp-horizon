@@ -8,11 +8,14 @@
     "build": "svelte-check --tsconfig ./tsconfig.json && vite build",
     "build:lite": "vite build --mode lite --outDir dist-lite",
     "preview": "vite preview",
-    "check": "svelte-check --tsconfig ./tsconfig.json"
+    "check": "svelte-check --tsconfig ./tsconfig.json",
+    "gen:api": "openapi-typescript ../nuxk-core/api/openapi.yaml -o src/lib/schema.d.ts",
+    "check:api": "npm run gen:api && git diff --exit-code -- src/lib/schema.d.ts"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^5.0.3",
     "@tsconfig/svelte": "^5.0.4",
+    "openapi-typescript": "^7.13.0",
     "svelte": "^5.19.0",
     "svelte-check": "^4.1.4",
     "typescript": "^5.7.3",
