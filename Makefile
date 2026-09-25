@@ -65,12 +65,15 @@ release: version-check installer
 	rm -rf $(OUT) && mkdir -p $(OUT)
 	cp nuxk-core/dist/nuxk-core-* $(OUT)/
 	cp dist/nuxk-installer-* $(OUT)/
+	cd nuxk-controller && for arch in arm64 amd64; do \
+	  CGO_ENABLED=0 GOOS=linux GOARCH=$$arch go build -ldflags "-s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT)" -o ../$(OUT)/nuxk-controller-linux-$$arch . || exit 1; \
+	done
 	cd nuxk-web && npm install --no-audit --no-fund && npm run build && npm run build:lite
 	tar -C nuxk-web/dist      -czf $(OUT)/nuxk-web-full-$(VERSION).tar.gz .
 	tar -C nuxk-web/dist-lite -czf $(OUT)/nuxk-web-lite-$(VERSION).tar.gz .
 	cp CHANGELOG.md $(OUT)/
 	printf 'version %s\ncommit %s\n' '$(VERSION)' '$(COMMIT)' > $(OUT)/BUILD
-	cd $(OUT) && sha256sum nuxk-core-* nuxk-installer-* *.tar.gz BUILD > SHA256SUMS
+	cd $(OUT) && sha256sum nuxk-core-* nuxk-installer-* nuxk-controller-* *.tar.gz BUILD > SHA256SUMS
 	tar -C dist -czf dist/nuxk-horizon-$(VERSION).tar.gz nuxk-horizon-$(VERSION)
 	@ls -lh $(OUT) dist/nuxk-horizon-$(VERSION).tar.gz
 
