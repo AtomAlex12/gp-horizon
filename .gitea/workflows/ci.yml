@@ -26,7 +26,7 @@ jobs:
       - run: make fmt-check
       - run: go vet ./...
       - run: go test ./...
-      - run: go test -race ./internal/core/ ./internal/engine/
+      - run: go test -race ./internal/core/ ./internal/engine/ ./internal/api/ ./internal/plane/...
       - name: cross-compile
         run: make cross   # version from /VERSION, commit from git
       - uses: actions/upload-artifact@v4
@@ -48,6 +48,20 @@ jobs:
       - run: go vet ./...
       - run: go test -race ./...   # incl. end-to-end over a real SSH server
       - run: sh ../engines/nuxk-nfqws2/shim_test.sh
+
+  controller:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: nuxk-controller
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - run: test -z "$(gofmt -l .)"
+      - run: go vet ./...
+      - run: go test -race ./...
 
   web:
     runs-on: ubuntu-latest

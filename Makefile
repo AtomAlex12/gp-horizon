@@ -12,7 +12,7 @@ VERSION := $(shell tr -d ' \n\r' < VERSION)
 COMMIT  := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)$(shell git diff --quiet 2>/dev/null || echo -dirty)
 OUT     := dist/nuxk-horizon-$(VERSION)
 
-.PHONY: version version-check check core-check web-check installer-check installer-payload installer release proto pi dev clean
+.PHONY: version version-check check core-check web-check installer-check controller-check installer-payload installer release proto pi dev clean
 
 version:
 	@echo $(VERSION)
@@ -30,7 +30,10 @@ installer-check:
 	cd nuxk-installer && gofmt -l . | (! grep .) && go vet ./... && go test ./...
 	sh engines/nuxk-nfqws2/shim_test.sh
 
-check: version-check core-check web-check installer-check
+controller-check:
+	cd nuxk-controller && gofmt -l . | (! grep .) && go vet ./... && go test ./...
+
+check: version-check core-check web-check installer-check controller-check
 
 # Router files the installer embeds and pushes over SSH.
 PAYLOAD := nuxk-installer/payload
