@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"nuxk.dev/horizon/core/internal/core"
 	"nuxk.dev/horizon/core/internal/engine"
 	"nuxk.dev/horizon/core/internal/engine/usque"
+	"nuxk.dev/horizon/core/internal/plane"
 	"nuxk.dev/horizon/core/internal/state"
 )
 
@@ -85,5 +87,43 @@ func TestEngineActionSurfacesScriptError(t *testing.T) {
 	w := do(h, "POST", "/api/v1/engines/usque/start", "", "127.0.0.1:5000", "")
 	if w.Code != http.StatusBadGateway || !strings.Contains(w.Body.String(), "S51usque start") {
 		t.Errorf("-> %d %s", w.Code, w.Body)
+	}
+}
+
+// stubPlane is an in-memory plane backend: one user group routed to Wireguard1.
+type stubPlane struct{ groups map[string][]string }
+
+func (s *stubPlane) Name() string { return "stub" }
+func (s *stubPlane) Observe(context.Context) (plane.Observed, error) {
+	return plane.Observed{Groups: s.groups, Descr: map[string]string{"domain-list0": "AI"},
+		Routes: []plane.Route{{Group: "domain-list0", Interface: "Wireguard1"}}}, nil
+}
+func (s *stubPlane) Apply(context.Context, plane.Op) error { return nil }
+
+func TestPlaneAPI(t *testing.T) {
+	st, _ := state.Open(t.TempDir())
+	reg := engine.NewRegistry()
+	hub := core.NewHub("test")
+	pm := plane.NewManager(&stubPlane{groups: map[string][]string{"domain-list0": {"openai.com"}}}, st,
+		plane.Config{Ifaces: map[plane.Mode]string{plane.ModeVless: "Wireguard1"}})
+	pm.Reconcile(context.Background())
+	h := NewRouter(Deps{Version: "t", Engines: reg, Hub: hub, Ctl: core.NewController(reg, st, hub, "t"), Plane: pm})
+	lo := "127.0.0.1:1"
+
+	if w := do(h, "GET", "/api/v1/plane", "", lo, ""); w.Code != 200 || !strings.Contains(w.Body.String(), `"group":"domain-list0"`) {
+		t.Fatalf("GET plane -> %d %s", w.Code, w.Body)
+	}
+	if w := do(h, "PUT", "/api/v1/plane/lists", `{"lists":[{"name":"x","mode":"tor","domains":["a.com"]}]}`, lo, ""); w.Code != 400 {
+		t.Errorf("bad mode -> %d", w.Code)
+	}
+	if w := do(h, "POST", "/api/v1/plane/import", `{"groups":["domain-list0"],"mode":"vless"}`, lo, ""); w.Code != 200 || !strings.Contains(w.Body.String(), `imported:domain-list0`) {
+		t.Fatalf("import -> %d %s", w.Code, w.Body)
+	}
+	if w := do(h, "GET", "/api/v1/plane/lists", "", lo, ""); !strings.Contains(w.Body.String(), `"openai.com"`) {
+		t.Errorf("lists after import: %s", w.Body)
+	}
+	off := NewRouter(Deps{Version: "t", Engines: reg, Hub: hub, Ctl: core.NewController(reg, st, hub, "t")})
+	if w := do(off, "GET", "/api/v1/plane", "", lo, ""); w.Code != 404 {
+		t.Errorf("plane off -> %d", w.Code)
 	}
 }

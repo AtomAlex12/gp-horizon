@@ -42,6 +42,12 @@ installer-payload:
 	cp nuxk-core/fs/opt/etc/init.d/S99nuxk-core engines/nuxk-nfqws2/S51nfqws2-nuxk $(PAYLOAD)/
 	cp -r nuxk-web/dist-lite $(PAYLOAD)/web
 	echo $(VERSION) > $(PAYLOAD)/VERSION
+	# WARP: the usque-keenetic fork's ipk per router arch (downloads usque
+	# from its GitHub release)
+	$(MAKE) -C engines/nuxk-usque pkg-mips pkg-mipsel pkg-aarch64
+	for a in mips mipsel aarch64; do \
+	  cp engines/nuxk-usque/out/tmp/usque-keenetic_$$(cat engines/nuxk-usque/VERSION)_$$a-3.*.ipk $(PAYLOAD)/usque-keenetic-$$a.ipk || exit 1; \
+	done
 
 INST_LDFLAGS := -s -w
 installer: installer-payload

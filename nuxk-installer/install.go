@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	_ "embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -26,6 +27,10 @@ const (
 	pLog      = "/opt/var/log/nuxk-core.log"
 	pFeedConf = "/opt/etc/opkg/nfqws2-keenetic.conf"
 	pUsque    = "/opt/etc/init.d/S51usque"
+	pUsqueIPK = "/opt/tmp/usque-keenetic.ipk"
+	pNfqList  = "/opt/etc/nfqws2/lists/user.list"
+	pNfqInit  = "/opt/etc/init.d/S51nfqws2"
+	pPlane    = "/opt/etc/nuxk/plane.json"
 
 	nfqwsFeed = "src/gz nfqws2-keenetic https://nfqws.github.io/nfqws2-keenetic/all"
 )
@@ -79,11 +84,15 @@ func Install(c *Conn, p *Payload, selected []string, emit func(Event)) (Result, 
 		}
 	}
 	emit(Event{Kind: "ok", Text: fmt.Sprintf("%s · %s · свободно %d МБ", firstNonEmpty(r.Model, "роутер"), r.ArchRaw, r.OptFreeKB/1024)})
+	if want["usque"] {
+		want["start"] = true // nuxk-core picks the new engine up on restart
+	}
 
 	steps := map[string]func() error{
 		"deps":   func() error { return stepDeps(c, r, emit) },
 		"nfqws2": func() error { return stepNfqws2(c, emit) },
 		"core":   func() error { return stepCore(c, p, r, emit) },
+		"usque":  func() error { return stepUsque(c, p, &r, emit) },
 		"config": func() error { return stepConfig(c, r, p.Version(), emit) },
 		"start":  func() error { return stepStart(c, r, emit) },
 	}
@@ -180,6 +189,60 @@ func stepCore(c *Conn, p *Payload, r Report, emit func(Event)) error {
 	return nil
 }
 
+// WarpHosts go to nfqws2's list before usque registers: the Cloudflare API
+// and MASQUE endpoint get desynced, so the ISP's DPI can't stop the tunnel.
+// Same list as nuxk-core's plane.WarpDomains.
+const warpHosts = "cloudflareclient.com"
+
+func stepUsque(c *Conn, p *Payload, r *Report, emit func(Event)) error {
+	ipk := p.UsqueIPK(r.Arch)
+	if ipk == "" {
+		return fmt.Errorf("в инсталляторе нет usque-keenetic для %s", r.Arch)
+	}
+	b, err := p.Read(ipk)
+	if err != nil {
+		return err
+	}
+	// additive only: the user's own entries stay; nfqws2 re-reads on reload
+	emit(Event{Kind: "out", Text: warpHosts + " → список nfqws2 (WARP через nfqws)"})
+	_ = run(c, emit, fmt.Sprintf(`[ -f %[1]s ] && { grep -qx %[2]s %[1]s || echo %[2]s >> %[1]s; } && [ -x %[3]s ] && %[3]s reload >/dev/null 2>&1; true`,
+		c.P(pNfqList), warpHosts, c.P(pNfqInit)))
+
+	emit(Event{Kind: "out", Text: fmt.Sprintf("%s → %s (%d КБ)", ipk, pUsqueIPK, len(b)/1024)})
+	if err := c.Upload(pUsqueIPK, b, "0644"); err != nil {
+		return err
+	}
+	// postinst: picks a free opkgtun, creates the ndm interface, saves the
+	// router config, starts the service (first start registers with WARP)
+	err = run(c, emit, fmt.Sprintf("opkg install --force-reinstall %s; rc=$?; rm -f %s; exit $rc", c.P(pUsqueIPK), c.P(pUsqueIPK)))
+	if err != nil {
+		return err
+	}
+	nr, err := Detect(c)
+	if err != nil {
+		return err
+	}
+	if !nr.UsqueReady {
+		return errors.New("usque установлен, но S51usque не отвечает на info — посмотрите /opt/var/log/usque.log")
+	}
+	r.UsqueReady, r.UsqueIface = true, nr.UsqueIface
+	emit(Event{Kind: "out", Text: "интерфейс WARP: " + firstNonEmpty(r.UsqueIface, "не определён")})
+	out, _ := c.Output(c.P(pUsque)+" info 2>/dev/null | grep -E '^(tunnel.state|service.running) '", nil)
+	if !strings.Contains(out, "service.running 1") {
+		emit(Event{Kind: "info", Text: "usque пока не запущен (часто — не прошла регистрация в WARP). После запуска nuxk-core нажмите «Перезапустить» у WARP в веб-интерфейсе; лог: /opt/var/log/usque.log"})
+	}
+	// an existing nuxk.conf keeps the user's edits: only wire the engine in
+	return run(c, emit, fmt.Sprintf(`f=%s; [ -f "$f" ] || exit 0; sed -i -e 's|^ENGINE_USQUE=.*|ENGINE_USQUE="%s"|' %s "$f"`,
+		c.P(pConf), pUsque, ifaceSed(r.UsqueIface)))
+}
+
+func ifaceSed(iface string) string {
+	if iface == "" {
+		return ""
+	}
+	return fmt.Sprintf(`-e 's|^PLANE_IFACE_WARP=.*|PLANE_IFACE_WARP="%s"|'`, iface)
+}
+
 func stepConfig(c *Conn, r Report, version string, emit func(Event)) error {
 	usque := ""
 	if r.UsqueReady {
@@ -207,7 +270,16 @@ ENGINE_XRAY=""
 # A router CPU is slow: poll engines every 10 s, probe every 2 min.
 INFO_EVERY="10"
 PROBE_EVERY="120"
-`, version, time.Now().Format("2006-01-02"), listenAddr(r), newToken(), pWeb, pShim, usque)
+
+# Routing plane: drives KeeneticOS's built-in DNS routing (object-group fqdn +
+# dns-proxy route) through RCI on 127.0.0.1:79. It only ever touches nuxk-*
+# objects. PLANE_APPLY="0" = plan only: /api/v1/plane shows what it would do.
+PLANE="keenetic"
+PLANE_APPLY="0"
+PLANE_V6="deny"
+PLANE_IFACE_WARP="%s"
+PLANE_IFACE_VLESS="OpkgTun1"
+`, version, time.Now().Format("2006-01-02"), listenAddr(r), newToken(), pWeb, pShim, usque, firstNonEmpty(r.UsqueIface, "OpkgTun0"))
 	emit(Event{Kind: "out", Text: pConf + " (права 0600)"})
 	return c.Upload(pConf, []byte(conf), "0600")
 }
@@ -220,6 +292,9 @@ func stepStart(c *Conn, r Report, emit func(Event)) error {
 		if err := run(c, emit, fmt.Sprintf(`sed -i 's/^API_TOKEN=.*/API_TOKEN="%s"/' %s`, newToken(), c.P(pConf))); err != nil {
 			return err
 		}
+	}
+	if err := seedPlane(c, emit); err != nil {
+		return err
 	}
 	if err := run(c, emit, c.P(pInit)+" restart"); err != nil {
 		return err
@@ -234,6 +309,32 @@ func stepStart(c *Conn, r Report, emit func(Event)) error {
 		return errors.New("nuxk-core не ответил на /api/v1/healthz за 15 секунд — последние строки лога выше")
 	}
 	return nil
+}
+
+// seedPlane creates the plane's desired lists on first install: whatever is in
+// nfqws2's user.list becomes the «DPI» list — nuxk-core owns that file from
+// then on and would otherwise replace it with an empty list.
+func seedPlane(c *Conn, emit func(Event)) error {
+	out, err := c.Output(fmt.Sprintf(`[ -f %s ] && echo exists; true`, c.P(pPlane)), nil)
+	if err != nil || strings.Contains(out, "exists") {
+		return err
+	}
+	list, _ := c.Output(fmt.Sprintf("cat %s 2>/dev/null; true", c.P(pNfqList)), nil)
+	doms := []string{}
+	for _, l := range strings.Split(list, "\n") {
+		l = strings.TrimSpace(l)
+		if l == "" || strings.HasPrefix(l, "#") || l == warpHosts {
+			continue
+		}
+		doms = append(doms, l)
+	}
+	d := map[string]any{"on_down": "direct", "lists": []any{}}
+	if len(doms) > 0 {
+		d["lists"] = []any{map[string]any{"name": "DPI", "mode": "desync", "domains": doms, "source": "imported:nfqws2"}}
+	}
+	b, _ := json.MarshalIndent(d, "", "  ")
+	emit(Event{Kind: "out", Text: fmt.Sprintf("%s: список «DPI» из nfqws2 user.list (%d доменов)", pPlane, len(doms))})
+	return c.Upload(pPlane, b, "0600")
 }
 
 // readConf returns API_TOKEN and LISTEN from the router's nuxk.conf.

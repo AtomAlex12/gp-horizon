@@ -15,6 +15,7 @@ import (
 
 	"nuxk.dev/horizon/core/internal/core"
 	"nuxk.dev/horizon/core/internal/engine"
+	"nuxk.dev/horizon/core/internal/plane"
 )
 
 type Deps struct {
@@ -23,6 +24,7 @@ type Deps struct {
 	Engines *engine.Registry
 	Hub     *core.Hub
 	Ctl     *core.Controller // every state change goes through it — see core.Controller
+	Plane   *plane.Manager   // nil when PLANE is off
 	WebRoot string           // static nuxk-web build; "" = API only
 	Token   string           // "" = allow localhost only
 }
@@ -43,6 +45,10 @@ func NewRouter(d Deps) http.Handler {
 	v1.HandleFunc("GET /api/v1/engines/{kind}", d.handleEngine)
 	v1.HandleFunc("POST /api/v1/engines/{kind}/{action}", d.handleEngineAction)
 	v1.HandleFunc("PUT /api/v1/engines/{kind}/config", d.handleEngineConfig)
+	v1.HandleFunc("GET /api/v1/plane", d.handlePlane)
+	v1.HandleFunc("GET /api/v1/plane/lists", d.handlePlaneLists)
+	v1.HandleFunc("PUT /api/v1/plane/lists", d.handlePlaneSetLists)
+	v1.HandleFunc("POST /api/v1/plane/import", d.handlePlaneImport)
 	// TODO: /lists/{kind}, /decisions, /discover, /apply, /presets, /settings, /events(SSE)
 	mux.Handle("/api/v1/", d.auth(v1))
 
@@ -187,4 +193,78 @@ func isLoopback(remoteAddr string) bool {
 	}
 	host = strings.Trim(host, "[]")
 	return host == "127.0.0.1" || host == "::1"
+}
+
+// --- routing plane --------------------------------------------------------------
+
+func (d Deps) planeOff(w http.ResponseWriter) bool {
+	if d.Plane == nil {
+		writeErr(w, http.StatusNotFound, "plane_off", "routing plane is off (PLANE= in nuxk.conf)")
+		return true
+	}
+	return false
+}
+
+// handlePlane: backend, apply mode, wanted groups, pending plan, conflicts
+// (domains still in the user's own lists), importable user groups.
+func (d Deps) handlePlane(w http.ResponseWriter, r *http.Request) {
+	if d.planeOff(w) {
+		return
+	}
+	writeJSON(w, http.StatusOK, d.Plane.Status())
+}
+
+func (d Deps) handlePlaneLists(w http.ResponseWriter, r *http.Request) {
+	if d.planeOff(w) {
+		return
+	}
+	des, err := d.Plane.Desired()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "state_error", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, des)
+}
+
+func (d Deps) handlePlaneSetLists(w http.ResponseWriter, r *http.Request) {
+	if d.planeOff(w) {
+		return
+	}
+	var des plane.Desired
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<20)).Decode(&des); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad_body", "invalid lists JSON: "+err.Error())
+		return
+	}
+	if err := d.Plane.SetDesired(des); err != nil {
+		code := http.StatusInternalServerError
+		if errors.Is(err, plane.ErrBadList) || errors.Is(err, plane.ErrBadOnDown) {
+			code = http.StatusBadRequest
+		}
+		writeErr(w, code, "bad_list", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+// handlePlaneImport copies the user's routed groups into nuxk lists. The
+// user's groups stay as they are; their domains are held back as conflicts
+// until removed from the old lists.
+func (d Deps) handlePlaneImport(w http.ResponseWriter, r *http.Request) {
+	if d.planeOff(w) {
+		return
+	}
+	var req struct {
+		Groups []string   `json:"groups"`
+		Mode   plane.Mode `json:"mode"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&req); err != nil || len(req.Groups) == 0 {
+		writeErr(w, http.StatusBadRequest, "bad_body", `want {"groups":["domain-list0"],"mode":"vless"}`)
+		return
+	}
+	des, err := d.Plane.Import(req.Groups, req.Mode)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad_import", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, des)
 }

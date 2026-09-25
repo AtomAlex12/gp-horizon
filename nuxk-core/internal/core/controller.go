@@ -34,6 +34,10 @@ type Controller struct {
 	Hub     *Hub
 	Version string
 
+	// PlaneStatus, when set, fills Snapshot.Plane (the routing plane runs its
+	// own loop; the controller only reports it).
+	PlaneStatus func() any
+
 	InfoEvery     time.Duration // cheap Info poll
 	ProbeEvery    time.Duration // active Probe (network cost)
 	EngineTimeout time.Duration // per engine, per tick — one slow engine can't starve the others
@@ -216,7 +220,7 @@ func (c *Controller) tick(ctx context.Context, doProbe bool) {
 		Version: c.Version,
 		TS:      time.Now().Unix(),
 		Engines: states,
-		Plane:   map[string]any{"status": "not-wired"}, // nuxk-plane is the next milestone
+		Plane:   c.planeStatus(),
 	})
 }
 
@@ -435,4 +439,11 @@ func (c *Controller) resetBackoff(key string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	delete(c.backoff, key)
+}
+
+func (c *Controller) planeStatus() any {
+	if c.PlaneStatus == nil {
+		return map[string]any{"backend": "off"}
+	}
+	return c.PlaneStatus()
 }

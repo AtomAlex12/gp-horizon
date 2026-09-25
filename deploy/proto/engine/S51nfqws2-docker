@@ -366,7 +366,10 @@ info() {
 probe() {
     target="${NFQWS2_PROBE_TARGET:-browserleaks.com}"
     t0=$(date +%s%N 2>/dev/null || echo 0)
-    code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 "https://$target/" 2>/dev/null || echo 000)
+    # no `|| echo 000`: curl already prints 000 on failure, and the fallback
+    # made it "000000", which read as success (false "ok · 8014ms")
+    code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 "https://$target/" 2>/dev/null)
+    [ -n "$code" ] || code=000
     t1=$(date +%s%N 2>/dev/null || echo 0)
     if [ "$code" != "000" ]; then
         rtt=$(((t1 - t0) / 1000000))
