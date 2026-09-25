@@ -51,9 +51,13 @@ echo "$MARKS" | head -n 80
 sec "fwmark: Keenetic policies (running-config)"
 echo "$RC" | grep -iE '^ *(ip policy|ip hotspot|policy|permit|mark|dns-proxy|ppe|opkg)' | head -n 60
 
-# bit_used N — does any mark value or mask (ip rule + iptables) have bit N set?
+# bit_used N — does any mark VALUE (not mask) set bit N? A value/0xffffffff
+# pair counts only its value; the mask is reported separately below, because a
+# full-mask set-xmark rewrites every bit (Keenetic's own DNS routing does that).
 # Pure string work on the first hex digit: no 32-bit arithmetic on MIPS ash.
-HEX=$( { ip rule show 2>/dev/null; echo "$MARKS"; } | grep -oiE '0x[0-9a-f]+' | tr 'A-F' 'a-f' | sort -u)
+HEX=$( { ip rule show 2>/dev/null; echo "$MARKS"; } |
+    sed -E 's#(0x[0-9a-fA-F]+)/0x[0-9a-fA-F]+#\1#g; s#--(nf|ct)?mask 0x[0-9a-fA-F]+##g' |
+    grep -oiE '0x[0-9a-f]+' | tr 'A-F' 'a-f' | sort -u)
 bit_used() { # $1 = 28|29|30|31
     for h in $HEX; do
         d=${h#0x}
@@ -70,8 +74,10 @@ bit_used() { # $1 = 28|29|30|31
     return 1
 }
 for b in 28 29 30 31; do
-    if w=$(bit_used $b); then put "mark_bit$b" "used($w)"; else put "mark_bit$b" free; fi
+    if w=$(bit_used $b); then put "mark_bit$b" "value($w)"; else put "mark_bit$b" free; fi
 done
+# rules that overwrite the whole mark: any bit we set earlier is lost after them
+put mark_full_overwrite_rules "$(echo "$MARKS" | grep -ciE 'set-xmark 0x[0-9a-f]+/0xffffffff|set-mark 0x')"
 put mark_rules_count "$(echo "$MARKS" | grep -c .)"
 put ip_rules_count "$(ip rule show 2>/dev/null | grep -c .)"
 
@@ -116,7 +122,19 @@ done
 sec "netfilter: modules on disk (loaded or loadable)"
 KDIR="/lib/modules/$(uname -r)"
 for m in ip_set ip_set_hash_ip ip_set_hash_net xt_set xt_connbytes xt_connmark xt_NFQUEUE nfnetlink_queue xt_NFLOG nfnetlink_log nf_conntrack_netlink; do
+    # Keenetic builds much of netfilter into its kernel: no .ko, yet the match
+    # or target is registered — call that "builtin", not "missing".
+    case "$m" in
+    xt_set) feat=$(grep -x set /proc/net/ip_tables_matches) ;;
+    xt_connmark) feat=$(grep -x connmark /proc/net/ip_tables_matches) ;;
+    xt_connbytes) feat=$(grep -x connbytes /proc/net/ip_tables_matches) ;;
+    xt_NFQUEUE) feat=$(grep -x NFQUEUE /proc/net/ip_tables_targets) ;;
+    xt_NFLOG) feat=$(grep -x NFLOG /proc/net/ip_tables_targets) ;;
+    ip_set*) feat=$(ipset list -n 2>/dev/null | head -n 1) ;;
+    *) feat="" ;;
+    esac
     if lsmod 2>/dev/null | awk '{print $1}' | grep -qx "$m"; then s=loaded
+    elif [ -n "$feat" ]; then s=builtin
     elif find "$KDIR" -name "$m.ko*" 2>/dev/null | grep -q .; then s=available
     else s=missing; fi
     echo "$m: $s"
