@@ -210,16 +210,37 @@ DNS пользователя не трогаем.
 
 ## Задача 2b — E0d (каждый шаг — с согласия; конфиг не сохранять)
 
-1. **Запись через RCI.** Показать пользователю запрос и откат, затем:
+**Схема RCI (чтение без авторизации с localhost подтверждено 25.09):**
+
+```
+GET /rci/object-group  → {"fqdn": {"<имя>": {"description": "...",
+                           "include": [{"address": "openai.com"}, ...]}}, "ip": {...}}
+GET /rci/dns-proxy     → {"route": [{"group": "<имя>", "interface": "Wireguard1",
+                           "auto": true, "index": "<hash>", "comment": ""}],
+                           "https": {...}, "filter": {"profile": {...}}}
+```
+
+У пользователя: `domain-list0` («AI», 49) и `domain-list1` («Meta», 23) →
+оба на `Wireguard1`, `auto: true`. Это стартовые данные для импорта.
+
+1. **Запись через RCI.** Пробуем ту же структуру, что отдаёт чтение (пустая
+   группа без маршрута, сразу удалить):
+   `curl -s -d '{"object-group":{"fqdn":{"nuxk-e0test":{"include":[{"address":"example.com"}]}}}}' http://127.0.0.1:79/rci/`,
+   чтение `GET /rci/object-group/fqdn/nuxk-e0test`, удаление
+   `{"object-group":{"fqdn":{"nuxk-e0test":{"no":true}}}}`. Если формат не
+   принят — `{"parse":"<команда CLI>"}` с синтаксисом из E0b. Показать
+   пользователю запрос и откат, затем:
    создать `object-group fqdn nuxk-e0test` с `include github.com` через
    `POST http://127.0.0.1:79/rci/` (JSON, запрос с самого роутера по SSH),
    прочитать его обратно (`/rci/show/running-config` или `object-group`),
    удалить тем же способом. Нужен ответ: принимает ли RCI запись с
    localhost без авторизации; точный формат JSON для группы и маршрута.
-2. **Поддомены.** Группа `nuxk-e0test` только с `include github.com`,
-   маршрут на тот же WG, что в E0b. С клиента: `nslookup api.github.com
-   192.168.2.1` → попал ли IP `api.github.com` в `_NDM_OGDN_4_@nuxk-e0test`
-   (у github.com и api.github.com разные IP без общего CDN).
+2. **Поддомены.** `github.com` уже в `domain-list0` — не годится. Группа
+   `nuxk-e0test` только с `include example.com` + маршрут на `Wireguard1`.
+   С клиента запросить **только** `www.example.com` (сам `example.com` не
+   спрашивать): `nslookup www.example.com 192.168.2.1`. Если
+   `_NDM_OGDN_4_@nuxk-e0test` после этого не пуст — поддомены покрываются
+   сами (метод не зависит от общих IP; example.com в сети никто не спрашивает).
 3. **IPv6 reject (по желанию пользователя).** На время теста:
    `ip6tables -I FORWARD -m set --match-set _NDM_OGDN_6_@nuxk-e0test dst -j REJECT`
    → с клиента `curl -6 -m 5 https://ifconfig.co` отказ сразу, `curl
