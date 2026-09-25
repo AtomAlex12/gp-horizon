@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -37,7 +38,13 @@ func (e Exec) run(ctx context.Context, stdin string, args ...string) (string, st
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
+	// A daemon started by the script may inherit stdout/stderr and keep the
+	// pipes open for its whole life: without a bound, Run would wait for it.
+	cmd.WaitDelay = 3 * time.Second
 	err := cmd.Run()
+	if errors.Is(err, exec.ErrWaitDelay) {
+		err = nil // the script itself exited 0; only a child still holds the pipe
+	}
 	if err != nil {
 		err = &ScriptError{Script: e.Script, Args: args, Err: err, Output: tail(stderr.String()+stdout.String(), 400)}
 	}

@@ -13,6 +13,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -27,6 +28,8 @@ import (
 	"nuxk.dev/horizon/core/internal/engine/nfqws2"
 	"nuxk.dev/horizon/core/internal/engine/usque"
 	"nuxk.dev/horizon/core/internal/engine/xray"
+	"nuxk.dev/horizon/core/internal/logbuf"
+	"nuxk.dev/horizon/core/internal/node"
 	"nuxk.dev/horizon/core/internal/plane"
 	"nuxk.dev/horizon/core/internal/plane/keenetic"
 	"nuxk.dev/horizon/core/internal/state"
@@ -45,6 +48,7 @@ func main() {
 		webRoot = flag.String("web", "", "dir to serve nuxk-web static build (empty = API only)")
 		debug   = flag.Bool("debug", false, "verbose logging")
 		showVer = flag.Bool("version", false, "print version and exit")
+		logPath = flag.String("log", "", "log file, rotated in-process at 512 KiB (empty = stderr)")
 	)
 	flag.Parse()
 	if *showVer {
@@ -58,7 +62,17 @@ func main() {
 	if *debug {
 		lvl = slog.LevelDebug
 	}
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: lvl})))
+	var logOut io.Writer = os.Stderr
+	if *logPath != "" {
+		lf, err := logbuf.OpenFile(*logPath, 512<<10)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "open log:", err)
+			os.Exit(1)
+		}
+		logOut = lf
+	}
+	logs := logbuf.NewRing(500) // GET /api/v1/logs
+	slog.SetDefault(slog.New(logbuf.NewHandler(logOut, logs, lvl)))
 	slog.Info("nuxk-core starting", "version", version, "commit", commit)
 
 	cfg, err := config.Load(*cfgPath)
@@ -148,7 +162,8 @@ func main() {
 		Addr: cfg.Listen,
 		Handler: api.NewRouter(api.Deps{
 			Version: version, Commit: commit, Engines: reg, Hub: hub, Ctl: ctl, Plane: pm,
-			WebRoot: cfg.WebRoot, Token: cfg.APIToken,
+			WebRoot: cfg.WebRoot, Token: cfg.APIToken, Logs: logs,
+			Node: node.New(cfg.NodeRole, cfg.Plane.RCI, version, commit),
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		WriteTimeout:      30 * time.Second,

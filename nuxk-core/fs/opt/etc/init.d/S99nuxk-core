@@ -6,8 +6,13 @@ NAME="nuxk-core"
 BIN="/opt/usr/bin/nuxk-core"
 CONFIG="/opt/etc/nuxk/nuxk.conf"
 PIDFILE="/opt/var/run/nuxk-core.pid"
+# nuxk-core writes and rotates this itself (2 × 512 KiB at most); stderr only
+# catches a crash, into its own small file.
 LOGFILE="/opt/var/log/nuxk-core.log"
-LOG_MAX_BYTES=524288
+CRASHLOG="/opt/var/log/nuxk-core.crash"
+LOG_MAX_BYTES=65536
+# Soft heap cap: the Go runtime collects harder near it instead of growing.
+export GOMEMLIMIT="${GOMEMLIMIT:-48MiB}"
 
 fn_running() {
     [ -f "$PIDFILE" ] || return 1
@@ -15,11 +20,11 @@ fn_running() {
 }
 
 fn_rotate_log() {
-    [ -f "$LOGFILE" ] || return 0
-    sz=$(wc -c <"$LOGFILE" 2>/dev/null) || sz=0
+    [ -f "$CRASHLOG" ] || return 0
+    sz=$(wc -c <"$CRASHLOG" 2>/dev/null) || sz=0
     [ "${sz:-0}" -gt "$LOG_MAX_BYTES" ] || return 0
-    tail -c $((LOG_MAX_BYTES / 2)) "$LOGFILE" >"$LOGFILE.tmp" 2>/dev/null && mv "$LOGFILE.tmp" "$LOGFILE"
-    rm -f "$LOGFILE.tmp"
+    tail -c $((LOG_MAX_BYTES / 2)) "$CRASHLOG" >"$CRASHLOG.tmp" 2>/dev/null && mv "$CRASHLOG.tmp" "$CRASHLOG"
+    rm -f "$CRASHLOG.tmp"
 }
 
 fn_start() {
@@ -31,7 +36,7 @@ fn_start() {
     fn_rotate_log
     echo "Starting $NAME..."
     start-stop-daemon -S -b -m -p "$PIDFILE" -x /bin/sh -- -c \
-        "exec \"$BIN\" -config \"$CONFIG\" >>\"$LOGFILE\" 2>&1"
+        "exec \"$BIN\" -config \"$CONFIG\" -log \"$LOGFILE\" >/dev/null 2>>\"$CRASHLOG\""
     sleep 1
     fn_running && echo "Started $NAME" || { echo "Failed to start $NAME" >&2; return 1; }
 }

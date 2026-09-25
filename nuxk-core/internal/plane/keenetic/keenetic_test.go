@@ -418,3 +418,30 @@ func TestOnDownBlockDropsAuto(t *testing.T) {
 		t.Error("block policy not converged")
 	}
 }
+
+// Without any «DPI» list the user's own nfqws2 hostlist is never touched —
+// not even to add the WARP hosts. Once nuxk owns it, removing the last DPI
+// list clears it (instead of leaving stale domains behind).
+func TestDesyncListUntouchedUntilADPIListExists(t *testing.T) {
+	_, m := setup(t, true)
+	var pushes [][]string
+	m.Cfg.Desync = func(_ context.Context, d []string) error { pushes = append(pushes, d); return nil }
+	m.Cfg.Ifaces[plane.ModeWarp] = "OpkgTun0"
+	ctx := context.Background()
+	warp := []plane.List{{Name: "w", Mode: plane.ModeWarp, Domains: []string{"x.com"}}}
+	m.SetDesired(plane.Desired{Lists: warp})
+	m.Reconcile(ctx)
+	if len(pushes) != 0 || m.Status().DesyncOn {
+		t.Fatalf("pushed without a DPI list: %v", pushes)
+	}
+	m.SetDesired(plane.Desired{Lists: append(warp, plane.List{Name: "d", Mode: plane.ModeDesync, Domains: []string{"y.com"}})})
+	m.Reconcile(ctx)
+	if len(pushes) != 1 || !reflect.DeepEqual(pushes[0], []string{"cloudflareclient.com", "y.com"}) {
+		t.Fatalf("pushes = %v", pushes)
+	}
+	m.SetDesired(plane.Desired{Lists: warp}) // last DPI list removed
+	m.Reconcile(ctx)
+	if len(pushes) != 2 || !reflect.DeepEqual(pushes[1], []string{"cloudflareclient.com"}) {
+		t.Fatalf("after removing DPI: %v", pushes)
+	}
+}

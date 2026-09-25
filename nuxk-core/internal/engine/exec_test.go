@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func script(t *testing.T, body string) string {
@@ -57,5 +58,24 @@ func TestTail(t *testing.T) {
 	}
 	if got := tail(strings.Repeat("x", 50), 10); got != "…xxxxxxxxxx" {
 		t.Errorf("tail = %q", got)
+	}
+}
+
+// A script that starts a daemon which keeps our stdout open must not hang
+// the call (init scripts do this: `nfqws2 --daemon`, start-stop-daemon -b).
+func TestExecDaemonHoldingPipeDoesNotHang(t *testing.T) {
+	dir := t.TempDir()
+	script := filepath.Join(dir, "S99daemon")
+	body := "#!/bin/sh\nsleep 30 &\necho started\nexit 0\n"
+	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	err := Exec{Script: script}.Action(context.Background(), "start")
+	if err != nil {
+		t.Fatalf("err = %v", err)
+	}
+	if d := time.Since(start); d > 10*time.Second {
+		t.Fatalf("took %v: the call waited for the daemon", d)
 	}
 }

@@ -57,6 +57,10 @@ type List struct {
 type Desired struct {
 	Lists  []List `json:"lists"`
 	OnDown OnDown `json:"on_down,omitempty"` // "" = direct
+	// ManageDesync: nuxk owns nfqws2's hostlist. Set once the first «DPI»
+	// list exists and kept from then on (so removing the last list clears
+	// the hostlist); until then the user's own nfqws2 list is never touched.
+	ManageDesync bool `json:"manage_desync,omitempty"`
 }
 
 // Desync returns the domains for nfqws2's hostlist: every desync list, plus

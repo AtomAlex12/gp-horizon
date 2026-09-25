@@ -448,7 +448,7 @@ func TestEndToEndUsque(t *testing.T) {
 	must(t, err)
 	// first start seeds the «DPI» list from nfqws2's own list
 	seed, _ := os.ReadFile(filepath.Join(fr.root, "opt/etc/nuxk/plane.json"))
-	if !strings.Contains(string(seed), `"youtube.com"`) || !strings.Contains(string(seed), `"desync"`) || strings.Contains(string(seed), "mine") {
+	if !strings.Contains(string(seed), `"youtube.com"`) || !strings.Contains(string(seed), `"desync"`) || !strings.Contains(string(seed), `"manage_desync": true`) || strings.Contains(string(seed), "mine") {
 		t.Errorf("plane.json = %s", seed)
 	}
 
