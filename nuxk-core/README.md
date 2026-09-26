@@ -25,7 +25,10 @@ echo down > testdata/mock.state    # flip the mock tunnel state, watch /status
 With the web build: `go run . -config testdata/nuxk.conf -web ../nuxk-web/dist -debug`
 
 Config: `-config` (default `/opt/etc/nuxk/nuxk.conf`), shell-sourceable
-`KEY="value"`. Keys: `LISTEN`, `API_TOKEN`, `STATE_DIR`, `WEB_ROOT`,
+`KEY="value"`. Keys: `LISTEN`, `API_TOKEN` (bearer token for programs — the
+controller gets it by pairing), `AUTH_USER` / `AUTH_FILES` (browser login with
+the box's own account, default `root` from `/opt/etc/shadow /opt/etc/passwd`;
+`AUTH_USER=off` disables it), `STATE_DIR`, `WEB_ROOT`,
 `ENGINE_NFQWS2`, `ENGINE_USQUE`, `ENGINE_XRAY` (empty = disabled; a missing
 script = engine not wired), `INFO_EVERY`, `PROBE_EVERY` (seconds; defaults
 5 / 60 — raise `INFO_EVERY` on a slow MIPS router).

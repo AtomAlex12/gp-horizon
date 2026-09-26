@@ -1,6 +1,7 @@
 // Package api serves nuxk-core's /api/v1 (see api/openapi.yaml for the full
-// draft contract). Internal, single-tenant: bearer token for non-localhost,
-// flat JSON responses, errors by HTTP status.
+// draft contract). Internal, single-tenant: a browser logs in with the box's
+// root account (session cookie), a program uses the bearer token; flat JSON
+// responses, errors by HTTP status.
 package api
 
 import (
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"nuxk.dev/horizon/core/internal/auth"
 	"nuxk.dev/horizon/core/internal/core"
 	"nuxk.dev/horizon/core/internal/engine"
 	"nuxk.dev/horizon/core/internal/logbuf"
@@ -28,7 +30,8 @@ type Deps struct {
 	Ctl     *core.Controller // every state change goes through it — see core.Controller
 	Plane   *plane.Manager   // nil when PLANE is off
 	WebRoot string           // static nuxk-web build; "" = API only
-	Token   string           // "" = allow localhost only
+	Token   string           // bearer token for programs (the controller); "" = none
+	Auth    *auth.Guard      // browser login with the box's root account; nil = off
 	Node    *node.Node       // /info, /metrics
 	Logs    *logbuf.Ring     // /logs, log events on /events
 }
@@ -37,7 +40,7 @@ type Deps struct {
 // and api/openapi.yaml is checked against (TestOpenAPIMatchesRoutes).
 type Route struct {
 	Pattern string // "METHOD /path"
-	Public  bool   // no token (liveness only)
+	Public  bool   // no token or session: liveness, and the login itself
 	handler func(Deps) http.HandlerFunc
 }
 
@@ -47,6 +50,9 @@ var Routes = []Route{
 			writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 		}
 	}},
+	{"POST /api/v1/auth/login", true, func(d Deps) http.HandlerFunc { return d.handleLogin }},
+	{"POST /api/v1/auth/logout", true, func(d Deps) http.HandlerFunc { return d.handleLogout }},
+	{"POST /api/v1/auth/pair", true, func(d Deps) http.HandlerFunc { return d.handlePair }},
 	{"GET /api/v1/version", false, func(d Deps) http.HandlerFunc { return d.handleVersion }},
 	{"GET /api/v1/info", false, func(d Deps) http.HandlerFunc { return d.handleInfo }},
 	{"GET /api/v1/status", false, func(d Deps) http.HandlerFunc { return d.handleStatus }},
@@ -211,19 +217,29 @@ func (d Deps) handleEngineConfig(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// auth enforces the bearer token for non-loopback clients.
+// auth lets in the bearer token, a logged-in browser session, or — only
+// when no token is configured — a loopback caller. A session's writes must
+// come from this very page (see sameOrigin).
 func (d Deps) auth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if d.Token == "" && isLoopback(r.RemoteAddr) {
 			next.ServeHTTP(w, r)
 			return
 		}
-		got := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if d.Token != "" && subtle.ConstantTimeCompare([]byte(got), []byte(d.Token)) == 1 {
+		got, bearer := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+		if bearer && d.Token != "" && subtle.ConstantTimeCompare([]byte(got), []byte(d.Token)) == 1 {
 			next.ServeHTTP(w, r)
 			return
 		}
-		writeErr(w, http.StatusUnauthorized, "unauthorized", "missing or invalid bearer token")
+		if _, ok := d.sessionUser(r); ok {
+			if r.Method != http.MethodGet && r.Method != http.MethodHead && !sameOrigin(r) {
+				writeErr(w, http.StatusForbidden, "cross_origin", "request from another site")
+				return
+			}
+			next.ServeHTTP(w, r)
+			return
+		}
+		writeErr(w, http.StatusUnauthorized, "unauthorized", "login required")
 	})
 }
 

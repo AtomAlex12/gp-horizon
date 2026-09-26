@@ -59,6 +59,9 @@ func TestOpenAPIMatchesRoutes(t *testing.T) {
 func TestOpenAPISchemasCoverJSONFields(t *testing.T) {
 	spec := readSpec(t)
 	for schema, v := range map[string]any{
+		"Credentials":   credentials{},
+		"SessionInfo":   SessionInfo{},
+		"PairInfo":      PairInfo{},
 		"NodeInfo":      node.Info{},
 		"Metrics":       node.Metrics{},
 		"IfaceCounters": node.Iface{},

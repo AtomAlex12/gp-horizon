@@ -1,14 +1,26 @@
 <script lang="ts">
-  import { setToken } from '../api';
-  import { status, node, pollNow } from '../status.svelte';
+  import { api } from '../api';
+  import { status, node, setup, pollNow } from '../status.svelte';
   import { ENGINE_LABEL, ago, fmtDur, planeOf, roleLabel } from '../ui';
 
   const plane = $derived(planeOf(status.data));
   const i = $derived(node.info);
 
-  function logout() {
-    setToken('');
-    pollNow();
+  // a dev/stand build logs in with a baked-in token: nothing to log out of
+  const baked = !!import.meta.env.VITE_API_TOKEN;
+
+  async function logout() {
+    try {
+      await api.logout(node.via === 'controller' ? 'controller' : 'agent');
+    } finally {
+      status.data = null;
+      pollNow();
+    }
+  }
+
+  function reconnect() {
+    setup.reconnect = true;
+    setup.step = 'agent';
   }
 </script>
 
@@ -58,7 +70,10 @@
       {/if}
       <dt>живые события</dt><dd>{status.live ? 'поток SSE' : 'опрос раз в 5 с'}</dd>
     </dl>
-    <div class="row top"><button class="ghost" onclick={logout}>Выйти (забыть токен)</button></div>
+    <div class="row top">
+      {#if node.via === 'controller'}<button class="ghost" onclick={reconnect}>Сменить роутер</button>{/if}
+      {#if !baked}<button class="ghost" onclick={logout}>Выйти</button>{/if}
+    </div>
   </section>
 </div>
 

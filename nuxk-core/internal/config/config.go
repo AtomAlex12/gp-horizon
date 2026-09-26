@@ -14,10 +14,14 @@ import (
 
 type Config struct {
 	Listen   string // API listen addr, e.g. 127.0.0.1:4141
-	APIToken string // bearer token for non-localhost clients; empty = localhost only
-	StateDir string // flat-file state root, e.g. /opt/etc/nuxk
-	WebRoot  string // static build dir for nuxk-web lite; empty = API only
-	NodeRole string // NODE_ROLE: router | stand | host; "" = detect (ndmc → router)
+	APIToken string // bearer token for programs (the controller); empty = loopback only
+	// Browser login: the box's own account, checked against these files
+	// (shadow first). AUTH_USER=""/off turns the login off.
+	AuthUser  string
+	AuthFiles []string
+	StateDir  string // flat-file state root, e.g. /opt/etc/nuxk
+	WebRoot   string // static build dir for nuxk-web lite; empty = API only
+	NodeRole  string // NODE_ROLE: router | stand | host; "" = detect (ndmc → router)
 
 	// Reconcile cadence; 0 = controller defaults (5s / 60s). A MIPS router may
 	// want a slower Info poll — every tick forks one shell per engine.
@@ -52,8 +56,10 @@ type EnginesConfig struct {
 // Defaults returns a Config with production-sane paths.
 func Defaults() Config {
 	return Config{
-		Listen:   "127.0.0.1:4141",
-		StateDir: "/opt/etc/nuxk",
+		Listen:    "127.0.0.1:4141",
+		StateDir:  "/opt/etc/nuxk",
+		AuthUser:  "root",
+		AuthFiles: []string{"/opt/etc/shadow", "/opt/etc/passwd"},
 		Engines: EnginesConfig{
 			Nfqws2: "/opt/etc/init.d/S51nfqws2",
 			Usque:  "/opt/etc/init.d/S51usque",
@@ -95,6 +101,13 @@ func Load(path string) (Config, error) {
 			cfg.Listen = v
 		case "API_TOKEN":
 			cfg.APIToken = v
+		case "AUTH_USER":
+			if v == "off" {
+				v = ""
+			}
+			cfg.AuthUser = v
+		case "AUTH_FILES":
+			cfg.AuthFiles = strings.Fields(v)
 		case "STATE_DIR":
 			cfg.StateDir = v
 		case "WEB_ROOT":

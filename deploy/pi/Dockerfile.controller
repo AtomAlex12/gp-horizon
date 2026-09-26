@@ -1,7 +1,8 @@
 # nuxk-controller for the Pi (deploy/pi): the full web UI and metric history
 # for the nuxk-core agent on the router, over the agent's OpenAPI contract.
 #
-#   COMPOSE_PROFILES=controller in deploy/pi/.env, plus AGENT_URL / AGENT_TOKEN
+#   COMPOSE_PROFILES=controller in deploy/pi/.env; the web UI's setup wizard
+#   does the rest (admin password, router connection)
 
 FROM node:22-alpine AS web
 WORKDIR /src
@@ -21,7 +22,7 @@ RUN CGO_ENABLED=0 go build -ldflags "-s -w -X main.version=$(cat /VERSION) -X ma
 FROM alpine:3.20
 COPY --from=build /nuxk-controller /usr/bin/nuxk-controller
 COPY --from=web /src/dist /usr/share/nuxk-web
-# owned by nobody: a fresh named volume copies this ownership (ui-token lives here)
+# owned by nobody: a fresh named volume copies this ownership (controller.json lives here)
 RUN mkdir -p /var/lib/nuxk-controller && chown 65534:65534 /var/lib/nuxk-controller && chmod 700 /var/lib/nuxk-controller
 ENV WEB_ROOT=/usr/share/nuxk-web DATA_DIR=/var/lib/nuxk-controller LISTEN=:4200
 EXPOSE 4200

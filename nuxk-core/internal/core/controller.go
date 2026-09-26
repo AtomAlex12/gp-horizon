@@ -245,6 +245,9 @@ func (c *Controller) observe(ctx context.Context, k engine.Kind, doProbe bool) E
 		}
 		st.Info = inf
 	}
+	if st.Running && st.UptimeSec == 0 {
+		st.UptimeSec = engine.ProcUptime(st.PID) // the script couldn't tell
+	}
 	if doProbe {
 		if p, err := e.Probe(ctx); err != nil {
 			slog.Warn("reconcile probe", "engine", k, "err", err)
@@ -253,10 +256,26 @@ func (c *Controller) observe(ctx context.Context, k engine.Kind, doProbe bool) E
 			st.ProbeAt = time.Now().Unix()
 		}
 	}
+	if st.Health == engine.HealthOK && probeFailing(st, time.Now()) {
+		st.Health = engine.HealthDegraded
+	}
 	if d, err := c.Store.LoadDesired(k); err == nil {
 		st.WantRun = d.Run
 	}
 	return st
+}
+
+// probeFailing: the engine runs, but its last probe — taken since this run
+// started — failed. The process is up, the job isn't done: that is
+// "degraded", not "ok", whatever the init script says.
+func probeFailing(st EngineState, now time.Time) bool {
+	if !st.Running || st.Probe == nil || st.Probe.OK {
+		return false
+	}
+	if st.UptimeSec > 0 && st.ProbeAt < now.Unix()-st.UptimeSec {
+		return false // a probe of the previous run
+	}
+	return true
 }
 
 // restore re-applies what the engine may have lost across a restart of the

@@ -3,7 +3,8 @@
 #   nuxk        real-engine prototype (usque + nfqws2) from deploy/proto — :4242
 #   installer   form that installs nuxk onto a Keenetic router over SSH  — :4300
 #   controller  full web UI + history for the ROUTER's nuxk-core         — :4200
-#               (profile "controller": needs AGENT_URL / AGENT_TOKEN in .env)
+#               (profile "controller"; the first visit runs the setup wizard:
+#               admin password, then the router's address + root password)
 #
 # Start with deploy/pi/bootstrap.sh (checks, kernel modules, WARP registration).
 # By hand:
@@ -44,9 +45,9 @@ services:
     image: nuxk-horizon-controller
     ports: ["4200:4200"]
     environment:
+      # optional: an older setup keeps its router without the wizard's step 2
       AGENT_URL: ${AGENT_URL:-}
       AGENT_TOKEN: ${AGENT_TOKEN:-}
-      CONTROLLER_TOKEN: ${CONTROLLER_TOKEN:-}
     volumes:
       - controller-data:/var/lib/nuxk-controller
     read_only: true

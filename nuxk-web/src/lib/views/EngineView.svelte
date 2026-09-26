@@ -85,7 +85,7 @@
         <span class="mono muted small">{e.version ?? ''}</span>
       </div>
       <dl class="kv">
-        <dt>аптайм</dt><dd>{e.running ? fmtDur(e.uptime_sec) : '—'}</dd>
+        <dt>аптайм</dt><dd>{e.running && e.uptime_sec ? fmtDur(e.uptime_sec) : '—'}</dd>
         <dt>PID</dt><dd class="mono">{e.running && e.pid ? e.pid : '—'}</dd>
         <dt>{kind === 'nfqws2' ? 'WAN-интерфейс' : 'интерфейс'}</dt><dd class="mono">{e.iface || '—'}</dd>
         {#if kind !== 'nfqws2'}<dt>апстрим</dt><dd class="mono">{e.endpoint || '—'}</dd>{/if}
@@ -95,7 +95,7 @@
           {#if e.probe}
             {#if e.probe.ok}<span class="chip ok">ok</span>
               <span class="mono">{e.probe.rtt_ms ? `${Math.round(e.probe.rtt_ms)} мс` : ''}{e.probe.egress_ip ? ` · ${e.probe.egress_ip}` : ''}</span>
-            {:else}<span class="chip warn">{e.probe.reason ?? 'нет ответа'}</span>{/if}
+            {:else}<span class="chip warn">не прошла</span> <span class="mono err-text">{e.probe.reason ?? 'нет ответа'}</span>{/if}
           {:else}—{/if}
         </dd>
       </dl>

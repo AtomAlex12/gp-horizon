@@ -43,8 +43,12 @@ sh engines/nuxk-nfqws2/shim_test.sh
 scripts/version.sh set X.Y.Z   # версия — только так (VERSION + nuxk-web/package.json)
 ```
 
-Контроллер против живого роутера:
-`cd nuxk-controller && AGENT_URL=http://192.168.2.1:4141 AGENT_TOKEN=… CONTROLLER_TOKEN=dev LISTEN=127.0.0.1:4200 go run .`
+Контроллер против живого роутера (мастер настройки откроется на :4200; или сразу
+`AGENT_URL`+`AGENT_TOKEN`): `cd nuxk-controller && DATA_DIR=./.data LISTEN=127.0.0.1:4200 WEB_ROOT=../nuxk-web/dist go run .`
+
+Вход: на агенте — root из Entware (`AUTH_FILES`, для разработки `testdata/shadow`:
+root / nuxk-dev), на контроллере — admin из мастера. `API_TOKEN` — только для программ
+(контроллер получает его через `POST /api/v1/auth/pair`).
 
 ## Правила разработки
 
