@@ -63,7 +63,7 @@ func Defaults() Config {
 		Engines: EnginesConfig{
 			Nfqws2: "/opt/etc/init.d/S51nfqws2",
 			Usque:  "/opt/etc/init.d/S51usque",
-			Xray:   "/opt/etc/init.d/S52xray",
+			Xray:   "/opt/etc/init.d/S52xray-nuxk",
 		},
 		Plane: PlaneConfig{
 			RCI: "http://127.0.0.1:79", V6Deny: true,

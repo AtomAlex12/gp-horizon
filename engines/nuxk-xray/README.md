@@ -1,42 +1,57 @@
 # nuxk-xray
 
-VLESS-Reality engine wrapper. **Own, thin** (~200 lines) — not a fork of xkeen
-(too opinionated; our needs are narrow).
+VLESS client for the router: the official **xray-core** binary plus nuxk's own
+init script, `S52xray-nuxk`. Not a fork of xkeen — our needs are narrow.
 
-- Core: `xray-core` binary vendored from
-  [XTLS/Xray-core](https://github.com/XTLS/Xray-core) releases.
-  **xray, not sing-box** (Q2): the server is 3x-ui = xray-core → zero Reality
-  drift (flow, fingerprint, shortIds, spiderX line up exactly). sing-box is the
-  documented fallback.
-- Interface: `tun-xray` (TUN or tproxy — decide on device).
+- **xray, not sing-box**: the server is 3x-ui = xray-core, so Reality (flow,
+  fingerprint, shortIds, spiderX) lines up exactly.
+- **Binary**: the official release of [XTLS/Xray-core](https://github.com/XTLS/Xray-core),
+  checked against its `.dgst` SHA-256; only `xray` goes to the router (≈34 MB
+  on arm64), not geoip/geosite — the config doesn't use them.
+- **Traffic in**: xray's own TUN inbound brings up `opkgtun1`; KeeneticOS shows
+  it as `OpkgTun1`, and its DNS routing sends the VLESS list there
+  (`PLANE_IFACE_VLESS`). xray's own connection to the server takes the
+  ordinary default route, so there is no loop.
 
-## Client only (Q3)
+## Who does what
 
-The user already runs a **3x-ui** server. No server-side work. `nuxk-xray`:
+| | |
+|---|---|
+| nuxk-core (`internal/engine/xray`) | parses the `vless://` link or the 3x-ui subscription (its first VLESS server), renders `config.json` (the VLESS outbound + a direct one), resolves the server to an IP for nfqws2's endpoints list |
+| `S52xray-nuxk` | tests the new config with `xray run -test`, swaps it in, restarts xray; the old one comes back if xray won't start or `opkgtun1` doesn't appear in 10 s |
 
-1. Takes a `vless://…` link **or** a 3x-ui subscription URL (`nuxk-core`
-   `PUT /api/v1/engines/xray/config`).
-2. Parses it → generates `config.json` (outbound VLESS-Reality + `tun`/`dokodemo`
-   inbound + minimal routing — the real routing is `nuxk-plane`).
-3. `S52xray start|stop|restart|info|probe` — same flat `key value` contract as
-   `S51usque`.
-4. `probe` = `curl --interface tun-xray https://…/cdn-cgi/trace` + ping to the
-   server IP.
+The TUN inbound is not in `config.json`: the script writes it to `tun.json`
+and runs `xray run -config tun.json -config config.json`. `xray -test` on a
+config with a TUN inbound opens the device — which the running xray holds —
+so a new server could never be tested while the old one runs.
 
-## Config surface
+## Files on the router
+
+| | |
+|---|---|
+| `/opt/etc/init.d/S52xray-nuxk` | this script (Entware starts it at boot) |
+| `/opt/sbin/xray` | the binary |
+| `/opt/etc/xray/config.json` | the server, 0600 in a 0700 dir (holds the user id) |
+| `/opt/etc/xray/tun.json`, `nuxk.meta` | TUN inbound; what `info` reports (no secrets) |
+| `/opt/var/run/xray.pid`, `/opt/var/log/xray.log` | pid, log (rotated at 512 KiB) |
+
+## Contract
 
 ```
-VLESS_URI="vless://uuid@host:443?type=tcp&security=reality&..."
-# or
-SUB_URL="https://panel.example/sub/xxxx"        # 3x-ui subscription, auto-refresh
+S52xray-nuxk start|stop|restart|status
+S52xray-nuxk info      # service.*, tunnel.state, iface.name, config.{server,endpoint,security,network,sni,fingerprint,flow}, traffic.*
+S52xray-nuxk probe     # curl --interface opkgtun1 https://www.cloudflare.com/cdn-cgi/trace → ok, egress_ip, rtt_ms
+S52xray-nuxk set-config < meta lines, "---", config.json
 ```
 
-## Endpoint for hardening
+`NUXK_ROOT`, `XRAY_BIN`, `SYSNET` override paths for tests:
+`sh engines/nuxk-xray/shim_test.sh`.
 
-The server's IP → `nuxk-core` feeds it into nfqws2's `endpoints.list` with the
-`vless-reality-tcp` strategy, so the Reality handshake to a fresh IP survives
-behavioural ТСПУ.
+## Checked
 
-## Status
-
-Empty — Ф.3.
+On the Pi (arm64), in a throwaway container: the official v26.3.27 binary,
+a local VLESS + Reality (vision) server, the real nuxk-core — link through
+`PUT /api/v1/engines/xray/config`, the tunnel up, a new server while the old
+one runs, the probe through the tunnel, a broken link refused with 400.
+The address of `opkgtun1` comes from KeeneticOS (the `OpkgTun1` interface);
+without one, `curl --interface` has no source address.

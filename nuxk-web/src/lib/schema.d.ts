@@ -246,7 +246,10 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** Runtime config (xray only today); stored 0600, never served back */
+        /**
+         * Runtime config (xray only today); stored 0600, never served back
+         * @description xray: exactly one of vless_uri (a vless:// link) or sub_url (a 3x-ui subscription; its first VLESS server). The agent renders config.json (TUN inbound opkgtunN → VLESS), xray tests it, and it replaces the old one; if xray won't start with it, the old one comes back (502). A link that can't work is 400 with the reason in words.
+         */
         put: operations["engineConfig"];
         post?: never;
         delete?: never;

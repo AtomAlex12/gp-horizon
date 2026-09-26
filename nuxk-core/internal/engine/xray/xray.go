@@ -1,13 +1,15 @@
-// Package xray adapts the nuxk-xray engine (VLESS-Reality tunnel, vendored xray-core) to the
-// engine.Engine contract by shelling to its S52xray init script.
+// Package xray adapts the nuxk-xray engine (a VLESS client: xray-core with a TUN inbound) to
+// the engine.Engine contract by shelling to its S52xray-nuxk init script.
 //
-// S52xray speaks the same flat "key value" info/probe contract as S51usque/S51nfqws2 (see
-// engine.Exec's doc comment), plus a set-config action that takes VLESS_URI= or SUB_URL= on
-// stdin — see engines/nuxk-xray/README.md's config surface and engine.Configurable.
+// S52xray-nuxk speaks the same flat "key value" info/probe contract as S51usque/S51nfqws2
+// (see engine.Exec's doc comment), plus set-config, which takes a ready config.json. The
+// vless:// link or 3x-ui subscription is parsed and rendered here, in Go (vless.go) — not in
+// shell — and the script only tests, swaps and restarts; see engines/nuxk-xray/README.md.
 package xray
 
 import (
 	"context"
+	"net/http"
 	"strconv"
 	"strings"
 
@@ -24,11 +26,16 @@ type runner interface {
 
 type Adapter struct {
 	x runner
+	// Iface is the TUN device xray brings up: opkgtunN, which KeeneticOS
+	// shows as OpkgTunN — the interface the plane routes the VLESS list to.
+	Iface string
+	HTTP  *http.Client // fetches subscriptions
 }
 
-// New returns an xray adapter driving the given S52xray script path.
-func New(script string) *Adapter {
-	return &Adapter{x: engine.Exec{Script: script}}
+// New returns an xray adapter driving the given S52xray-nuxk script path;
+// iface is the TUN device name (opkgtun1).
+func New(script, iface string) *Adapter {
+	return &Adapter{x: engine.Exec{Script: script}, Iface: iface, HTTP: http.DefaultClient}
 }
 
 func (a *Adapter) Kind() engine.Kind { return engine.KindXray }
@@ -53,10 +60,13 @@ func (a *Adapter) Info(ctx context.Context) (engine.Info, error) {
 		Version:   kv["version.xray"],
 		Health:    healthFromState(running, kv["tunnel.state"]),
 		Iface:     kv["iface.name"],
-		Endpoint:  kv["config.server"],
+		Endpoint:  firstNonEmpty(kv["config.endpoint"], kv["config.server"]),
 		Routes:    len(routes),
 		Detail: map[string]string{
 			"tunnel_state": kv["tunnel.state"],
+			"server":       kv["config.server"],
+			"security":     kv["config.security"],
+			"network":      kv["config.network"],
 			"sni":          kv["config.sni"],
 			"fingerprint":  kv["config.fingerprint"],
 			"flow":         kv["config.flow"],
@@ -89,24 +99,50 @@ func (a *Adapter) Probe(ctx context.Context, _ []string) (engine.Probe, error) {
 	return p, nil
 }
 
-// SetConfig writes the engine's server target — exactly one of a raw vless:// URI or a 3x-ui
-// subscription URL — and asks S52xray to regenerate config.json and restart. Unknown keys in
-// cfg are ignored; the init script is the source of truth for validation (e.g. rejecting both
-// or neither being set).
+// SetConfig takes the server — exactly one of a vless:// link (vless_uri) or a 3x-ui
+// subscription URL (sub_url, its first VLESS server) — renders xray's config.json and hands
+// it to S52xray-nuxk, which tests it with xray itself, swaps it in and restarts; if xray
+// won't start with it, the previous config comes back. A link that can't work is
+// engine.ErrBadConfig.
 func (a *Adapter) SetConfig(ctx context.Context, cfg map[string]string) error {
-	var b strings.Builder
-	if v := cfg["vless_uri"]; v != "" {
-		b.WriteString("VLESS_URI=" + v + "\n")
+	uri, sub := strings.TrimSpace(cfg["vless_uri"]), strings.TrimSpace(cfg["sub_url"])
+	var s Server
+	var err error
+	switch {
+	case uri != "" && sub != "":
+		return bad("нужно что-то одно: ссылка vless:// или подписка")
+	case uri != "":
+		s, err = ParseVLESS(uri)
+	case sub != "":
+		var all []Server
+		if all, err = Subscription(ctx, a.HTTP, sub); err == nil {
+			s = all[0]
+		}
+	default:
+		return bad("нет ни ссылки vless://, ни подписки")
 	}
-	if v := cfg["sub_url"]; v != "" {
-		b.WriteString("SUB_URL=" + v + "\n")
+	if err != nil {
+		return err
 	}
-	_, err := a.x.ActionWithInput(ctx, "set-config", b.String())
+	conf, err := Render(s)
+	if err != nil {
+		return err
+	}
+	_, err = a.x.ActionWithInput(ctx, "set-config", meta(s, endpointOf(ctx, s), a.Iface)+"---\n"+string(conf)+"\n")
 	return err
 }
 
-// ApplyRouting is a no-op for xray until nuxk-plane owns the fwmark rule (MVP-3 §C) — same
-// pattern usque.go already uses. Only recorded for probing/reporting context.
+func firstNonEmpty(ss ...string) string {
+	for _, s := range ss {
+		if s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+// ApplyRouting is a no-op for xray: which traffic enters its TUN device is the router's
+// business (the plane routes the VLESS list to OpkgTunN) — same as usque.
 func (a *Adapter) ApplyRouting(ctx context.Context, r engine.Routing) error {
 	_ = ctx
 	_ = r

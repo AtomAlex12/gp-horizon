@@ -1,0 +1,258 @@
+#!/bin/sh
+# S52xray-nuxk — nuxk's init script for xray-core as a VLESS client.
+#
+# xray brings up a TUN device (opkgtun1), KeeneticOS shows it as OpkgTun1,
+# and the router's DNS routing sends the VLESS list there; xray carries it to
+# the server. nuxk-core renders config.json from the vless:// link (in Go) —
+# this script only runs xray and swaps configs safely.
+#
+#   start|stop|restart|status          the daemon
+#   info                               state as flat "key value" lines
+#   probe                              HTTPS through the tunnel: egress IP, time
+#   set-config < meta --- config.json  tested by xray itself, swapped in, xray
+#                                      restarted; the old config back if it
+#                                      won't start
+#
+# NUXK_ROOT prefixes every path, SYSNET replaces /sys/class/net (tests).
+
+R="${NUXK_ROOT:-}"
+XRAY_BIN="${XRAY_BIN:-$R/opt/sbin/xray}"
+DIR="$R/opt/etc/xray"
+CONF="$DIR/config.json"
+META="$DIR/nuxk.meta"
+PIDFILE="$R/opt/var/run/xray.pid"
+LOG="$R/opt/var/log/xray.log"
+LOG_MAX=524288
+SYSNET="${SYSNET:-/sys/class/net}"
+
+die() {
+    echo "$*" >&2
+    exit 1
+}
+
+# meta KEY — a value nuxk-core wrote next to the config (no secrets there)
+meta() { sed -n "s/^$1 //p" "$META" 2>/dev/null | head -n 1; }
+
+iface() {
+    v=$(meta iface)
+    case "$v" in "" | *[!a-z0-9]*) v=opkgtun1 ;; esac
+    echo "$v"
+}
+
+# The TUN inbound lives in its own file, written here: `xray run -test` on a
+# config with a TUN inbound opens the device, which the running xray holds —
+# so config.json (the server, from nuxk-core) is tested alone, and xray runs
+# with both.
+write_tun() {
+    printf '{\n  "inbounds": [\n    { "tag": "tun", "protocol": "tun", "port": 0, "settings": { "name": "%s", "mtu": 1500 } }\n  ]\n}\n' "$(iface)" >"$DIR/tun.json"
+}
+
+is_running() {
+    [ -f "$PIDFILE" ] || return 1
+    pid=$(cat "$PIDFILE" 2>/dev/null)
+    [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+}
+
+rotate_log() {
+    [ -f "$LOG" ] || return 0
+    sz=$(wc -c <"$LOG" 2>/dev/null) || sz=0
+    [ "${sz:-0}" -gt "$LOG_MAX" ] || return 0
+    tail -c $((LOG_MAX / 2)) "$LOG" >"$LOG.tmp" 2>/dev/null && mv "$LOG.tmp" "$LOG"
+    rm -f "$LOG.tmp"
+}
+
+start() {
+    is_running && return 0
+    [ -x "$XRAY_BIN" ] || die "xray не установлен: $XRAY_BIN"
+    [ -f "$CONF" ] || die "нет конфига $CONF — задайте сервер VLESS в панели nuxk"
+    mkdir -p "$(dirname "$PIDFILE")" "$(dirname "$LOG")"
+    rotate_log
+    # the version once per start, not a fork of xray on every info
+    "$XRAY_BIN" version 2>/dev/null | sed -n '1s/^Xray \([^ ]*\).*/\1/p' >"$DIR/.version"
+    write_tun
+    nohup "$XRAY_BIN" run -config "$DIR/tun.json" -config "$CONF" >>"$LOG" 2>&1 </dev/null &
+    echo $! >"$PIDFILE"
+    # up = the TUN device exists; KeeneticOS picks OpkgTunN up with it
+    i=0
+    while [ "$i" -lt 10 ]; do
+        is_running || break
+        [ -e "$SYSNET/$(iface)" ] && return 0
+        sleep 1
+        i=$((i + 1))
+    done
+    if ! is_running; then
+        rm -f "$PIDFILE"
+        die "xray не запустился: $(tail -n 3 "$LOG" 2>/dev/null | tr '\n' ' ')"
+    fi
+    die "xray запущен, но интерфейс $(iface) не появился за 10 с: $(tail -n 3 "$LOG" 2>/dev/null | tr '\n' ' ')"
+}
+
+stop() {
+    if ! is_running; then
+        rm -f "$PIDFILE"
+        return 0
+    fi
+    kill "$pid" 2>/dev/null
+    i=0
+    while [ "$i" -lt 10 ] && kill -0 "$pid" 2>/dev/null; do
+        sleep 1
+        i=$((i + 1))
+    done
+    kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null
+    rm -f "$PIDFILE"
+}
+
+stat_of() { cat "$SYSNET/$(iface)/statistics/$1" 2>/dev/null || echo 0; }
+
+info() {
+    running=0
+    pid=""
+    uptime=0
+    state=stopped
+    if is_running; then
+        running=1
+        state=disconnected
+        [ -e "$SYSNET/$(iface)" ] && state=connected
+        started=$(stat -c %Y "$PIDFILE" 2>/dev/null || echo 0)
+        now=$(date +%s)
+        [ "$started" -gt 0 ] && [ "$now" -ge "$started" ] && uptime=$((now - started))
+    else
+        pid=""
+    fi
+    echo "name XRAY"
+    echo "version.xray $(cat "$DIR/.version" 2>/dev/null)"
+    echo "version.pkg nuxk"
+    echo "service.running $running"
+    echo "service.pid $pid"
+    echo "service.uptime_s $uptime"
+    echo "tunnel.state $state"
+    echo "iface.name $(iface)"
+    for k in server endpoint security network sni fingerprint flow; do
+        echo "config.$k $(meta "$k")"
+    done
+    echo "traffic.rx_bytes $(stat_of rx_bytes)"
+    echo "traffic.tx_bytes $(stat_of tx_bytes)"
+}
+
+# The probe: a real HTTPS request bound to the TUN device, so it goes through
+# xray and the server; egress_ip is then the server's side of the world.
+probe() {
+    echo "server $(meta server)"
+    if ! is_running; then
+        echo "ok 0"
+        echo "reason stopped"
+    elif [ ! -e "$SYSNET/$(iface)" ]; then
+        echo "ok 0"
+        echo "reason no_tunnel"
+    else
+        out=$(curl -sS --max-time 8 --interface "$(iface)" \
+            -w '\ntime_total=%{time_total}' "https://www.cloudflare.com/cdn-cgi/trace" 2>/dev/null)
+        rc=$?
+        ip=$(echo "$out" | sed -n 's/^ip=//p')
+        if [ -n "$ip" ]; then
+            echo "ok 1"
+            echo "egress_ip $ip"
+            echo "rtt_ms $(echo "$out" | sed -n 's/^time_total=//p' | awk '{ printf "%d", $1 * 1000 + 0.5 }')"
+        else
+            echo "ok 0"
+            case $rc in
+            6) echo "reason dns" ;;
+            28) echo "reason timeout" ;;
+            *) echo "reason error_$rc" ;;
+            esac
+        fi
+    fi
+    echo "ts $(date +%s)"
+}
+
+# set-config < "key value" lines, a line "---", then config.json
+set_config() {
+    [ -x "$XRAY_BIN" ] || die "xray не установлен: $XRAY_BIN"
+    mkdir -p "$DIR"
+    chmod 700 "$DIR"
+    STAGE="$DIR/.stage"
+    rm -rf "$STAGE"
+    mkdir -p "$STAGE"
+    : >"$STAGE/meta"
+    ( umask 077 && : >"$STAGE/config.json" )
+    head=1
+    cr=$(printf '\r')
+    while IFS= read -r line || [ -n "$line" ]; do
+        line=${line%"$cr"}
+        if [ -n "$head" ]; then
+            if [ "$line" = "---" ]; then
+                head=""
+                continue
+            fi
+            case "$line" in
+            *[!]A-Za-z0-9._:\ [-]* | "")
+                rm -rf "$STAGE"
+                die "set-config: bad meta line"
+                ;;
+            esac
+            printf '%s\n' "$line" >>"$STAGE/meta"
+        else
+            printf '%s\n' "$line" >>"$STAGE/config.json"
+        fi
+    done
+    [ -z "$head" ] && [ -s "$STAGE/config.json" ] || {
+        rm -rf "$STAGE"
+        die "set-config: no config after ---"
+    }
+    if ! "$XRAY_BIN" run -test -config "$STAGE/config.json" >"$STAGE/test.log" 2>&1; then
+        msg=$(grep -i 'failed\|error\|invalid' "$STAGE/test.log" | tail -n 2 | tr '\n' ' ')
+        [ -n "$msg" ] || msg=$(tail -n 1 "$STAGE/test.log")
+        rm -rf "$STAGE"
+        die "xray не принял конфиг: $msg"
+    fi
+
+    had=""
+    if [ -f "$CONF" ]; then
+        had=1
+        cp -p "$CONF" "$CONF.prev"
+        cp -p "$META" "$META.prev" 2>/dev/null
+    fi
+    mv "$STAGE/config.json" "$CONF"
+    mv "$STAGE/meta" "$META"
+    rm -rf "$STAGE"
+
+    stop
+    if (start) 2>"$DIR/.start.err"; then
+        rm -f "$CONF.prev" "$META.prev" "$DIR/.start.err"
+        echo "applied"
+        return 0
+    fi
+    why=$(cat "$DIR/.start.err")
+    rm -f "$DIR/.start.err"
+    if [ -n "$had" ]; then
+        mv "$CONF.prev" "$CONF"
+        mv "$META.prev" "$META" 2>/dev/null
+        stop
+        (start) 2>/dev/null
+        die "xray не запустился с новым конфигом — вернул прежний. $why"
+    fi
+    rm -f "$CONF" "$META"
+    die "xray не запустился с этим конфигом. $why"
+}
+
+case "$1" in
+start) start ;;
+stop) stop ;;
+restart)
+    stop
+    start
+    ;;
+status)
+    if is_running; then echo "xray работает, pid $pid"; else
+        echo "xray остановлен"
+        exit 1
+    fi
+    ;;
+info) info ;;
+probe) probe ;;
+set-config) set_config ;;
+*)
+    echo "usage: $0 {start|stop|restart|status|info|probe|set-config}" >&2
+    exit 1
+    ;;
+esac

@@ -29,6 +29,7 @@ web-check:
 installer-check:
 	cd nuxk-installer && gofmt -l . | (! grep .) && go vet ./... && go test ./...
 	sh engines/nuxk-nfqws2/shim_test.sh
+	sh engines/nuxk-xray/shim_test.sh
 
 controller-check:
 	cd nuxk-controller && gofmt -l . | (! grep .) && go vet ./... && go test ./...

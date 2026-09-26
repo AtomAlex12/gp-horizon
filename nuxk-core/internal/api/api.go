@@ -214,6 +214,8 @@ func (d Deps) handleEngineConfig(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "engine_not_found", "no such engine: "+string(k))
 	case errors.Is(err, core.ErrNotConfigurable):
 		writeErr(w, http.StatusNotFound, "not_configurable", "engine does not accept runtime config: "+string(k))
+	case errors.Is(err, engine.ErrBadConfig):
+		writeErr(w, http.StatusBadRequest, "bad_config", strings.TrimPrefix(err.Error(), engine.ErrBadConfig.Error()+": "))
 	case err != nil:
 		writeErr(w, http.StatusBadGateway, "engine_error", err.Error())
 	default:

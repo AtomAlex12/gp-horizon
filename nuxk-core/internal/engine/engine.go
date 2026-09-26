@@ -9,7 +9,10 @@
 // changes this file or the API above it.
 package engine
 
-import "context"
+import (
+	"context"
+	"errors"
+)
 
 // Kind is the stable engine identifier.
 type Kind string
@@ -113,6 +116,10 @@ type Routing struct {
 	Endpoints []string `json:"endpoints,omitempty"` // nfqws2 only — other tunnels' upstreams
 	Strategy  string   `json:"strategy,omitempty"`  // nfqws2 only — strategy snippet id
 }
+
+// ErrBadConfig: a runtime config (Configurable.SetConfig) that can't work as
+// given — a broken link, an unknown option; the error says why in words.
+var ErrBadConfig = errors.New("bad config")
 
 // Configurable is implemented by engines whose runtime target (server URI, subscription, ...)
 // is set at runtime rather than fixed at build time — xray today (nfqws2/usque aren't, yet).
