@@ -255,6 +255,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/engines/{kind}/strategies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** nuxk's per-domain strategies on this engine (nfqws2 only) */
+        get: operations["engineStrategies"];
+        /**
+         * Replace nuxk's strategies (an empty list removes them)
+         * @description nfqws2: each strategy becomes its own profile in NFQWS_ARGS_CUSTOM (the stock script puts it before the others) with a hostlist nuxk-sN.list of its domains and a protocol filter. Only --payload, --lua-desync, --out-range and --in-range are accepted, without files; a leading "nfqws2" and --filter-*\/--hostlist* are dropped. nfqws2 restarts; the conf is copied to nfqws2.conf.nuxk-bak first (and the original once to .nuxk-orig). If nfqws2 won't start, the old conf is restored and the answer is 502. Custom args a person wrote there themselves are never overwritten (502 with the reason).
+         */
+        put: operations["setEngineStrategies"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/plane": {
         parameters: {
             query?: never;
@@ -452,6 +473,24 @@ export interface components {
             cidrs?: string[];
             endpoints?: string[];
             strategy?: string;
+        };
+        Strategy: {
+            id: string;
+            /** @enum {string} */
+            protocol: "tls" | "http" | "quic";
+            domains: string[];
+            /** @description nfqws2 desync args, e.g. "--payload=tls_client_hello --lua-desync=multisplit:pos=1" */
+            args: string;
+            /** @description where it was found, e.g. "gp:<run_id>" */
+            source?: string;
+            /**
+             * Format: int64
+             * @description unix seconds
+             */
+            applied_at?: number;
+        };
+        StrategySet: {
+            strategies: components["schemas"]["Strategy"][];
         };
         /** @description engine-specific (xray — vless_uri or sub_url) */
         EngineConfig: {
@@ -892,6 +931,60 @@ export interface operations {
                 };
             };
             400: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            502: components["responses"]["Error"];
+        };
+    };
+    engineStrategies: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                kind: components["parameters"]["kind"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the stored set */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StrategySet"];
+                };
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    setEngineStrategies: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                kind: components["parameters"]["kind"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StrategySet"];
+            };
+        };
+        responses: {
+            /** @description applied, nfqws2 running with them */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Ok"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
             404: components["responses"]["Error"];
             502: components["responses"]["Error"];
         };

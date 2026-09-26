@@ -28,6 +28,8 @@ export type PlaneList = S['PlaneList'];
 export type PlaneOp = S['PlaneOp'];
 export type ListMode = S['ListMode'];
 export type OnDown = S['OnDown'];
+export type Strategy = S['Strategy'];
+export type StrategySet = S['StrategySet'];
 
 // nuxk-controller's own API (not part of the agent contract).
 export interface AgentState {
@@ -78,7 +80,7 @@ function headers(json: boolean): Record<string, string> {
   };
 }
 
-async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
+export async function req<T>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     method,
     headers: headers(body !== undefined),
@@ -111,6 +113,8 @@ export const api = {
   engineProbe: (k: EngineKind) => req<Probe>('POST', v1(`/engines/${k}/probe`)),
   applyRouting: (k: EngineKind, routing: Routing) => req<S['Ok']>('POST', v1(`/engines/${k}/apply`), routing),
   setConfig: (k: EngineKind, cfg: Record<string, string>) => req<S['Ok']>('PUT', v1(`/engines/${k}/config`), cfg),
+  strategies: (k: EngineKind) => req<StrategySet>('GET', v1(`/engines/${k}/strategies`)),
+  setStrategies: (k: EngineKind, strategies: Strategy[]) => req<S['Ok']>('PUT', v1(`/engines/${k}/strategies`), { strategies }),
 
   plane: () => req<PlaneStatus>('GET', v1('/plane')),
   planeLists: () => req<PlaneDesired>('GET', v1('/plane/lists')),
