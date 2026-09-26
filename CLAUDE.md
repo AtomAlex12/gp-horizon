@@ -20,7 +20,8 @@
 |---|---|
 | `nuxk-core/` | агент (Go 1.24, **только stdlib**). `internal/api` — маршруты, `core` — контроллер движков, `plane` — списки → Keenetic, `engine` — адаптеры init-скриптов, `node` — метрики `/proc`, `logbuf` — лог |
 | `nuxk-core/api/openapi.yaml` | **контракт** агента — источник правды для API |
-| `nuxk-controller/` | контроллер на Pi (Go, stdlib): прокси, история `/ctl/v1/*` |
+| `nuxk-controller/` | контроллер на Pi (Go, stdlib): прокси, история `/ctl/v1/*`, хост плагинов (`supervise` → `serve` + плагины, `plugin.go`) |
+| `nuxk-controller/plugins/<name>/` | рецепты плагинов: `plugin.json` + `install.sh` (GP — подбор стратегий) |
 | `nuxk-web/` | Svelte 5 + Vite; типы API в `src/lib/schema.d.ts` генерируются |
 | `nuxk-installer/` | установка на роутер по SSH (Go, `golang.org/x/crypto` v0.44.0 — не обновлять выше без Go 1.26) |
 | `engines/nuxk-nfqws2/S51nfqws2-nuxk` | прослойка над штатным пакетом nfqws2-keenetic |
@@ -65,6 +66,19 @@ root / nuxk-dev), на контроллере — admin из мастера. `AP
 - Каждое изменение для пользователя — строка в `CHANGELOG.md` (раздел `[Unreleased]`).
 - Перед пушем — `make check`. PR — в `main`; после мержа ставится тег `vX.Y.Z`.
 - Не коммитить: `e0-report-*.txt` (схема сети), токены, пароли, `.env`.
+
+## Плагины (контроллер на Pi)
+
+- Один контейнер: `supervise` (root, без сети) → `serve` (nobody, без прав) + плагины
+  (uid 0 только с правами из `plugin.json`, без `CAP_DAC_*`/`SYS_PTRACE`). Новых
+  контейнеров под плагины не заводим.
+- Код плагина не лежит в репозитории: `install.sh` скачивает его на устройстве с его
+  релизов, с проверкой хешей. Разрешённые права — `allowedCaps` в `plugin.go`.
+- В панель — только нужные вызовы API плагина (белый список, как `gpAllowed`).
+- Стратегии на роутер — только кнопкой, через `PUT /engines/nfqws2/strategies`
+  (профиль в `NFQWS_ARGS_CUSTOM`, копия конфига, откат при сбое).
+- Тесты хоста плагинов — Linux-only (`supervisor_linux_test.go`); на Windows их
+  собирают `GOOS=linux go test -c` и гоняют на Pi из `~` (`/tmp` там noexec).
 
 ## Безопасность роутера (основной роутер в работе!)
 

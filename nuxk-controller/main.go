@@ -12,6 +12,14 @@
 //	DATA_DIR     /var/lib/nuxk-controller
 //	AGENT_URL    optional: the router's agent, with AGENT_TOKEN (its API_TOKEN)
 //	AGENT_TOKEN  — skips wizard step 2 when nothing is stored yet
+//
+// In the container it starts as `nuxk-controller supervise` (root): that
+// process runs `serve` (this web/API, as nobody) and the plugins, each with
+// only the rights it declares — see plugin.go. Plain `nuxk-controller` (or
+// `serve`) is the web/API alone, without plugins.
+//
+//	PLUGIN_RECIPES  /usr/share/nuxk/plugins   (supervise)
+//	SUPERVISOR_SOCK /run/nuxk/supervisor.sock (set for serve by supervise)
 package main
 
 import (
@@ -49,6 +57,24 @@ func main() {
 	}
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
 
+	switch flag.Arg(0) {
+	case "supervise":
+		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+		defer stop()
+		if err := runSupervisor(ctx); err != nil {
+			slog.Error("supervise", "err", err)
+			os.Exit(1)
+		}
+		return
+	case "", "serve":
+	default:
+		fmt.Fprintln(os.Stderr, "usage: nuxk-controller [serve | supervise | -version]")
+		os.Exit(2)
+	}
+	serve()
+}
+
+func serve() {
 	st, err := OpenStore(env("DATA_DIR", "/var/lib/nuxk-controller"))
 	if err != nil {
 		slog.Error("settings", "err", err)
@@ -81,7 +107,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:              env("LISTEN", ":4200"),
-		Handler:           NewServer(ag, st, NewSessions(), env("WEB_ROOT", ""), version),
+		Handler:           NewServer(ag, st, NewSessions(), NewPluginHost(os.Getenv("SUPERVISOR_SOCK")), env("WEB_ROOT", ""), version),
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		// no WriteTimeout: /api/v1/events is a long-lived stream

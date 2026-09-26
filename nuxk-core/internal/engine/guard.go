@@ -66,10 +66,41 @@ func (g guardedConfigurable) SetConfig(ctx context.Context, cfg map[string]strin
 	return g.c.SetConfig(ctx, cfg)
 }
 
+// guardedStrategist: the same for Strategist (nfqws2).
+type guardedStrategist struct {
+	*guarded
+	s Strategist
+}
+
+func (g guardedStrategist) ApplyStrategies(ctx context.Context, ss []Strategy) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.s.ApplyStrategies(ctx, ss)
+}
+
+// guardedBoth: an adapter that is Configurable and a Strategist.
+type guardedBoth struct {
+	guardedConfigurable
+	s Strategist
+}
+
+func (g guardedBoth) ApplyStrategies(ctx context.Context, ss []Strategy) error {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.s.ApplyStrategies(ctx, ss)
+}
+
 func guard(e Engine) Engine {
 	g := &guarded{inner: e}
-	if c, ok := e.(Configurable); ok {
+	c, isC := e.(Configurable)
+	s, isS := e.(Strategist)
+	switch {
+	case isC && isS:
+		return guardedBoth{guardedConfigurable: guardedConfigurable{guarded: g, c: c}, s: s}
+	case isC:
 		return guardedConfigurable{guarded: g, c: c}
+	case isS:
+		return guardedStrategist{guarded: g, s: s}
 	}
 	return g
 }

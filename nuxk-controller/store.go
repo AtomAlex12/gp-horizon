@@ -17,6 +17,13 @@ import (
 type Settings struct {
 	Admin *Admin    `json:"admin,omitempty"`
 	Agent *AgentRef `json:"agent,omitempty"`
+	// Plugins: what the controller needs to talk to a plugin (GP: the
+	// random password it set in place of GP's admin/admin).
+	Plugins map[string]PluginSecret `json:"plugins,omitempty"`
+}
+
+type PluginSecret struct {
+	Password string `json:"password"`
 }
 
 // Admin: PBKDF2-SHA256 (stdlib since Go 1.24) — the password itself is never stored.
@@ -136,6 +143,31 @@ func (st *Store) SetAgent(a AgentRef) error {
 	st.s.Agent = &a
 	if err := st.save(); err != nil {
 		st.s.Agent = prev
+		return err
+	}
+	return nil
+}
+
+func (st *Store) PluginSecret(name string) string {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	return st.s.Plugins[name].Password
+}
+
+func (st *Store) SetPluginSecret(name, password string) error {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	prev, had := st.s.Plugins[name]
+	if st.s.Plugins == nil {
+		st.s.Plugins = map[string]PluginSecret{}
+	}
+	st.s.Plugins[name] = PluginSecret{Password: password}
+	if err := st.save(); err != nil {
+		if had {
+			st.s.Plugins[name] = prev
+		} else {
+			delete(st.s.Plugins, name)
+		}
 		return err
 	}
 	return nil

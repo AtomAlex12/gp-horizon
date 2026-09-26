@@ -11,6 +11,11 @@
   import Soon from './lib/views/Soon.svelte';
   import Login from './lib/views/Login.svelte';
   import Setup from './lib/views/Setup.svelte';
+  import Plugins from './lib/views/Plugins.svelte';
+  import GpGate from './lib/views/GpGate.svelte';
+  import Runs from './lib/views/Runs.svelte';
+  import Results from './lib/views/Results.svelte';
+  import Strategies from './lib/views/Strategies.svelte';
   import { planeOf, healthDot, roleLabel, last } from './lib/ui';
   import { history as hist } from './lib/status.svelte';
 
@@ -30,6 +35,7 @@
     usque: { label: 'usque (WARP)', icon: 'usque' },
     xray: { label: 'xray (VLESS)', icon: 'xray' },
     logs: { label: 'Логи', icon: 'logs' },
+    plugins: { label: 'Плагины', icon: 'plugins' },
     system: { label: 'Система', icon: 'system' },
   };
   const NAV = [
@@ -37,14 +43,11 @@
     { title: 'Подбор', items: ['runs', 'results', 'strategies', 'decisions'] },
     { title: 'Списки и данные', items: ['lists', 'dns'] },
     { title: 'Движки', items: ['nfqws2', 'usque', 'xray'] },
-    { title: 'Управление', items: ['logs', 'system'] },
+    { title: 'Управление', items: ['logs', 'plugins', 'system'] },
   ];
   // screens the design has but the agent doesn't feed yet — said plainly
   const SOON: Record<string, string> = {
     devices: 'Устройства LAN и что у каждого не открывается — появится вместе со списком соединений.',
-    runs: 'Прогоны стратегий nfqws2 по вашим доменам: какая стратегия пробивает DPI вашего провайдера.',
-    results: 'Результаты прогонов: какие стратегии сработали, с какой задержкой, для каких доменов.',
-    strategies: 'Библиотека стратегий nfqws2 (zapret2) с описанием, откуда каждая и когда помогает.',
     decisions: 'Автоматический выбор пути для домена — десинк, туннель или напрямую — с объяснением, почему.',
     dns: 'DNS на роутере обслуживает сам Keenetic (списки работают через его маршрутизацию по доменам). Экран настроек DNS — позже.',
   };
@@ -199,6 +202,14 @@
           <Lists />
         {:else if tab === 'logs'}
           <Logs />
+        {:else if tab === 'plugins'}
+          <Plugins />
+        {:else if tab === 'runs'}
+          <GpGate {go}><Runs {go} /></GpGate>
+        {:else if tab === 'results'}
+          <GpGate {go}><Results {go} /></GpGate>
+        {:else if tab === 'strategies'}
+          <GpGate {go}><Strategies /></GpGate>
         {:else if tab === 'system'}
           <System />
         {:else if tab === 'nfqws2' || tab === 'usque' || tab === 'xray'}

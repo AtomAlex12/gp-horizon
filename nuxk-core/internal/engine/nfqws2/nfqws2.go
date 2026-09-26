@@ -11,6 +11,7 @@ package nfqws2
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -89,6 +90,23 @@ func (a *Adapter) Probe(ctx context.Context) (engine.Probe, error) {
 	}
 	return p, nil
 }
+
+// ApplyStrategies hands the shim nuxk's per-domain profiles: a hostlist
+// each (nuxk-sN.list), then the NFQWS_ARGS_CUSTOM value; an empty set
+// clears them. The shim restarts nfqws2 and rolls back if it won't start.
+// Strategies must already be validated (engine.ValidateStrategy).
+func (a *Adapter) ApplyStrategies(ctx context.Context, ss []engine.Strategy) error {
+	var b strings.Builder
+	for i, s := range ss {
+		fmt.Fprintf(&b, "list nuxk-s%d.list\n%s\n.\n", i+1, strings.Join(s.Domains, "\n"))
+	}
+	b.WriteString("custom " + engine.RenderStrategies(ss, listDir) + "\n")
+	_, err := a.x.ActionWithInput(ctx, "apply-strategies", b.String())
+	return err
+}
+
+// listDir is where nfqws2-keenetic keeps its lists on the router.
+const listDir = "/opt/etc/nfqws2/lists"
 
 // ApplyRouting writes Domains to the desync hostlist and Endpoints (other
 // engines' tunnel upstream IPs — "WARP через nfqws" endpoint hardening) to

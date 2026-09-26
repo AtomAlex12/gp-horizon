@@ -142,7 +142,7 @@ func newCtl(t *testing.T, dir, agentURL, token, adminPw string) *httptest.Server
 		a.poll(context.Background())
 		a.poll(context.Background())
 	}
-	srv := httptest.NewServer(NewServer(a, st, NewSessions(), "", "t"))
+	srv := httptest.NewServer(NewServer(a, st, NewSessions(), NewPluginHost(""), "", "t"))
 	t.Cleanup(srv.Close)
 	return srv
 }
@@ -317,7 +317,7 @@ func TestAgentDownIsReported(t *testing.T) {
 	}
 	st, _ := OpenStore(t.TempDir())
 	st.SetAdmin("correct horse")
-	srv := httptest.NewServer(NewServer(a, st, NewSessions(), "", "t"))
+	srv := httptest.NewServer(NewServer(a, st, NewSessions(), NewPluginHost(""), "", "t"))
 	defer srv.Close()
 	b := newClient(t, srv)
 	b.login()

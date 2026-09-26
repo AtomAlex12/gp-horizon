@@ -65,3 +65,25 @@ func TestGuardKeepsConfigurable(t *testing.T) {
 		t.Error("xray must stay Configurable through the guard")
 	}
 }
+
+type strategist struct{ slowEngine }
+
+func (s *strategist) Kind() Kind                                        { return KindNfqws2 }
+func (s *strategist) ApplyStrategies(context.Context, []Strategy) error { return nil }
+
+func TestGuardKeepsStrategist(t *testing.T) {
+	r := NewRegistry()
+	r.Add(&strategist{})
+	r.Add(&slowEngine{})
+	n, _ := r.Get(KindNfqws2)
+	if _, ok := n.(Strategist); !ok {
+		t.Error("nfqws2 lost Strategist through the guard")
+	}
+	if _, ok := n.(Configurable); ok {
+		t.Error("nfqws2 gained Configurable")
+	}
+	u, _ := r.Get(KindUsque)
+	if _, ok := u.(Strategist); ok {
+		t.Error("usque must not look like a Strategist")
+	}
+}

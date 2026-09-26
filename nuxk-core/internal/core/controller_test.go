@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"sync"
@@ -327,5 +328,66 @@ func TestUptimeFromProc(t *testing.T) {
 	}
 	if engine.ProcUptime(12345) != 0 {
 		t.Error("no such pid → 0")
+	}
+}
+
+// strategyEngine is a fakeEngine that takes strategies.
+type strategyEngine struct {
+	*fakeEngine
+	got [][]engine.Strategy
+	err error
+}
+
+func (s *strategyEngine) ApplyStrategies(_ context.Context, ss []engine.Strategy) error {
+	s.got = append(s.got, ss)
+	return s.err
+}
+
+func TestSetStrategies(t *testing.T) {
+	n := &strategyEngine{fakeEngine: &fakeEngine{kind: engine.KindNfqws2, running: true}}
+	c, st := newTestController(t, n)
+	ctx := context.Background()
+	s := engine.Strategy{ID: "gp-1", Protocol: "tls", Domains: []string{"a.com"}, Args: "nfqws2 --filter-tcp=443 --lua-desync=multisplit:pos=1"}
+	if err := c.SetStrategies(ctx, engine.KindNfqws2, []engine.Strategy{s}); err != nil {
+		t.Fatal(err)
+	}
+	if got := n.got[0][0]; got.Args != "--lua-desync=multisplit:pos=1" || got.AppliedAt == 0 {
+		t.Errorf("normalized/stamped: %+v", got)
+	}
+	d, _ := st.LoadDesired(engine.KindNfqws2)
+	if len(d.Strategies) != 1 {
+		t.Fatalf("stored %+v", d.Strategies)
+	}
+	first := d.Strategies[0].AppliedAt
+
+	// applying again keeps when each one was first applied
+	time.Sleep(1100 * time.Millisecond)
+	c.SetStrategies(ctx, engine.KindNfqws2, []engine.Strategy{s})
+	if d, _ := st.LoadDesired(engine.KindNfqws2); d.Strategies[0].AppliedAt != first {
+		t.Error("applied_at must survive a re-apply")
+	}
+
+	bad := s
+	bad.Args = "--lua-desync=fake:blob=@/etc/shadow"
+	if err := c.SetStrategies(ctx, engine.KindNfqws2, []engine.Strategy{bad}); !errors.Is(err, ErrBadStrategy) {
+		t.Errorf("bad args: %v", err)
+	}
+	if err := c.SetStrategies(ctx, engine.KindNfqws2, []engine.Strategy{s, s}); !errors.Is(err, ErrBadStrategy) {
+		t.Errorf("duplicate id: %v", err)
+	}
+
+	// the engine refused (e.g. nfqws2 wouldn't start): nothing stored
+	n.err = errors.New("nfqws2 не запустился с новой стратегией — вернул прежний конфиг")
+	if err := c.SetStrategies(ctx, engine.KindNfqws2, nil); err == nil {
+		t.Error("engine error must come back")
+	}
+	if d, _ := st.LoadDesired(engine.KindNfqws2); len(d.Strategies) != 1 {
+		t.Error("a refused set must not replace the stored one")
+	}
+
+	u := &fakeEngine{kind: engine.KindUsque}
+	c2, _ := newTestController(t, u)
+	if err := c2.SetStrategies(ctx, engine.KindUsque, nil); !errors.Is(err, ErrNoStrategies) {
+		t.Errorf("usque takes none: %v", err)
 	}
 }
