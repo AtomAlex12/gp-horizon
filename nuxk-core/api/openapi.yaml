@@ -221,8 +221,9 @@ paths:
       summary: start | stop | restart | probe | apply
       description: >
         start/stop/restart also record the run intent (the controller keeps it
-        with backoff). probe runs an active check and returns it. apply takes a
-        Routing body.
+        with backoff). probe runs an active check now (nfqws2: its probe sites,
+        see probe-targets), keeps it as the engine's last probe and returns it.
+        apply takes a Routing body.
       parameters:
         - { $ref: "#/components/parameters/kind" }
         - { name: action, in: path, required: true, schema: { type: string, enum: [start, stop, restart, probe, apply] } }
@@ -295,6 +296,47 @@ paths:
         "401": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
         "502": { $ref: "#/components/responses/Error" }
+
+  /api/v1/engines/{kind}/probe-targets:
+    get:
+      tags: [engines]
+      operationId: engineProbeTargets
+      summary: The sites the probe opens (nfqws2 only)
+      description: >
+        The person's own, or — when none — up to 5 picked from nfqws2's
+        hostlist, leaving out what the router sends into a tunnel (the
+        person's routed Keenetic lists, nuxk's applied WARP/VLESS groups).
+      parameters: [{ $ref: "#/components/parameters/kind" }]
+      responses:
+        "200":
+          description: the sites and whether nuxk chose them
+          content: { application/json: { schema: { $ref: "#/components/schemas/ProbeSites" } } }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+    put:
+      tags: [engines]
+      operationId: setEngineProbeTargets
+      summary: Set the probe's sites (an empty list = automatic)
+      description: >
+        Up to 10 site names; "https://site/path" is cut to the site. Each is
+        opened over HTTPS from the router, in parallel, 8 s each.
+      parameters: [{ $ref: "#/components/parameters/kind" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [targets]
+              properties:
+                targets: { type: array, items: { type: string }, maxItems: 10 }
+      responses:
+        "200":
+          description: what the probe uses from now on
+          content: { application/json: { schema: { $ref: "#/components/schemas/ProbeSites" } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
 
   /api/v1/plane:
     get:
@@ -533,6 +575,34 @@ components:
         detail: { type: object, additionalProperties: { type: string } }
         reason: { type: string }
         ts: { type: integer }
+        checks:
+          type: array
+          description: >
+            nfqws2: one per probe site, in the order asked. ok is then "at
+            least one site opens"; detail has opened and total.
+          items: { $ref: "#/components/schemas/ProbeCheck" }
+
+    ProbeCheck:
+      type: object
+      required: [domain, ok]
+      properties:
+        domain: { type: string }
+        ok: { type: boolean }
+        rtt_ms: { type: number }
+        reason:
+          type: string
+          description: >
+            where it broke — dns (no address), connect (no TCP), connect_timeout
+            (TCP never answers: by IP), tls_timeout (TCP up, TLS silently
+            dropped: by name), reset (reset during TLS: by name), cert (someone
+            else's certificate), slow (no answer in time), error_N (curl exit N)
+
+    ProbeSites:
+      type: object
+      required: [targets, auto]
+      properties:
+        targets: { type: array, items: { type: string } }
+        auto: { type: boolean, description: "true = picked by nuxk from the DPI list" }
 
     Routing:
       type: object

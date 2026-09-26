@@ -151,6 +151,22 @@ func main() {
 		}
 		pm = plane.NewManager(keenetic.New(cfg.Plane.RCI), st, pc)
 		ctl.PlaneStatus = func() any { return pm.Status() }
+		// nfqws2's probe skips what goes into a tunnel: the person's own
+		// routed lists (e.g. «Meta» → Wireguard1) and nuxk's WARP/VLESS
+		// groups — once they are applied, not while only planned
+		ctl.Tunneled = func() []string {
+			s := pm.Status()
+			var doms []string
+			for _, g := range s.Groups {
+				if s.Apply {
+					doms = append(doms, g.Domains...)
+				}
+			}
+			for _, f := range s.Foreign {
+				doms = append(doms, f.Domains...)
+			}
+			return doms
+		}
 		slog.Info("routing plane", "backend", "keenetic", "apply", cfg.Plane.Apply, "v6deny", cfg.Plane.V6Deny)
 		go pm.Run(ctx)
 	default:

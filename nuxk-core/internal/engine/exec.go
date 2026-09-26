@@ -96,7 +96,12 @@ func (e Exec) ActionWithInput(ctx context.Context, action, input string) (string
 // is parsed — stderr is diagnostics (iptables/curl warnings) and must not turn
 // into bogus keys.
 func (e Exec) KV(ctx context.Context, sub string) (map[string]string, []string, error) {
-	out, _, err := e.run(ctx, "", sub)
+	return e.KVWithInput(ctx, sub, "")
+}
+
+// KVWithInput is KV with a payload on stdin (nfqws2's probe reads its sites).
+func (e Exec) KVWithInput(ctx context.Context, sub, input string) (map[string]string, []string, error) {
+	out, _, err := e.run(ctx, input, sub)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -105,7 +110,7 @@ func (e Exec) KV(ctx context.Context, sub string) (map[string]string, []string, 
 }
 
 // ParseKV turns "key value" lines into a map. Bare "route <x>" style repeated
-// keys are collected into the returned slice (used for route/prefix lists).
+// keys (route, item, check) are collected into the returned slice.
 func ParseKV(s string) (map[string]string, []string) {
 	kv := map[string]string{}
 	var list []string
@@ -120,7 +125,7 @@ func ParseKV(s string) (map[string]string, []string) {
 			kv[k] = ""
 			continue
 		}
-		if k == "route" || k == "item" {
+		if k == "route" || k == "item" || k == "check" {
 			list = append(list, v)
 			continue
 		}

@@ -69,6 +69,8 @@ func TestOpenAPISchemasCoverJSONFields(t *testing.T) {
 		"LogEntry":      logbuf.Entry{},
 		"EngineInfo":    engine.Info{},
 		"Probe":         engine.Probe{},
+		"ProbeCheck":    engine.ProbeCheck{},
+		"ProbeSites":    core.ProbeSites{},
 		"Routing":       engine.Routing{},
 		"Strategy":      engine.Strategy{},
 		"StrategySet":   StrategySet{},

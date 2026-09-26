@@ -1,11 +1,11 @@
 <script lang="ts">
   // One engine's page, laid out like the console: state card + actions on
   // the left, what the engine carries on the right, raw details below.
-  import { api, type EngineKind, type ListMode } from '../api';
-  import { status, refresh } from '../status.svelte';
+  import { api, type EngineKind, type ListMode, type ProbeSites } from '../api';
+  import { status, refresh, node } from '../status.svelte';
   import NfqwsRouting from '../NfqwsRouting.svelte';
   import XrayConfig from '../XrayConfig.svelte';
-  import { ENGINE_LABEL, HEALTH_LABEL, fmtDur, healthChip, healthDot, planeOf } from '../ui';
+  import { ENGINE_LABEL, HEALTH_LABEL, ago, fmtDur, healthChip, healthDot, planeOf, probeState, probeText, reasonText } from '../ui';
 
   let { kind, go }: { kind: EngineKind; go: (tab: string) => void } = $props();
 
@@ -40,9 +40,7 @@
     msg = null;
     try {
       const p = await api.engineProbe(kind);
-      msg = p.ok
-        ? { ok: true, text: `проба ok${p.rtt_ms ? ` · ${Math.round(p.rtt_ms)} мс` : ''}${p.egress_ip ? ` · выход ${p.egress_ip}` : ''}` }
-        : { ok: false, text: `проба не прошла: ${p.reason ?? 'нет ответа'}` };
+      msg = { ok: probeState(p) === 'ok', text: probeText({ probe: p }) + (p.egress_ip ? ` · выход ${p.egress_ip}` : '') };
     } catch (err) {
       msg = { ok: false, text: err instanceof Error ? err.message : String(err) };
     } finally {
@@ -50,6 +48,38 @@
       busy = false;
     }
   }
+
+  // nfqws2's probe sites: the person's own, or picked by nuxk from the DPI list
+  let sites = $state<ProbeSites | null>(null);
+  let editing = $state(false);
+  let sitesText = $state('');
+  $effect(() => {
+    if (kind !== 'nfqws2') return;
+    api.probeTargets(kind).then(
+      (s) => (sites = s),
+      () => (sites = null),
+    );
+  });
+  function editSites() {
+    sitesText = (sites?.auto ? [] : (sites?.targets ?? [])).join('\n');
+    editing = true;
+  }
+  async function saveSites(list: string[]) {
+    busy = true;
+    msg = null;
+    try {
+      sites = await api.setProbeTargets(kind, list);
+      editing = false;
+    } catch (err) {
+      msg = { ok: false, text: err instanceof Error ? err.message : String(err) };
+      busy = false;
+      return;
+    }
+    busy = false;
+    await probe();
+  }
+  const siteList = (t: string) => t.split(/[\s,]+/).filter(Boolean);
+
   const intent = $derived(
     e?.want_run === true ? 'держать запущенным' : e?.want_run === false ? 'держать остановленным' : 'не управляется',
   );
@@ -93,9 +123,11 @@
         <dt>проба</dt>
         <dd>
           {#if e.probe}
-            {#if e.probe.ok}<span class="chip ok">ok</span>
-              <span class="mono">{e.probe.rtt_ms ? `${Math.round(e.probe.rtt_ms)} мс` : ''}{e.probe.egress_ip ? ` · ${e.probe.egress_ip}` : ''}</span>
-            {:else}<span class="chip warn">не прошла</span> <span class="mono err-text">{e.probe.reason ?? 'нет ответа'}</span>{/if}
+            {@const ps = probeState(e.probe)}
+            <span class="chip {ps === 'ok' ? 'ok' : ps === 'part' ? 'deg' : 'warn'}">{ps === 'ok' ? 'ok' : ps === 'part' ? 'не все' : 'не прошла'}</span>
+            {#if e.probe.checks?.length}<span>{probeText(e).replace(/^проба:? /, '')}</span>
+            {:else if e.probe.ok}<span class="mono">{e.probe.rtt_ms ? `${Math.round(e.probe.rtt_ms)} мс` : ''}{e.probe.egress_ip ? ` · ${e.probe.egress_ip}` : ''}</span>
+            {:else}<span class="err-text">{reasonText(e.probe.reason)}</span>{/if}
           {:else}—{/if}
         </dd>
       </dl>
@@ -150,7 +182,82 @@
     {/if}
   </div>
 
-  {#if kind !== 'nfqws2'}
+  {#if kind === 'nfqws2'}
+    <section class="card">
+      <div class="card-head">
+        <h2>Проба</h2>
+        {#if e.probe_at}<span class="hint">{ago(e.probe_at)}</span>{/if}
+        <span class="spacer"></span>
+        <button class="ghost sm" onclick={probe} disabled={busy}>Проверить сейчас</button>
+      </div>
+      <p class="hint what">
+        Роутер сам регулярно открывает эти сайты — так видно, пробивает ли nfqws2 DPI провайдера. Статус «работает», пока
+        открывается хотя бы один.
+      </p>
+      {#if e.probe?.checks?.length}
+        <div class="tbl-wrap">
+          <table>
+            <thead><tr><th>Сайт</th><th>Результат</th><th>Где обрывается</th></tr></thead>
+            <tbody>
+              {#each e.probe.checks as c (c.domain)}
+                <tr>
+                  <td class="mono">{c.domain}</td>
+                  <td>
+                    {#if c.ok}<span class="chip ok">открывается</span> <span class="mono muted small">{Math.round(c.rtt_ms ?? 0)} мс</span>
+                    {:else}<span class="chip warn">не открывается</span>{/if}
+                  </td>
+                  <td class="hint">{c.ok ? '' : reasonText(c.reason)}</td>
+                </tr>
+              {/each}
+            </tbody>
+          </table>
+        </div>
+        {@const byName = e.probe.checks.filter((c) => !c.ok && (c.reason === 'tls_timeout' || c.reason === 'reset')).map((c) => c.domain)}
+        {@const byIP = e.probe.checks.filter((c) => !c.ok && (c.reason === 'connect_timeout' || c.reason === 'connect')).map((c) => c.domain)}
+        {#if byName.length}
+          <p class="hint next">
+            {byName.join(', ')} — блокировка по имени сайта: это работа nfqws2, нужна другая стратегия.
+            {#if !__LITE__ && node.via === 'controller'}Подобрать: <button class="linkbtn" onclick={() => go('runs')}>«Прогоны»</button>.
+            {:else}Подобрать её можно в полной версии — через контроллер на Pi.{/if}
+          </p>
+        {/if}
+        {#if byIP.length}
+          <p class="hint next">
+            {byIP.join(', ')} — блокировка по IP: nfqws2 такое не откроет никакой стратегией, поможет только туннель —
+            перенесите в список WARP или VLESS (<button class="linkbtn" onclick={() => go('lists')}>«Списки»</button>).
+          </p>
+        {/if}
+      {:else if e.probe}<p class="hint">{probeText(e)}</p>{/if}
+
+      <div class="divider"></div>
+      <div class="card-head sub">
+        <h2>Сайты пробы</h2>
+        {#if sites}<span class="chip">{sites.auto ? 'выбирает nuxk' : 'свои'}</span>{/if}
+        <span class="spacer"></span>
+        {#if !editing}<button class="ghost sm" onclick={editSites} disabled={busy || !sites}>Изменить</button>{/if}
+      </div>
+      {#if editing}
+        <textarea rows="5" bind:value={sitesText} placeholder={'rutracker.org\nx.com'}></textarea>
+        <p class="hint">По одному на строку, до 10. Пусто — выбирает nuxk.</p>
+        <div class="row">
+          <button onclick={() => saveSites(siteList(sitesText))} disabled={busy}>Сохранить и проверить</button>
+          <button class="ghost" onclick={() => (editing = false)} disabled={busy}>Отмена</button>
+        </div>
+      {:else if sites}
+        <div class="row chips">
+          {#each sites.targets as d (d)}<span class="chip mono">{d}</span>{:else}<span class="muted small">список DPI пуст — проверяется browserleaks.com</span>{/each}
+        </div>
+        {#if sites.auto}
+          <p class="hint">
+            До 5 сайтов из списка DPI — кроме тех, что роутер отправляет в туннели (ваши списки Keenetic с маршрутом, WARP и
+            VLESS): они не встречают DPI провайдера и ничего не говорят о nfqws2.
+          </p>
+        {:else}
+          <button class="ghost sm" onclick={() => saveSites([])} disabled={busy}>Пусть выбирает nuxk</button>
+        {/if}
+      {/if}
+    </section>
+  {:else}
     <section class="card">
       <div class="card-head">
         <h2>Домены через {kind === 'usque' ? 'WARP' : 'VLESS'}</h2>
@@ -193,6 +300,23 @@
   }
   .sub {
     margin: 10px 0 8px;
+  }
+  .what {
+    max-width: 760px;
+    margin-bottom: 10px;
+  }
+  .next {
+    max-width: 760px;
+    margin-top: 8px;
+  }
+  .linkbtn {
+    display: inline;
+    background: none;
+    border: 0;
+    padding: 0;
+    color: var(--accent);
+    font-size: inherit;
+    text-decoration: underline;
   }
   .raw summary {
     cursor: pointer;

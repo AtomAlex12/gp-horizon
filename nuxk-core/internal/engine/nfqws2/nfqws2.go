@@ -4,14 +4,15 @@
 // nfqws2 does not reroute traffic — it's a passive NFQUEUE hook on WAN egress
 // that mangles packets in flight (see engine.KindNfqws2's doc comment). So
 // unlike usque/xray, Info has no meaningful Endpoint, and Probe has no
-// meaningful EgressIP: the probe instead answers "does a known-blocked domain
-// load through this container's real egress" (see S51nfqws2-docker's probe
-// subcommand under deploy/proto/engine/).
+// meaningful EgressIP: the probe instead answers "do sites of the DPI list
+// load through the router's real egress", site by site (see the probe
+// subcommand of engines/nuxk-nfqws2/S51nfqws2-nuxk).
 package nfqws2
 
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -22,6 +23,7 @@ import (
 // tests can inject a fake without a shell.
 type runner interface {
 	KV(ctx context.Context, sub string) (map[string]string, []string, error)
+	KVWithInput(ctx context.Context, sub, input string) (map[string]string, []string, error)
 	Action(ctx context.Context, action string) error
 	ActionWithInput(ctx context.Context, action, input string) (string, error)
 }
@@ -74,20 +76,67 @@ func (a *Adapter) Info(ctx context.Context) (engine.Info, error) {
 	return info, nil
 }
 
-func (a *Adapter) Probe(ctx context.Context) (engine.Probe, error) {
-	kv, _, err := a.x.KV(ctx, "probe")
+// Probe opens each target over HTTPS from the router — the shim runs them in
+// parallel, 8 s each — and reports where each broke. OK = at least one
+// opened: nfqws2 does its job; a site it doesn't open is the strategy's or
+// the list's business, named in Checks. No targets = the shim's canary.
+func (a *Adapter) Probe(ctx context.Context, targets []string) (engine.Probe, error) {
+	kv, lines, err := a.x.KVWithInput(ctx, "probe", strings.Join(targets, "\n"))
 	if err != nil {
 		return engine.Probe{}, err
 	}
-	p := engine.Probe{
-		OK:     kv["ok"] == "1",
-		RTTms:  atof(kv["rtt_ms"]),
-		Reason: kv["reason"],
-		TS:     atoi64(kv["ts"]),
-		Detail: map[string]string{
-			"target": kv["target"],
-		},
+	p := engine.Probe{TS: atoi64(kv["ts"])}
+	for _, l := range lines {
+		f := strings.Fields(l) // check <domain> <ok> <ms> [reason]
+		if len(f) < 3 {
+			continue
+		}
+		c := engine.ProbeCheck{Domain: f[0], OK: f[1] == "1", RTTms: atof(f[2])}
+		if !c.OK && len(f) > 3 {
+			c.Reason = f[3]
+		}
+		p.Checks = append(p.Checks, c)
 	}
+	if len(p.Checks) == 0 { // a shim from before per-site checks
+		p.OK, p.RTTms, p.Reason = kv["ok"] == "1", atof(kv["rtt_ms"]), kv["reason"]
+		p.Detail = map[string]string{"target": kv["target"]}
+		return p, nil
+	}
+	// the order asked, not the order the parallel checks finished in
+	pos := map[string]int{}
+	for i, d := range targets {
+		pos[d] = i + 1
+	}
+	slices.SortStableFunc(p.Checks, func(x, y engine.ProbeCheck) int {
+		px, py := pos[x.Domain], pos[y.Domain]
+		if px == 0 {
+			px = len(targets) + 1
+		}
+		if py == 0 {
+			py = len(targets) + 1
+		}
+		return px - py
+	})
+	opened, reasons := 0, map[string]int{}
+	for _, c := range p.Checks {
+		if !c.OK {
+			reasons[c.Reason]++
+			continue
+		}
+		opened++
+		if p.RTTms == 0 || c.RTTms < p.RTTms {
+			p.RTTms = c.RTTms
+		}
+	}
+	p.OK = opened > 0
+	if !p.OK { // the commonest failure; a tie goes to the first site's
+		for _, c := range p.Checks {
+			if p.Reason == "" || reasons[c.Reason] > reasons[p.Reason] {
+				p.Reason = c.Reason
+			}
+		}
+	}
+	p.Detail = map[string]string{"opened": strconv.Itoa(opened), "total": strconv.Itoa(len(p.Checks))}
 	return p, nil
 }
 

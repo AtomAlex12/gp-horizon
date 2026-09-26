@@ -229,7 +229,7 @@ export interface paths {
         put?: never;
         /**
          * start | stop | restart | probe | apply
-         * @description start/stop/restart also record the run intent (the controller keeps it with backoff). probe runs an active check and returns it. apply takes a Routing body.
+         * @description start/stop/restart also record the run intent (the controller keeps it with backoff). probe runs an active check now (nfqws2: its probe sites, see probe-targets), keeps it as the engine's last probe and returns it. apply takes a Routing body.
          */
         post: operations["engineAction"];
         delete?: never;
@@ -269,6 +269,30 @@ export interface paths {
          * @description nfqws2: each strategy becomes its own profile in NFQWS_ARGS_CUSTOM (the stock script puts it before the others) with a hostlist nuxk-sN.list of its domains and a protocol filter. Only --payload, --lua-desync, --out-range and --in-range are accepted, without files; a leading "nfqws2" and --filter-*\/--hostlist* are dropped. nfqws2 restarts; the conf is copied to nfqws2.conf.nuxk-bak first (and the original once to .nuxk-orig). If nfqws2 won't start, the old conf is restored and the answer is 502. Custom args a person wrote there themselves are never overwritten (502 with the reason).
          */
         put: operations["setEngineStrategies"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/engines/{kind}/probe-targets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The sites the probe opens (nfqws2 only)
+         * @description The person's own, or — when none — up to 5 picked from nfqws2's hostlist, leaving out what the router sends into a tunnel (the person's routed Keenetic lists, nuxk's applied WARP/VLESS groups).
+         */
+        get: operations["engineProbeTargets"];
+        /**
+         * Set the probe's sites (an empty list = automatic)
+         * @description Up to 10 site names; "https://site/path" is cut to the site. Each is opened over HTTPS from the router, in parallel, 8 s each.
+         */
+        put: operations["setEngineProbeTargets"];
         post?: never;
         delete?: never;
         options?: never;
@@ -467,6 +491,20 @@ export interface components {
             };
             reason?: string;
             ts: number;
+            /** @description nfqws2: one per probe site, in the order asked. ok is then "at least one site opens"; detail has opened and total. */
+            checks?: components["schemas"]["ProbeCheck"][];
+        };
+        ProbeCheck: {
+            domain: string;
+            ok: boolean;
+            rtt_ms?: number;
+            /** @description where it broke — dns (no address), connect (no TCP), connect_timeout (TCP never answers: by IP), tls_timeout (TCP up, TLS silently dropped: by name), reset (reset during TLS: by name), cert (someone else's certificate), slow (no answer in time), error_N (curl exit N) */
+            reason?: string;
+        };
+        ProbeSites: {
+            targets: string[];
+            /** @description true = picked by nuxk from the DPI list */
+            auto: boolean;
         };
         Routing: {
             domains?: string[];
@@ -987,6 +1025,61 @@ export interface operations {
             401: components["responses"]["Error"];
             404: components["responses"]["Error"];
             502: components["responses"]["Error"];
+        };
+    };
+    engineProbeTargets: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                kind: components["parameters"]["kind"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the sites and whether nuxk chose them */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProbeSites"];
+                };
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    setEngineProbeTargets: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                kind: components["parameters"]["kind"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    targets: string[];
+                };
+            };
+        };
+        responses: {
+            /** @description what the probe uses from now on */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProbeSites"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
         };
     };
     plane: {

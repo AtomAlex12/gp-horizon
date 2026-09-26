@@ -18,7 +18,9 @@
     last,
     planeOf,
     plural,
+    probeState,
     probeText,
+    reasonText,
   } from '../ui';
   import { findGlued } from '../domains';
 
@@ -84,7 +86,13 @@
       if (e.last_error) out.push({ sev: 'warn', text: `${name}: ${e.last_error}`, tab: e.kind });
       else if (e.want_run && !e.running) out.push({ sev: 'warn', text: `${name} должен работать, но остановлен — перезапуск с паузой`, tab: e.kind });
       else if (e.health === 'down' && e.want_run !== false) out.push({ sev: 'deg', text: `${name} остановлен`, tab: e.kind });
-      if (e.running && e.probe && !e.probe.ok) out.push({ sev: 'deg', text: `${name}: проба не прошла (${e.probe.reason ?? 'нет ответа'})`, tab: e.kind });
+      const ps = e.running ? probeState(e.probe) : '';
+      if (ps === 'bad') out.push({ sev: 'deg', text: `${name}: ${probeText(e)} — ${reasonText(e.probe?.reason)}`, tab: e.kind });
+      if (ps === 'part') {
+        const bad = (e.probe?.checks ?? []).filter((c) => !c.ok);
+        const why = bad.every((c) => c.reason === bad[0].reason) ? ` — ${reasonText(bad[0].reason)}` : ' — причины на странице nfqws2';
+        out.push({ sev: 'deg', text: `${name} не открывает ${bad.map((c) => c.domain).join(', ')}${why}`, tab: e.kind });
+      }
     }
     if (plane) {
       if (plane.last_error) out.push({ sev: 'warn', text: `Маршрутизация: ${plane.last_error}`, tab: 'lists' });
@@ -187,7 +195,7 @@
           {#if !e}движок не установлен или выключен в nuxk.conf
           {:else}
             {e.running ? `аптайм ${e.uptime_sec ? fmtDur(e.uptime_sec) : '—'}` : e.want_run ? 'перезапуск с паузой' : 'остановлен'}<br />
-            <span class:bad={e.probe && !e.probe.ok}>{probeText(e)}</span>
+            <span class:bad={probeState(e.probe) === 'bad'} class:part={probeState(e.probe) === 'part'}>{probeText(e)}</span>
           {/if}
         </div>
         <Sparkline data={spark(k)} {ts} {span} color={COLORS[k]} label={sparkLabel(k)} />
@@ -233,6 +241,9 @@
   }
   .bad {
     color: var(--warn);
+  }
+  .part {
+    color: var(--degraded);
   }
   .link {
     text-align: left;

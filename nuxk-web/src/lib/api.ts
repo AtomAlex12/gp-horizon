@@ -18,6 +18,8 @@ export type EngineInfo = S['EngineInfo'];
 export type EngineKind = S['EngineKind'];
 export type Health = S['Health'];
 export type Probe = S['Probe'];
+export type ProbeCheck = S['ProbeCheck'];
+export type ProbeSites = S['ProbeSites'];
 export type Routing = S['Routing'];
 export type NodeInfo = S['NodeInfo'];
 export type Metrics = S['Metrics'];
@@ -115,6 +117,8 @@ export const api = {
   setConfig: (k: EngineKind, cfg: Record<string, string>) => req<S['Ok']>('PUT', v1(`/engines/${k}/config`), cfg),
   strategies: (k: EngineKind) => req<StrategySet>('GET', v1(`/engines/${k}/strategies`)),
   setStrategies: (k: EngineKind, strategies: Strategy[]) => req<S['Ok']>('PUT', v1(`/engines/${k}/strategies`), { strategies }),
+  probeTargets: (k: EngineKind) => req<ProbeSites>('GET', v1(`/engines/${k}/probe-targets`)),
+  setProbeTargets: (k: EngineKind, targets: string[]) => req<ProbeSites>('PUT', v1(`/engines/${k}/probe-targets`), { targets }),
 
   plane: () => req<PlaneStatus>('GET', v1('/plane')),
   planeLists: () => req<PlaneDesired>('GET', v1('/plane/lists')),

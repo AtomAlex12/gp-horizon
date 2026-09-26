@@ -41,6 +41,10 @@ var (
 	idRe     = regexp.MustCompile(`^[A-Za-z0-9_.:-]{1,80}$`)
 )
 
+// ValidDomain: a lower-case host name, nothing a shell or a hostlist could
+// read as anything else.
+func ValidDomain(d string) bool { return domainRe.MatchString(d) }
+
 // NormalizeArgs drops what a strategy search prints around the desync
 // itself — the program name and its own filters/hostlists (nuxk sets both) —
 // and returns the args one space apart.

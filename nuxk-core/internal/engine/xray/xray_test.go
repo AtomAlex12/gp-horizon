@@ -116,7 +116,7 @@ func TestInfoHealth(t *testing.T) {
 
 func TestProbe(t *testing.T) {
 	a := &Adapter{x: &fakeRunner{probe: sampleProbe}}
-	got, err := a.Probe(context.Background())
+	got, err := a.Probe(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("Probe: %v", err)
 	}

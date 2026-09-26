@@ -65,6 +65,8 @@ var Routes = []Route{
 	{"PUT /api/v1/engines/{kind}/config", false, func(d Deps) http.HandlerFunc { return d.handleEngineConfig }},
 	{"GET /api/v1/engines/{kind}/strategies", false, func(d Deps) http.HandlerFunc { return d.handleStrategies }},
 	{"PUT /api/v1/engines/{kind}/strategies", false, func(d Deps) http.HandlerFunc { return d.handleSetStrategies }},
+	{"GET /api/v1/engines/{kind}/probe-targets", false, func(d Deps) http.HandlerFunc { return d.handleProbeTargets }},
+	{"PUT /api/v1/engines/{kind}/probe-targets", false, func(d Deps) http.HandlerFunc { return d.handleSetProbeTargets }},
 	{"GET /api/v1/plane", false, func(d Deps) http.HandlerFunc { return d.handlePlane }},
 	{"GET /api/v1/plane/lists", false, func(d Deps) http.HandlerFunc { return d.handlePlaneLists }},
 	{"PUT /api/v1/plane/lists", false, func(d Deps) http.HandlerFunc { return d.handlePlaneSetLists }},
@@ -158,7 +160,7 @@ func (d Deps) handleEngineAction(w http.ResponseWriter, r *http.Request) {
 	case "start", "stop", "restart":
 		err = d.Ctl.Action(ctx, k, action)
 	case "probe":
-		p, perr := e.Probe(ctx)
+		p, perr := d.Ctl.Probe(ctx, e.Kind())
 		if perr != nil {
 			writeErr(w, http.StatusBadGateway, "probe_failed", perr.Error())
 			return
@@ -259,6 +261,41 @@ func (d Deps) handleSetStrategies(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadGateway, "engine_error", err.Error())
 	default:
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	}
+}
+
+func (d Deps) handleProbeTargets(w http.ResponseWriter, r *http.Request) {
+	ps, err := d.Ctl.ProbeTargets(engine.Kind(r.PathValue("kind")))
+	switch {
+	case errors.Is(err, core.ErrEngineNotFound), errors.Is(err, core.ErrNoProbeSites):
+		writeErr(w, http.StatusNotFound, "no_probe_sites", "this engine's probe takes no sites")
+	case err != nil:
+		writeErr(w, http.StatusInternalServerError, "state", err.Error())
+	default:
+		writeJSON(w, http.StatusOK, ps)
+	}
+}
+
+// handleSetProbeTargets stores the sites the probe opens ([] = automatic,
+// from the DPI list) and answers with what the probe will now use.
+func (d Deps) handleSetProbeTargets(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Targets []string `json:"targets"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&in); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad_body", "want {\"targets\":[...]}")
+		return
+	}
+	ps, err := d.Ctl.SetProbeTargets(engine.Kind(r.PathValue("kind")), in.Targets)
+	switch {
+	case errors.Is(err, core.ErrEngineNotFound), errors.Is(err, core.ErrNoProbeSites):
+		writeErr(w, http.StatusNotFound, "no_probe_sites", "this engine's probe takes no sites")
+	case errors.Is(err, core.ErrBadProbeSites):
+		writeErr(w, http.StatusBadRequest, "bad_probe_sites", err.Error())
+	case err != nil:
+		writeErr(w, http.StatusInternalServerError, "state", err.Error())
+	default:
+		writeJSON(w, http.StatusOK, ps)
 	}
 }
 
