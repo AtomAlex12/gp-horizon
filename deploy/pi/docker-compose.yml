@@ -51,7 +51,13 @@ services:
     volumes:
       - controller-data:/var/lib/nuxk-controller
     read_only: true
+    tmpfs: [/run, /tmp]
+    init: true   # reaps what plugins leave behind
+    # `supervise` needs these to hand out less: the web/API runs as nobody
+    # with none, a plugin gets only the ones in its plugin.json (GP: the
+    # NET_* for blockcheck2 inside this container's own network namespace).
     cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETUID, SETGID, SETPCAP, KILL, NET_ADMIN, NET_RAW]
     security_opt: ["no-new-privileges:true"]
     restart: unless-stopped
 
