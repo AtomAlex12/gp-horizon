@@ -5,7 +5,7 @@
   // nfqws2.conf, a restart of nfqws2 — and the old conf back if it won't start.
   import { api, type Strategy } from '../api';
   import { gp, type StrategyCandidate } from '../gp';
-  import { ago } from '../ui';
+  import { ago, plural } from '../ui';
 
   let candidates = $state<StrategyCandidate[] | null>(null);
   let applied = $state<Strategy[] | null>(null);
@@ -79,6 +79,12 @@
     return '';
   }
 
+  // when GP last saw it work: its own field, or the newest of its sightings
+  function lastSeen(c: StrategyCandidate): string {
+    const t = c.last_seen_at ?? (c.seen ?? []).map((x) => x.seen_at ?? '').sort().pop();
+    return t ? new Date(t).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' }) : '—';
+  }
+
   const sid = (c: StrategyCandidate) => ('gp-' + c.id).replace(/[^A-Za-z0-9_.:-]/g, '-').slice(0, 80);
 
   async function put(next: Strategy[], done: string) {
@@ -106,7 +112,7 @@
       .filter((x) => x.id !== s.id)
       .map((x) => (x.protocol === s.protocol ? { ...x, domains: x.domains.filter((d) => !doms.includes(d)) } : x))
       .filter((x) => x.domains.length);
-    void put([s, ...others], `Применено: ${doms.length} доменов, nfqws2 перезапущен.`);
+    void put([s, ...others], `Применено для ${plural(doms.length, 'домена', 'доменов', 'доменов')}, nfqws2 перезапущен.`);
   }
 
   function remove(id: string) {
@@ -211,7 +217,7 @@
               <td class="mono args">{c.args}</td>
               <td title={ds.join('\n')}>{ds.slice(0, 2).join(', ')}{ds.length > 2 ? ` +${ds.length - 2}` : ''}</td>
               <td class="hint">{c.family ?? '—'}</td>
-              <td class="hint">{c.last_seen_at ? new Date(c.last_seen_at).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' }) : '—'}</td>
+              <td class="hint">{lastSeen(c)}</td>
               <td>
                 {#if blocker(c.args)}
                   <span class="hint" title="nuxk пишет на роутер только аргументы десинка без файлов и кода">{blocker(c.args)}</span>
