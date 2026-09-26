@@ -38,6 +38,34 @@ export const node = $state<{
 }>({ via: null, info: null, agent: null });
 
 export const history = $state<{ h: History | null }>({ h: null });
+
+// Chart window — a per-browser preference. The controller keeps an hour of
+// history; the agent's own page only the last 10 minutes (LOCAL_POINTS).
+export const SPANS = [
+  { ms: 10 * 60_000, label: '10 мин' },
+  { ms: 60 * 60_000, label: '1 ч' },
+];
+const SPAN_KEY = 'nuxk-chart-span';
+function storedSpan(): number {
+  try {
+    const v = Number(localStorage.getItem(SPAN_KEY));
+    if (SPANS.some((s) => s.ms === v)) return v;
+  } catch {
+    /* storage blocked */
+  }
+  return SPANS[0].ms;
+}
+export const chart = $state({ span: storedSpan() });
+export function setSpan(ms: number) {
+  chart.span = ms;
+  try {
+    localStorage.setItem(SPAN_KEY, String(ms));
+  } catch {
+    /* lasts for this tab */
+  }
+}
+/** The window the charts actually show: an hour only where the history exists. */
+export const chartSpan = () => (node.via === 'controller' ? chart.span : SPANS[0].ms);
 export const logs = $state<{ items: LogEntry[] }>({ items: [] });
 
 const LOG_KEEP = 1000;
@@ -166,7 +194,8 @@ function addSample(m: Metrics) {
   h.load1.push(m.load1);
   const n = h.ts.length;
   for (const name of Object.keys(m.ifaces)) {
-    if (!/^(opkgtun|tun)/.test(name) || !p.ifaces[name]) continue;
+    // engine tunnels (opkgtunN, tun-xray…), not the kernel's IPIP fallback tunl0
+    if (!/^(opkgtun|tun(?!l))/.test(name) || !p.ifaces[name]) continue;
     const t = (h.tunnels[name] ??= { rx_bps: Array(n - 1).fill(0), tx_bps: Array(n - 1).fill(0) });
     t.rx_bps.push(rate(m.ifaces[name].rx, p.ifaces[name].rx) * 8);
     t.tx_bps.push(rate(m.ifaces[name].tx, p.ifaces[name].tx) * 8);

@@ -326,6 +326,14 @@ func TestAgentDownIsReported(t *testing.T) {
 	}
 }
 
+func TestIsTunnel(t *testing.T) {
+	for name, want := range map[string]bool{"opkgtun0": true, "tun-xray": true, "tun0": true, "tunl0": false, "eth3": false, "nwg0": false} {
+		if isTunnel(name) != want {
+			t.Errorf("isTunnel(%q) = %v", name, !want)
+		}
+	}
+}
+
 func TestAgentBase(t *testing.T) {
 	for in, want := range map[string]string{
 		"192.168.2.1":             "http://192.168.2.1:4141",

@@ -25,9 +25,10 @@ type nfqueue struct {
 	Packets uint64 `json:"packets"`
 }
 
-// isTunnel: the interfaces the WARP/VLESS engines create.
+// isTunnel: the interfaces the WARP/VLESS engines create (opkgtunN, tun-xray…)
+// — not the kernel's own IPIP fallback tunl0, which never carries traffic.
 func isTunnel(name string) bool {
-	return strings.HasPrefix(name, "opkgtun") || strings.HasPrefix(name, "tun")
+	return strings.HasPrefix(name, "opkgtun") || (strings.HasPrefix(name, "tun") && !strings.HasPrefix(name, "tunl"))
 }
 
 // point is one sample turned into rates (per second) against the previous one.

@@ -3,7 +3,7 @@
   // over time. Per-connection rows (who, where, which way) come with the
   // conntrack reader in a later version.
   import Chart from '../Chart.svelte';
-  import { history } from '../status.svelte';
+  import { history, chartSpan } from '../status.svelte';
   import { fmtNum, last } from '../ui';
   const h = $derived(history.h);
 </script>
@@ -22,7 +22,7 @@
 </div>
 <section class="card">
   <div class="card-head"><h2>Таблица conntrack</h2></div>
-  <Chart label="Число соединений" ts={h?.ts ?? []} fmt={fmtNum} min={10} series={[{ label: 'соединений', color: 'var(--s1)', data: h?.conntrack ?? [], fill: true }]} />
+  <Chart label="Число соединений" ts={h?.ts ?? []} span={chartSpan()} fmt={fmtNum} min={10} series={[{ label: 'соединений', color: 'var(--s1)', data: h?.conntrack ?? [], fill: true }]} />
 </section>
 <section class="card empty">
   <h2>Список соединений</h2>
