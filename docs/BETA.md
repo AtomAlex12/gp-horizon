@@ -1,4 +1,4 @@
-# nuxk 0.2.0-beta.1 — установка и тест на роутере
+# nuxk 0.2.0-beta.2 — установка и тест на роутере
 
 Бета состоит из трёх частей:
 
@@ -36,7 +36,7 @@
 
 ```sh
 cd ~/nuxk-horizon
-git pull                     # или NUXK_REF=v0.2.0-beta.1 sh deploy/pi/bootstrap.sh
+git pull                     # или NUXK_REF=v0.2.0-beta.2 sh deploy/pi/bootstrap.sh
 sh deploy/pi/bootstrap.sh
 ```
 
