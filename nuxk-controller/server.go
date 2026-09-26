@@ -1,7 +1,6 @@
 package main
 
 import (
-	"crypto/subtle"
 	"encoding/json"
 	"net/http"
 	"net/http/httputil"
@@ -11,35 +10,57 @@ import (
 	"strings"
 )
 
-// NewServer: /api/v1/* is proxied to the agent (browser token checked, agent
-// token swapped in), /ctl/v1/* is the controller's own API, / is the web UI.
-func NewServer(a *Agent, uiToken, webRoot, version string) http.Handler {
-	target, _ := url.Parse(a.URL)
+// NewServer: /api/v1/* is proxied to the agent (the browser's session
+// checked, the agent's token swapped in), /ctl/v1/* is the controller's own
+// API (setup, login, history), / is the web UI.
+func NewServer(a *Agent, st *Store, ses *Sessions, webRoot, version string) http.Handler {
 	proxy := &httputil.ReverseProxy{
 		Rewrite: func(r *httputil.ProxyRequest) {
+			base, tok := a.Ref()
+			target, _ := url.Parse(base)
 			r.SetURL(target)
 			r.Out.Host = target.Host
-			r.Out.Header.Set("Authorization", "Bearer "+a.Token)
+			r.Out.Header.Set("Authorization", "Bearer "+tok)
 			r.Out.Header.Del("Cookie")
+		},
+		ModifyResponse: func(resp *http.Response) error {
+			resp.Header.Del("Set-Cookie") // the agent's cookies are not the controller's
+			return nil
 		},
 		FlushInterval: -1, // SSE (/api/v1/events) passes through unbuffered
 		ErrorHandler: func(w http.ResponseWriter, r *http.Request, err error) {
 			writeErr(w, http.StatusBadGateway, "agent_unreachable", "роутер (nuxk-core) не отвечает: "+err.Error())
 		},
 	}
+	h := handlers{st: st, ses: ses, ag: a, version: version}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /ctl/v1/healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
+	mux.HandleFunc("GET /ctl/v1/setup", h.setupState)
+	mux.HandleFunc("POST /ctl/v1/setup/admin", h.setupAdmin)
+	mux.HandleFunc("POST /ctl/v1/auth/login", h.login)
+	mux.HandleFunc("POST /ctl/v1/auth/logout", h.logout)
+
 	authed := http.NewServeMux()
+	authed.HandleFunc("POST /ctl/v1/setup/agent", h.setupAgent)
 	authed.HandleFunc("GET /ctl/v1/agent", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, a.State(version))
 	})
 	authed.HandleFunc("GET /ctl/v1/history", func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusOK, a.Hist.Series())
+		writeJSON(w, http.StatusOK, a.history().Series())
 	})
-	authed.Handle("/api/v1/", proxy)
-	guard := auth(uiToken, authed)
+	// the agent's own login is for its own page, not through the controller
+	authed.HandleFunc("/api/v1/auth/", http.NotFound)
+	authed.Handle("/api/v1/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if base, _ := a.Ref(); base == "" {
+			writeErr(w, http.StatusServiceUnavailable, "agent_not_configured", "роутер ещё не подключён — пройдите настройку")
+			return
+		}
+		proxy.ServeHTTP(w, r)
+	}))
+	guard := auth(ses, authed)
 	mux.Handle("/ctl/v1/", guard)
 	mux.Handle("/api/v1/", guard)
 	if webRoot != "" {
@@ -48,11 +69,15 @@ func NewServer(a *Agent, uiToken, webRoot, version string) http.Handler {
 	return secure(mux)
 }
 
-func auth(token string, next http.Handler) http.Handler {
+// auth lets in a logged-in browser; its writes only from this very page.
+func auth(ses *Sessions, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		got := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if token == "" || subtle.ConstantTimeCompare([]byte(got), []byte(token)) != 1 {
-			writeErr(w, http.StatusUnauthorized, "unauthorized", "missing or invalid bearer token")
+		if !ses.fromRequest(r) {
+			writeErr(w, http.StatusUnauthorized, "unauthorized", "login required")
+			return
+		}
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && !sameOrigin(r) {
+			writeErr(w, http.StatusForbidden, "cross_origin", "request from another site")
 			return
 		}
 		next.ServeHTTP(w, r)

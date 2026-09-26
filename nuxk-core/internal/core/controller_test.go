@@ -2,6 +2,8 @@ package core
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -16,6 +18,9 @@ type fakeEngine struct {
 	mu       sync.Mutex
 	running  bool
 	endpoint string
+	health   engine.Health
+	probe    *engine.Probe
+	pid      int
 	startErr error
 	calls    []string
 	routings []engine.Routing
@@ -27,9 +32,16 @@ func (f *fakeEngine) Kind() engine.Kind { return f.kind }
 func (f *fakeEngine) Info(context.Context) (engine.Info, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return engine.Info{Kind: f.kind, Running: f.running, Endpoint: f.endpoint}, nil
+	return engine.Info{Kind: f.kind, Running: f.running, Endpoint: f.endpoint, Health: f.health, PID: f.pid}, nil
 }
-func (f *fakeEngine) Probe(context.Context) (engine.Probe, error) { return engine.Probe{OK: true}, nil }
+func (f *fakeEngine) Probe(context.Context) (engine.Probe, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.probe == nil {
+		return engine.Probe{OK: true}, nil
+	}
+	return *f.probe, nil
+}
 func (f *fakeEngine) Start(context.Context) error {
 	f.log("start")
 	f.mu.Lock()
@@ -265,5 +277,55 @@ func TestEndpointIP(t *testing.T) {
 		if got := endpointIP(in); got != want {
 			t.Errorf("endpointIP(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// A running engine whose probe fails is degraded, not "ok"; a probe of an
+// earlier run doesn't count against the current one.
+func TestFailingProbeDegradesHealth(t *testing.T) {
+	n := &fakeEngine{kind: engine.KindNfqws2, running: true, health: engine.HealthOK,
+		probe: &engine.Probe{OK: false, Reason: "timeout_or_reset"}}
+	c, _ := newTestController(t, n)
+	ctx := context.Background()
+	c.tick(ctx, true)
+	if h := c.Hub.Get().Engines[0].Health; h != engine.HealthDegraded {
+		t.Fatalf("health with a failing probe = %s, want degraded", h)
+	}
+	n.mu.Lock()
+	n.probe = nil
+	n.mu.Unlock()
+	c.tick(ctx, true)
+	if h := c.Hub.Get().Engines[0].Health; h != engine.HealthOK {
+		t.Errorf("health after a good probe = %s, want ok", h)
+	}
+
+	now := time.Unix(1_700_000_000, 0)
+	old := EngineState{Info: engine.Info{Running: true, UptimeSec: 60}, Probe: &engine.Probe{OK: false}, ProbeAt: now.Unix() - 120}
+	if probeFailing(old, now) {
+		t.Error("a failed probe from before this run must not degrade it")
+	}
+	old.ProbeAt = now.Unix() - 30
+	if !probeFailing(old, now) {
+		t.Error("a failed probe of this run degrades it")
+	}
+}
+
+func TestUptimeFromProc(t *testing.T) {
+	root := t.TempDir()
+	defer func(p string) { engine.ProcRoot = p }(engine.ProcRoot)
+	engine.ProcRoot = root
+	os.MkdirAll(filepath.Join(root, "974"), 0o755)
+	// started 1000 s after boot (100000 ticks); the box is up 4600 s
+	os.WriteFile(filepath.Join(root, "974", "stat"), []byte("974 (nfqws2 x) S 1 974 974 0 -1 4194560 1 0 0 0 5 3 0 0 20 0 1 0 100000 1 1 18446744073709551615 0"), 0o644)
+	os.WriteFile(filepath.Join(root, "uptime"), []byte("4600.52 9000.00"), 0o644)
+
+	n := &fakeEngine{kind: engine.KindNfqws2, running: true, pid: 974}
+	c, _ := newTestController(t, n)
+	c.tick(context.Background(), false)
+	if up := c.Hub.Get().Engines[0].UptimeSec; up != 3600 {
+		t.Errorf("uptime = %d, want 3600", up)
+	}
+	if engine.ProcUptime(12345) != 0 {
+		t.Error("no such pid → 0")
 	}
 }

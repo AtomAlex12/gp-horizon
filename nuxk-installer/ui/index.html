@@ -215,15 +215,14 @@ td.sel { width: 28px; }
 
   function renderDone(ev) {
     const d = $('done');
+    const ctlURL = `${location.protocol}//${location.hostname}:4200/`; // the controller runs next to this installer
     if (ev && ev.ok) {
       d.className = 'card done';
       d.innerHTML = `<h2>Готово: nuxk работает на роутере</h2>
-        <dl class="kv"><dt>Панель</dt><dd><a href="${esc(ev.url)}" target="_blank" rel="noopener">${esc(ev.url)}</a></dd>
-        <dt>API-токен</dt><dd><span class="mono" id="tok">${esc(ev.token)}</span> <button class="ghost chip" id="copy">Копировать</button></dd></dl>
-        <p class="hint">Токен спросит панель при первом входе. Он же лежит в /opt/etc/nuxk/nuxk.conf (API_TOKEN). Храните его как пароль.</p>`;
-      $('copy').onclick = () => navigator.clipboard.writeText(ev.token).then(() => { $('copy').textContent = 'Скопировано'; }, () => {
-        const r = document.createRange(); r.selectNodeContents($('tok')); const s = getSelection(); s.removeAllRanges(); s.addRange(r);
-      });
+        <dl class="kv"><dt>Панель роутера</dt><dd><a href="${esc(ev.url)}" target="_blank" rel="noopener">${esc(ev.url)}</a></dd>
+        <dt>Вход</dt><dd>логин <span class="mono">root</span> и пароль Entware — те же, что для SSH</dd>
+        <dt>Контроллер на Pi</dt><dd><a href="${esc(ctlURL)}" target="_blank" rel="noopener">${esc(ctlURL)}</a></dd></dl>
+        <p class="hint">Полная панель с историей графиков — на контроллере: при первом входе он попросит задать пароль администратора и сам подключит роутер по логину и паролю root.</p>`;
     } else {
       d.className = 'card done bad';
       d.innerHTML = `<h2>Установка остановилась</h2><p class="err" style="margin:0">${esc((ev && ev.text) || 'Соединение прервалось — проверьте роутер заново: сделанные шаги останутся, повтор установит только недостающее.')}</p>`;

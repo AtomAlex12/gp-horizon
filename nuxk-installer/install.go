@@ -49,9 +49,8 @@ type Event struct {
 	Kind string `json:"kind"` // step | out | ok | fail | info | done
 	Text string `json:"text"`
 	// done only:
-	OK    bool   `json:"ok,omitempty"`
-	URL   string `json:"url,omitempty"`
-	Token string `json:"token,omitempty"`
+	OK  bool   `json:"ok,omitempty"`
+	URL string `json:"url,omitempty"`
 }
 
 // Result of a finished install.
@@ -255,7 +254,9 @@ func stepConfig(c *Conn, r Report, version string, emit func(Event)) error {
 # LAN address only: reachable from the home network, never bound on WAN.
 LISTEN="%s"
 
-# Bearer token for the web UI and API from the LAN. Keep it secret.
+# Bearer token for programs: nuxk-controller on the Pi gets it by pairing
+# with the root password. People log in to the web UI as root (Entware's
+# password, the same as for SSH) — no need to copy this anywhere.
 API_TOKEN="%s"
 
 STATE_DIR="/opt/etc/nuxk"

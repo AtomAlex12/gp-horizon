@@ -1,21 +1,21 @@
 // Command nuxk-controller runs on the Pi: the full web UI, metric history and
 // (later) strategy selection for one nuxk-core agent on the router. It talks
 // to the agent only over the agent's API contract (nuxk-core/api/openapi.yaml)
-// with the agent's token; browsers talk to the controller with its own token.
+// with the agent's token; browsers log in to the controller as "admin".
 //
-//	AGENT_URL        http://192.168.1.1:4141   (required)
-//	AGENT_TOKEN      the router's API_TOKEN     (required)
-//	CONTROLLER_TOKEN login token for the UI; empty = generated once, saved
-//	                 in DATA_DIR/ui-token and printed to the log
-//	LISTEN           :4200
-//	WEB_ROOT         full nuxk-web build
-//	DATA_DIR         /var/lib/nuxk-controller
+// A fresh controller opens a setup wizard: 1) the admin password, 2) the
+// router — its address and root login/password, traded once for the agent's
+// API token (POST /api/v1/auth/pair). Both land in DATA_DIR/controller.json.
+//
+//	LISTEN       :4200
+//	WEB_ROOT     full nuxk-web build
+//	DATA_DIR     /var/lib/nuxk-controller
+//	AGENT_URL    optional: the router's agent, with AGENT_TOKEN (its API_TOKEN)
+//	AGENT_TOKEN  — skips wizard step 2 when nothing is stored yet
 package main
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base32"
 	"errors"
 	"flag"
 	"fmt"
@@ -23,7 +23,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -50,31 +49,44 @@ func main() {
 	}
 	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
 
-	agentURL, agentTok := env("AGENT_URL", ""), env("AGENT_TOKEN", "")
-	if agentURL == "" || agentTok == "" {
-		slog.Error("AGENT_URL and AGENT_TOKEN are required (the router's address and its API_TOKEN from /opt/etc/nuxk/nuxk.conf)")
+	st, err := OpenStore(env("DATA_DIR", "/var/lib/nuxk-controller"))
+	if err != nil {
+		slog.Error("settings", "err", err)
 		os.Exit(1)
 	}
-	dataDir := env("DATA_DIR", "/var/lib/nuxk-controller")
-	uiTok, err := uiToken(env("CONTROLLER_TOKEN", ""), dataDir)
-	if err != nil {
-		slog.Error("ui token", "err", err)
-		os.Exit(1)
+	if env("CONTROLLER_TOKEN", "") != "" {
+		slog.Warn("CONTROLLER_TOKEN is no longer used: the web UI asks for the admin login")
+	}
+	// an older deployment configured the router by env: keep it connected
+	if u, t := env("AGENT_URL", ""), env("AGENT_TOKEN", ""); u != "" && t != "" && st.Agent() == nil {
+		if base, err := agentBase(u); err == nil {
+			if err := st.SetAgent(AgentRef{URL: base, Token: t}); err != nil {
+				slog.Error("settings", "err", err)
+				os.Exit(1)
+			}
+			slog.Info("router taken from AGENT_URL / AGENT_TOKEN", "agent", base)
+		}
+	}
+	ag := NewAgent("", "")
+	if ref := st.Agent(); ref != nil {
+		ag.Configure(ref.URL, ref.Token)
+	}
+	if !st.HasAdmin() {
+		slog.Info("first start: open the web UI to set the admin password and connect the router")
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-
-	ag := NewAgent(agentURL, agentTok)
 	go ag.Run(ctx, 5*time.Second)
 
 	srv := &http.Server{
 		Addr:              env("LISTEN", ":4200"),
-		Handler:           NewServer(ag, uiTok, env("WEB_ROOT", ""), version),
+		Handler:           NewServer(ag, st, NewSessions(), env("WEB_ROOT", ""), version),
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		// no WriteTimeout: /api/v1/events is a long-lived stream
 	}
+	agentURL, _ := ag.Ref()
 	slog.Info("nuxk-controller", "version", version, "listen", srv.Addr, "agent", agentURL)
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -86,28 +98,4 @@ func main() {
 	sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	srv.Shutdown(sctx)
-}
-
-// uiToken returns the configured token, or a generated one kept in dataDir.
-func uiToken(cfg, dataDir string) (string, error) {
-	if cfg != "" {
-		return cfg, nil
-	}
-	p := filepath.Join(dataDir, "ui-token")
-	if b, err := os.ReadFile(p); err == nil && len(strings.TrimSpace(string(b))) >= 16 {
-		return strings.TrimSpace(string(b)), nil
-	}
-	buf := make([]byte, 16)
-	if _, err := rand.Read(buf); err != nil {
-		return "", err
-	}
-	tok := strings.ToLower(base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(buf))
-	if err := os.MkdirAll(dataDir, 0o700); err != nil {
-		return "", err
-	}
-	if err := os.WriteFile(p, []byte(tok+"\n"), 0o600); err != nil {
-		return "", err
-	}
-	slog.Info("generated a UI token (saved in "+p+"); log in to the web UI with it", "token", tok)
-	return tok, nil
 }

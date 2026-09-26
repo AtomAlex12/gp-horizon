@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"nuxk.dev/horizon/core/internal/api"
+	"nuxk.dev/horizon/core/internal/auth"
 	"nuxk.dev/horizon/core/internal/config"
 	"nuxk.dev/horizon/core/internal/core"
 	"nuxk.dev/horizon/core/internal/engine"
@@ -158,11 +159,16 @@ func main() {
 	}
 	go ctl.Run(ctx)
 
+	var guard *auth.Guard
+	if cfg.AuthUser != "" {
+		guard = auth.New(cfg.AuthUser, cfg.AuthFiles...)
+	}
+
 	srv := &http.Server{
 		Addr: cfg.Listen,
 		Handler: api.NewRouter(api.Deps{
 			Version: version, Commit: commit, Engines: reg, Hub: hub, Ctl: ctl, Plane: pm,
-			WebRoot: cfg.WebRoot, Token: cfg.APIToken, Logs: logs,
+			WebRoot: cfg.WebRoot, Token: cfg.APIToken, Auth: guard, Logs: logs,
 			Node: node.New(cfg.NodeRole, cfg.Plane.RCI, version, commit),
 		}),
 		ReadHeaderTimeout: 5 * time.Second,

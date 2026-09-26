@@ -59,7 +59,9 @@ type Info struct {
 	Detail    map[string]string `json:"detail,omitempty"`
 }
 
-// Health is a coarse rollup independent of the last active Probe.
+// Health is a coarse rollup. An adapter reports it from the engine's own
+// state; the controller then marks a running engine degraded while its last
+// active Probe fails (core.probeFailing).
 type Health string
 
 const (

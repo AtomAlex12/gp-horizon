@@ -9,6 +9,7 @@ import {
   type LogEntry,
   type Metrics,
   type NodeInfo,
+  type SetupState,
   type Status,
 } from './api';
 
@@ -16,9 +17,19 @@ export const status = $state<{
   data: Status | null;
   error: string | null;
   loading: boolean;
-  needToken: boolean; // 401 — show the token form
+  needLogin: boolean; // 401 — show the login form
   live: boolean; // the SSE stream is up (otherwise polling)
-}>({ data: null, error: null, loading: true, needToken: false, live: false });
+}>({ data: null, error: null, loading: true, needLogin: false, live: false });
+
+// The controller's setup wizard: which step is open (null = the console).
+// "done" stays on screen after the router is connected until the person
+// opens the console; reconnect = opened from «Система» to change the router.
+export const setup = $state<{
+  state: SetupState | null;
+  step: 'admin' | 'agent' | 'done' | null;
+  reconnect: boolean;
+  agent: AgentState | null; // the router just connected (step "done")
+}>({ state: null, step: null, reconnect: false, agent: null });
 
 export const node = $state<{
   via: 'agent' | 'controller' | null; // who serves this UI
@@ -37,7 +48,7 @@ let abort: AbortController | null = null;
 let timers: ReturnType<typeof setTimeout>[] = [];
 
 function fail(e: unknown) {
-  status.needToken = e instanceof HttpError && e.status === 401;
+  status.needLogin = e instanceof HttpError && e.status === 401;
   status.error = e instanceof Error ? e.message : String(e);
 }
 
@@ -45,7 +56,7 @@ export async function refresh() {
   try {
     status.data = await api.status();
     status.error = null;
-    status.needToken = false;
+    status.needLogin = false;
   } catch (e) {
     fail(e);
   }
@@ -60,23 +71,41 @@ function addLogs(items: LogEntry[]) {
   logs.items = all.length > LOG_KEEP ? all.slice(all.length - LOG_KEEP) : all;
 }
 
-async function detect() {
-  try {
-    node.agent = await api.agent();
+/**
+ * Who serves this UI, and may the console open yet: "ok", or "gate" when the
+ * login form or a setup step must come first.
+ */
+async function detect(): Promise<'ok' | 'gate'> {
+  status.needLogin = false;
+  const s = await api.setup().catch(() => null);
+  if (s) {
     node.via = 'controller';
+    setup.state = s;
+    if (!s.admin) {
+      setup.step = 'admin';
+      return 'gate';
+    }
+    if (!s.logged_in) {
+      status.needLogin = true;
+      return 'gate';
+    }
+    if (!s.agent) {
+      setup.step = 'agent';
+      return 'gate';
+    }
+    node.agent = await api.agent();
     node.info = node.agent.info ?? null;
+    return 'ok';
+  }
+  node.via = 'agent';
+  node.agent = null;
+  try {
+    node.info = await api.info();
   } catch (e) {
     if (e instanceof HttpError && e.status === 401) throw e;
-    node.via = 'agent';
-    node.agent = null;
+    /* older agent: no /info */
   }
-  if (node.via === 'agent' || !node.info) {
-    try {
-      node.info = await api.info();
-    } catch {
-      /* older agent: no /info */
-    }
-  }
+  return 'ok';
 }
 
 // --- SSE with a polling fallback -------------------------------------------
@@ -182,9 +211,13 @@ export async function startPolling() {
   if (started) return;
   started = true;
   try {
-    await detect();
+    if ((await detect()) === 'gate' || setup.step) {
+      started = false;
+      status.loading = false;
+      return;
+    }
     await refresh();
-    if (status.needToken) {
+    if (status.needLogin) {
       started = false;
       status.loading = false;
       return;
@@ -202,7 +235,7 @@ export async function startPolling() {
   timers.push(setTimeout(infoTick, 60000));
 }
 
-/** After the token was entered (or cleared). */
+/** After a login, a logout or a setup step: start over from detect(). */
 export function pollNow() {
   abort?.abort();
   timers.forEach(clearTimeout);

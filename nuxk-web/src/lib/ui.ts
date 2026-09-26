@@ -61,12 +61,22 @@ export function healthChip(e: Pick<EngineState, 'health'> | undefined): string {
   return e.health === 'ok' ? 'ok' : e.health === 'down' ? 'warn' : 'deg';
 }
 
+// as in the approved design: what the engine is doing, not a verdict — a
+// running engine whose probe fails is "частично" (the agent reports degraded)
 export const HEALTH_LABEL: Record<string, string> = {
-  ok: 'в порядке',
+  ok: 'работает',
   degraded: 'частично',
-  down: 'не работает',
-  unknown: 'неизвестно',
+  down: 'остановлен',
+  unknown: '—',
 };
+
+/** The probe line under an engine: "проба ok · 9 мс" / "проба: timeout_or_reset". */
+export function probeText(e: Pick<EngineState, 'probe'>): string {
+  const p = e.probe;
+  if (!p) return 'проба не запускалась';
+  if (p.ok) return `проба ok${p.rtt_ms ? ` · ${Math.round(p.rtt_ms)} мс` : ''}`;
+  return `проба не прошла: ${p.reason ?? 'нет ответа'}`;
+}
 
 export function fmtDur(s: number): string {
   s = Math.max(0, Math.floor(s || 0));
@@ -76,6 +86,14 @@ export function fmtDur(s: number): string {
   if (h) return `${h}ч ${m}м`;
   if (m) return `${m}м ${s % 60}с`;
   return `${s}с`;
+}
+
+/** "3 записи похожи": n with the Russian plural form for 1 / 2–4 / 5+. */
+export function plural(n: number, one: string, few: string, many: string): string {
+  const d = n % 10,
+    h = n % 100;
+  const w = d === 1 && h !== 11 ? one : d >= 2 && d <= 4 && (h < 12 || h > 14) ? few : many;
+  return `${n} ${w}`;
 }
 
 export function ago(unix?: number): string {

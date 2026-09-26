@@ -8,11 +8,14 @@ info:
     stand) and its clients: the lite web UI served by the agent itself and
     nuxk-controller on the Pi.
 
-    Single-tenant. Every path except /healthz needs `Authorization: Bearer
-    <API_TOKEN>` (`/opt/etc/nuxk/nuxk.conf`); a loopback caller is let in
-    without a token only when no token is configured. Responses are the
-    resource itself; errors are `{"error":{"code","message"}}` plus the HTTP
-    status. Request bodies are capped at 4 MiB.
+    Single-tenant. Every path except /healthz and /auth/* needs either
+    `Authorization: Bearer <API_TOKEN>` (`/opt/etc/nuxk/nuxk.conf`; programs —
+    the controller) or the `nuxk_agent` session cookie from POST /auth/login
+    (a browser: the box's root login and password, as for SSH). A session's
+    writes must come from the agent's own page (Origin is checked). A loopback
+    caller is let in without either only when no token is configured.
+    Responses are the resource itself; errors are `{"error":{"code","message"}}`
+    plus the HTTP status. Request bodies are capped at 4 MiB.
 
     This file is checked against the agent's route table in CI
     (TestOpenAPIMatchesRoutes): an endpoint exists here if and only if the
@@ -25,8 +28,10 @@ servers:
 
 security:
   - bearer: []
+  - session: []
 
 tags:
+  - { name: auth, description: "browser login with the box's root account; pairing a controller" }
   - { name: agent, description: the box itself — liveness, identity, counters, log, live events }
   - { name: engines, description: nfqws2 / usque / xray }
   - { name: plane, description: "routing plane: the DPI / WARP / VLESS lists" }
@@ -47,6 +52,67 @@ paths:
                 type: object
                 required: [status]
                 properties: { status: { type: string, const: ok } }
+
+  /api/v1/auth/login:
+    post:
+      tags: [auth]
+      operationId: login
+      summary: Log a browser in with the box's root account
+      description: >
+        Checks the password against Entware's /opt/etc/shadow (AUTH_USER /
+        AUTH_FILES in nuxk.conf) and sets the `nuxk_agent` session cookie
+        (HttpOnly, SameSite=Strict; forgotten after 12 h unused or a restart
+        of nuxk-core). After 5 failures from one address the next attempts
+        wait, doubling up to 15 min.
+      security: []
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/Credentials" } } }
+      responses:
+        "200":
+          description: logged in; Set-Cookie carries the session
+          content: { application/json: { schema: { $ref: "#/components/schemas/SessionInfo" } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "403": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
+
+  /api/v1/auth/logout:
+    post:
+      tags: [auth]
+      operationId: logout
+      summary: End the browser session
+      security: []
+      responses:
+        "200":
+          description: the session is gone, the cookie cleared
+          content: { application/json: { schema: { $ref: "#/components/schemas/Ok" } } }
+
+  /api/v1/auth/pair:
+    post:
+      tags: [auth]
+      operationId: pair
+      summary: Hand the API token to a controller that knows the root password
+      description: >
+        nuxk-controller's setup calls this once with the root login and
+        password the person typed; it keeps the token, never the password.
+        Same lockout as /auth/login.
+      security: []
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/Credentials" } } }
+      responses:
+        "200":
+          description: the agent's API_TOKEN
+          content: { application/json: { schema: { $ref: "#/components/schemas/PairInfo" } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "429": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
 
   /api/v1/version:
     get:
@@ -250,6 +316,7 @@ paths:
 components:
   securitySchemes:
     bearer: { type: http, scheme: bearer }
+    session: { type: apiKey, in: cookie, name: nuxk_agent }
 
   parameters:
     kind:
@@ -281,6 +348,25 @@ components:
           properties:
             code: { type: string }
             message: { type: string }
+
+    Credentials:
+      type: object
+      required: [user, password]
+      properties:
+        user: { type: string, description: "root (AUTH_USER)" }
+        password: { type: string, format: password }
+
+    SessionInfo:
+      type: object
+      required: [user]
+      properties:
+        user: { type: string }
+
+    PairInfo:
+      type: object
+      required: [token]
+      properties:
+        token: { type: string, description: the agent's API_TOKEN }
 
     Version:
       type: object

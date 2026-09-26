@@ -138,7 +138,7 @@ func (s *Server) handleInstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	log.Printf("install done: %s", res.URL)
-	emit(Event{Kind: "done", OK: true, URL: res.URL, Token: res.Token, Text: "nuxk установлен"})
+	emit(Event{Kind: "done", OK: true, URL: res.URL, Text: "nuxk установлен"})
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {

@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { status, node, startPolling, pollNow } from './lib/status.svelte';
-  import { setToken, type EngineKind } from './lib/api';
+  import { status, node, setup, startPolling } from './lib/status.svelte';
+  import type { EngineKind } from './lib/api';
   import Icon from './lib/Icon.svelte';
   import Dashboard from './lib/views/Dashboard.svelte';
   import Connections from './lib/views/Connections.svelte';
@@ -9,6 +9,8 @@
   import Logs from './lib/views/Logs.svelte';
   import System from './lib/views/System.svelte';
   import Soon from './lib/views/Soon.svelte';
+  import Login from './lib/views/Login.svelte';
+  import Setup from './lib/views/Setup.svelte';
   import { planeOf, healthDot, roleLabel, last } from './lib/ui';
   import { history as hist } from './lib/status.svelte';
 
@@ -98,27 +100,49 @@
     node.info?.role === 'router' && node.info.firmware ? `KeeneticOS ${node.info.firmware}` : node.info?.hostname ?? location.host,
   );
 
-  let tokenInput = $state('');
-  function login(e: SubmitEvent) {
-    e.preventDefault();
-    setToken(tokenInput);
-    tokenInput = '';
-    pollNow();
-  }
+  // before the console: the first connect, the login form, the setup wizard
+  const booting = $derived(status.loading && !status.data && !setup.step);
+  const gated = $derived(booting || !!setup.step || (status.needLogin && !status.loading));
 </script>
 
+{#snippet brandMark()}
+  <svg class="brand-mark" viewBox="0 0 28 28" aria-hidden="true"
+    ><circle cx="14" cy="14" r="12.5" fill="none" stroke="var(--accent)" stroke-width="2" /><path
+      d="M3 17c4-3 8-3 11 0s7 3 11 0"
+      fill="none"
+      stroke="var(--accent)"
+      stroke-width="2"
+    /><circle cx="14" cy="10" r="3" fill="var(--accent)" /></svg
+  >
+{/snippet}
+
+{#if gated}
+  <div class="gate">
+    <header class="gate-top">
+      <div class="brand">
+        {@render brandMark()}
+        <div>
+          <b>nuxk Horizon</b><small>{node.via === 'controller' ? 'контроллер на Pi' : location.host}</small>
+        </div>
+      </div>
+      <button class="ghost sm" onclick={toggleTheme} aria-label="Сменить тему"><Icon name={theme === 'dark' ? 'sun' : 'moon'} size={15} /></button>
+    </header>
+    <main class="gate-main">
+      {#if setup.step}
+        <Setup />
+      {:else if booting}
+        <p class="muted">Подключение…</p>
+      {:else}
+        <Login />
+      {/if}
+    </main>
+  </div>
+{:else}
 <div class="app">
   {#if menuOpen}<button class="scrim" aria-label="Закрыть меню" onclick={() => (menuOpen = false)}></button>{/if}
   <aside class="side" class:open={menuOpen} aria-label="Разделы">
     <div class="brand">
-      <svg class="brand-mark" viewBox="0 0 28 28" aria-hidden="true"
-        ><circle cx="14" cy="14" r="12.5" fill="none" stroke="var(--accent)" stroke-width="2" /><path
-          d="M3 17c4-3 8-3 11 0s7 3 11 0"
-          fill="none"
-          stroke="var(--accent)"
-          stroke-width="2"
-        /><circle cx="14" cy="10" r="3" fill="var(--accent)" /></svg
-      >
+      {@render brandMark()}
       <div><b>nuxk Horizon</b><small>{roleLabel(node.info)} · {where}</small></div>
     </div>
     {#each NAV as g (g.title)}
@@ -161,18 +185,8 @@
     </header>
 
     <main class="content">
-      {#if status.loading}
-        <p class="muted">Подключение к nuxk-core…</p>
-      {:else if status.needToken}
-        <form class="card login" onsubmit={login}>
-          <h2>Вход в nuxk</h2>
-          <p class="hint">
-            Введите API-токен. Его показал установщик; он же лежит в <span class="mono">/opt/etc/nuxk/nuxk.conf</span>
-            (строка <span class="mono">API_TOKEN</span>).
-          </p>
-          <input type="password" id="api-token" bind:value={tokenInput} autocomplete="current-password" placeholder="токен" />
-          <button type="submit" disabled={!tokenInput.trim()}>Войти</button>
-        </form>
+      {#if status.loading && !status.data}
+        <p class="muted">Подключение…</p>
       {:else if status.error && !status.data}
         <p class="err-text">nuxk-core недоступен: {status.error}</p>
       {:else}
@@ -196,6 +210,7 @@
     </main>
   </div>
 </div>
+{/if}
 
 <style>
   .app {
@@ -315,14 +330,36 @@
     max-width: 1240px;
     width: 100%;
   }
-  .login {
+  .gate {
+    min-height: 100%;
     display: flex;
     flex-direction: column;
-    gap: 10px;
+  }
+  .gate-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 24px;
+    border-bottom: 1px solid var(--line);
+    background: var(--surface);
+  }
+  .gate-top .brand {
+    padding: 0;
+  }
+  .gate-main {
+    flex: 1;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    padding: 48px 16px;
+  }
+  .gate-main :global(.gate-card) {
+    width: 100%;
     max-width: 420px;
   }
-  .login h2 {
+  .gate-main :global(.gate-card h2) {
     font-size: 16px;
+    margin-bottom: 4px;
   }
   .linkbtn {
     display: inline;
@@ -372,11 +409,27 @@
       padding: 10px 16px;
       gap: 8px;
     }
+    .top h1 {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .top .spacer {
+      display: none;
+    }
     .ver {
       display: none;
     }
     .content {
       padding: 16px 16px 32px;
+    }
+    .gate-top {
+      padding: 10px 16px;
+    }
+    .gate-main {
+      padding: 24px 16px;
     }
   }
   @media (prefers-reduced-motion: reduce) {

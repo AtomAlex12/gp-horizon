@@ -17,7 +17,10 @@
     healthDot,
     last,
     planeOf,
+    plural,
+    probeText,
   } from '../ui';
+  import { findGlued } from '../domains';
 
   let { go }: { go: (tab: string) => void } = $props();
 
@@ -87,6 +90,16 @@
       for (const w of plane.warnings ?? []) out.push({ sev: 'deg', text: w, tab: 'lists' });
       const c = (plane.conflicts ?? []).length;
       if (c) out.push({ sev: 'deg', text: `Доменов ещё в ваших старых списках Keenetic: ${c} — nuxk ждёт, пока вы их оттуда уберёте`, tab: 'lists' });
+      const known = [...(plane.lists ?? []).flatMap((l) => l.domains), ...(plane.foreign ?? []).flatMap((f) => f.domains)];
+      for (const l of plane.lists ?? []) {
+        const n = findGlued(l.domains, known).length;
+        if (n)
+          out.push({
+            sev: 'deg',
+            text: `В списке «${l.name}» ${plural(n, 'запись похожа', 'записи похожи', 'записей похожи')} на два склеенных домена — их стоит разделить`,
+            tab: 'lists',
+          });
+      }
       const p = (plane.pending ?? []).length;
       if (p && !plane.apply) out.push({ sev: 'deg', text: `Режим плана: изменений на роутере — ${p}, применятся при PLANE_APPLY=1`, tab: 'lists' });
     }
@@ -162,8 +175,8 @@
         <div class="muted small">
           {#if !e}движок не установлен или выключен в nuxk.conf
           {:else}
-            {e.running ? `аптайм ${fmtDur(e.uptime_sec)}` : e.want_run ? 'перезапуск с паузой' : 'остановлен'}<br />
-            {e.probe ? (e.probe.ok ? `проба ok${e.probe.rtt_ms ? ` · ${Math.round(e.probe.rtt_ms)} мс` : ''}` : `проба: ${e.probe.reason ?? 'нет ответа'}`) : 'проба не запускалась'}
+            {e.running ? `аптайм ${e.uptime_sec ? fmtDur(e.uptime_sec) : '—'}` : e.want_run ? 'перезапуск с паузой' : 'остановлен'}<br />
+            <span class:bad={e.probe && !e.probe.ok}>{probeText(e)}</span>
           {/if}
         </div>
         <Sparkline data={spark(k)} color={COLORS[k]} label={sparkLabel(k)} />
@@ -203,6 +216,9 @@
 </div>
 
 <style>
+  .bad {
+    color: var(--warn);
+  }
   .link {
     text-align: left;
     color: inherit;

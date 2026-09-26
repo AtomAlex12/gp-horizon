@@ -5,7 +5,10 @@
 // The same UI runs in two places:
 //   - served by nuxk-core on the router  → talks to the agent directly;
 //   - served by nuxk-controller on the Pi → the controller proxies /api/v1/*
-//     to the router's agent and adds /ctl/v1/* (history, agent state).
+//     to the router's agent and adds /ctl/v1/* (setup, login, history).
+//
+// A browser logs in with a password and gets an HttpOnly session cookie
+// (the router: root from Entware; the controller: admin) — no token in JS.
 import type { components } from './schema';
 
 type S = components['schemas'];
@@ -35,6 +38,13 @@ export interface AgentState {
   info?: NodeInfo;
   controller_version: string;
 }
+/** GET /ctl/v1/setup — which step of the controller's setup to show. */
+export interface SetupState {
+  admin: boolean;
+  agent: boolean;
+  logged_in: boolean;
+  agent_url?: string;
+}
 export interface History {
   wan: string;
   ts: number[];
@@ -47,28 +57,9 @@ export interface History {
 }
 
 const BASE = import.meta.env.VITE_API_BASE ?? '';
-const TOKEN_KEY = 'nuxk-api-token';
-
-// A token baked in at build time (dev/proto images) wins; otherwise the one the
-// user typed into the login form — it lives in this browser only.
-function storedToken(): string {
-  try {
-    return localStorage.getItem(TOKEN_KEY) ?? '';
-  } catch {
-    return '';
-  }
-}
-let TOKEN = import.meta.env.VITE_API_TOKEN || storedToken();
-
-export function setToken(t: string) {
-  TOKEN = t.trim();
-  try {
-    if (TOKEN) localStorage.setItem(TOKEN_KEY, TOKEN);
-    else localStorage.removeItem(TOKEN_KEY);
-  } catch {
-    /* private mode: the token lasts for this tab only */
-  }
-}
+// Dev/stand builds may bake a bearer token in (VITE_API_TOKEN); a real
+// install logs in with a password instead.
+const TOKEN = import.meta.env.VITE_API_TOKEN ?? '';
 
 export class HttpError extends Error {
   constructor(
@@ -129,6 +120,15 @@ export const api = {
   // controller only (404 when the UI is served by the agent itself)
   agent: () => req<AgentState>('GET', '/ctl/v1/agent'),
   history: () => req<History>('GET', '/ctl/v1/history'),
+  // null on the agent: its web server answers /ctl/* with the page itself
+  setup: () => req<SetupState | null>('GET', '/ctl/v1/setup').then((s) => (s && typeof s === 'object' && 'admin' in s ? s : null)),
+  setupAdmin: (password: string) => req<{ user: string }>('POST', '/ctl/v1/setup/admin', { password }),
+  setupAgent: (url: string, user: string, password: string) =>
+    req<AgentState>('POST', '/ctl/v1/setup/agent', { url, user, password }),
+
+  login: (via: 'agent' | 'controller', user: string, password: string) =>
+    req<{ user: string }>('POST', via === 'controller' ? '/ctl/v1/auth/login' : v1('/auth/login'), { user, password }),
+  logout: (via: 'agent' | 'controller') => req<S['Ok']>('POST', via === 'controller' ? '/ctl/v1/auth/logout' : v1('/auth/logout')),
 };
 
 /**

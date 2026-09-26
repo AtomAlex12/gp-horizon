@@ -4,7 +4,8 @@
   // the nfqws2 hostlist) is shown as the plane reports it.
   import { api, type ListMode, type OnDown, type PlaneDesired, type PlaneList } from '../api';
   import { status, refresh } from '../status.svelte';
-  import { MODES, planeOf, splitDomains, ago, OP_LABEL, modeTitle, healthDot } from '../ui';
+  import { MODES, planeOf, splitDomains, ago, OP_LABEL, modeTitle, healthDot, plural } from '../ui';
+  import { findGlued, type Glued } from '../domains';
 
   const plane = $derived(planeOf(status.data));
   const engines = $derived(new Map((status.data?.engines ?? []).map((e) => [e.kind, e])));
@@ -98,6 +99,22 @@
   const conflicts = $derived(plane?.conflicts ?? []);
   const pending = $derived(plane?.pending ?? []);
   const imported = (g: string) => drafts.some((d) => d.source === `imported:${g}`);
+
+  // every domain the person has — the evidence findGlued checks a cut against
+  const known = $derived([
+    ...drafts.flatMap((d) => splitDomains(d.text)),
+    ...(plane?.foreign ?? []).flatMap((f) => f.domains),
+  ]);
+
+  /** Put each glued entry back as the separate lines it was. */
+  function unglue(d: Draft, glued: Glued[]) {
+    const parts = new Map(glued.map((g) => [g.domain, g.parts]));
+    d.text = splitDomains(d.text)
+      .flatMap((x) => parts.get(x) ?? [x])
+      .filter((x, i, a) => a.indexOf(x) === i)
+      .join('\n');
+    dirty = true;
+  }
 </script>
 
 {#if !status.data}
@@ -171,6 +188,7 @@
 
         {#each drafts as d, i (d.id)}
           {#if d.mode === m.mode}
+            {@const glued = findGlued(splitDomains(d.text), known)}
             <div class="list">
               <div class="row">
                 <input type="text" bind:value={d.name} oninput={() => (dirty = true)} aria-label="Название списка" />
@@ -183,6 +201,18 @@
                 oninput={() => (dirty = true)}
                 placeholder={m.mode === 'desync' ? 'youtube.com\ndiscord.com' : m.mode === 'warp' ? 'chatgpt.com\nopenai.com' : 'instagram.com'}
               ></textarea>
+              {#if glued.length}
+                <div class="glued">
+                  <p class="hint">
+                    <b>{plural(glued.length, 'запись похожа', 'записи похожи', 'записей похожи')} на склеенные строки</b> — такой
+                    «домен» не совпадёт ни с одним из сайтов:
+                  </p>
+                  {#each glued as g (g.domain)}
+                    <div class="mono gl">{g.domain} <span class="muted">→</span> {g.parts.join(' + ')}</div>
+                  {/each}
+                  <div class="row"><button class="ghost sm" onclick={() => unglue(d, glued)}>Разделить</button><span class="hint">затем «Сохранить списки»</span></div>
+                </div>
+              {/if}
             </div>
           {/if}
         {/each}
@@ -304,6 +334,22 @@
 {/if}
 
 <style>
+  .glued {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: var(--degraded-soft);
+    border: 1px solid color-mix(in srgb, var(--degraded) 35%, transparent);
+  }
+  .glued .hint {
+    color: var(--ink-2);
+  }
+  .gl {
+    font-size: 11.5px;
+    overflow-wrap: anywhere;
+  }
   .modes {
     align-items: start;
   }

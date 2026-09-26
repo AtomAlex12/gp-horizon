@@ -12,14 +12,16 @@ import (
 	"time"
 )
 
-// Agent is the controller's view of one nuxk-core agent.
+// Agent is the controller's view of one nuxk-core agent. Its address and
+// token come from the setup wizard (or AGENT_URL/AGENT_TOKEN) and can change
+// at runtime — "" = not connected yet.
 type Agent struct {
-	URL   string
-	Token string
-	HTTP  *http.Client
-	Hist  *History
+	HTTP *http.Client
+	Hist *History
 
 	mu      sync.Mutex
+	url     string
+	token   string
 	info    json.RawMessage
 	infoAt  time.Time
 	lastOK  time.Time
@@ -27,19 +29,41 @@ type Agent struct {
 }
 
 func NewAgent(url, token string) *Agent {
-	return &Agent{
-		URL: strings.TrimRight(url, "/"), Token: token,
-		HTTP: &http.Client{Timeout: 8 * time.Second},
-		Hist: NewHistory(720), // 1 h at 5 s
-	}
+	a := &Agent{HTTP: &http.Client{Timeout: 8 * time.Second}}
+	a.Configure(url, token)
+	return a
+}
+
+// Configure points the controller at an agent, dropping what it knew about
+// the previous one.
+func (a *Agent) Configure(url, token string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.url, a.token = strings.TrimRight(url, "/"), token
+	a.info, a.infoAt, a.lastOK, a.lastErr = nil, time.Time{}, time.Time{}, ""
+	a.Hist = NewHistory(720) // 1 h at 5 s
+}
+
+// Ref returns the agent's address and token; url "" = not connected.
+func (a *Agent) Ref() (url, token string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.url, a.token
+}
+
+func (a *Agent) history() *History {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.Hist
 }
 
 func (a *Agent) get(ctx context.Context, path string, v any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, a.URL+path, nil)
+	url, token := a.Ref()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url+path, nil)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+a.Token)
+	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := a.HTTP.Do(req)
 	if err != nil {
 		return err
@@ -67,10 +91,14 @@ func (a *Agent) Run(ctx context.Context, period time.Duration) {
 }
 
 func (a *Agent) poll(ctx context.Context) {
+	url, _ := a.Ref()
+	if url == "" {
+		return // the setup wizard hasn't connected a router yet
+	}
 	var m metrics
 	err := a.get(ctx, "/api/v1/metrics", &m)
 	if err == nil {
-		a.Hist.Add(m)
+		a.history().Add(m)
 		a.mu.Lock()
 		stale := time.Since(a.infoAt) > time.Minute
 		a.mu.Unlock()
@@ -78,22 +106,27 @@ func (a *Agent) poll(ctx context.Context) {
 			var info json.RawMessage
 			if ierr := a.get(ctx, "/api/v1/info", &info); ierr == nil {
 				a.mu.Lock()
-				a.info, a.infoAt = info, time.Now()
+				if a.url == url {
+					a.info, a.infoAt = info, time.Now()
+				}
 				a.mu.Unlock()
 			}
 		}
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if url != a.url {
+		return // reconfigured while this poll ran
+	}
 	if err != nil {
 		if err.Error() != a.lastErr {
-			slog.Warn("agent unreachable", "url", a.URL, "err", err)
+			slog.Warn("agent unreachable", "url", url, "err", err)
 		}
 		a.lastErr = err.Error()
 		return
 	}
 	if a.lastErr != "" {
-		slog.Info("agent reachable again", "url", a.URL)
+		slog.Info("agent reachable again", "url", url)
 	}
 	a.lastErr, a.lastOK = "", time.Now()
 }
@@ -111,7 +144,7 @@ type AgentState struct {
 func (a *Agent) State(version string) AgentState {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	st := AgentState{URL: a.URL, Reachable: a.lastErr == "" && !a.lastOK.IsZero(), LastError: a.lastErr, Info: a.info, Version: version}
+	st := AgentState{URL: a.url, Reachable: a.lastErr == "" && !a.lastOK.IsZero(), LastError: a.lastErr, Info: a.info, Version: version}
 	if !a.lastOK.IsZero() {
 		st.LastOK = a.lastOK.Unix()
 	}
