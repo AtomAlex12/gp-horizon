@@ -4,7 +4,7 @@
   import Chart from '../Chart.svelte';
   import Sparkline from '../Sparkline.svelte';
   import type { EngineKind, EngineState } from '../api';
-  import { status, node, history } from '../status.svelte';
+  import { status, node, history, SPANS, chart, chartSpan, setSpan } from '../status.svelte';
   import {
     ENGINE_LABEL,
     HEALTH_LABEL,
@@ -31,6 +31,7 @@
   const plane = $derived(planeOf(status.data));
   const h = $derived(history.h);
   const ts = $derived(h?.ts ?? []);
+  const span = $derived(chartSpan());
 
   const perMode = $derived(
     MODES.map((m) => ({
@@ -136,12 +137,22 @@
   </button>
 </div>
 
+{#if node.via === 'controller'}
+  <div class="row span-bar">
+    <span class="hint">Окно графиков</span>
+    <div class="seg" role="group" aria-label="Окно графиков">
+      {#each SPANS as s (s.ms)}<button class:on={chart.span === s.ms} onclick={() => setSpan(s.ms)}>{s.label}</button>{/each}
+    </div>
+  </div>
+{/if}
+
 <div class="grid g2">
   <section class="card">
     <div class="card-head"><h2>Трафик WAN</h2><span class="spacer"></span><span class="hint mono">{h?.wan ?? ''}</span></div>
     <Chart
       label="Трафик WAN, бит/с"
       {ts}
+      {span}
       fmt={fmtBpsShort}
       series={[
         { label: 'приём', color: 'var(--s1)', data: h?.wan_rx_bps ?? [], fill: true },
@@ -151,7 +162,7 @@
   </section>
   <section class="card">
     <div class="card-head"><h2>Пакеты NFQUEUE</h2><span class="spacer"></span><span class="hint">nfqws2 · пак/с</span></div>
-    <Chart label="Пакеты через NFQUEUE в секунду" {ts} fmt={fmtNum} bars min={5} series={[{ label: 'пакетов/с', color: 'var(--s1)', data: h?.nfq_pps ?? [] }]} />
+    <Chart label="Пакеты через NFQUEUE в секунду" {ts} {span} fmt={fmtNum} bars min={5} series={[{ label: 'пакетов/с', color: 'var(--s1)', data: h?.nfq_pps ?? [] }]} />
   </section>
 </div>
 
@@ -179,7 +190,7 @@
             <span class:bad={e.probe && !e.probe.ok}>{probeText(e)}</span>
           {/if}
         </div>
-        <Sparkline data={spark(k)} color={COLORS[k]} label={sparkLabel(k)} />
+        <Sparkline data={spark(k)} {ts} {span} color={COLORS[k]} label={sparkLabel(k)} />
       </div>
       {#if e?.last_error}<div class="err-text clip">{e.last_error}</div>{/if}
     </section>
@@ -190,7 +201,7 @@
   <section class="card">
     <div class="card-head"><h2>Трафик по туннелям</h2></div>
     {#if tunnelSeries.length}
-      <Chart label="Трафик туннелей, бит/с" {ts} fmt={fmtBpsShort} series={tunnelSeries} />
+      <Chart label="Трафик туннелей, бит/с" {ts} {span} fmt={fmtBpsShort} series={tunnelSeries} />
     {:else}
       <div class="empty">Туннелей пока нет: появятся, когда запустится WARP или VLESS.</div>
     {/if}
@@ -216,6 +227,10 @@
 </div>
 
 <style>
+  .span-bar {
+    justify-content: flex-end;
+    margin-bottom: -6px;
+  }
   .bad {
     color: var(--warn);
   }
