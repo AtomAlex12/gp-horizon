@@ -10,6 +10,11 @@
 
 ## [Unreleased]
 
+## [0.2.0-beta.2] — 2026-09-26
+
+Вход по логину и паролю вместо токена, мастер настройки контроллера и исправления
+после первого осмотра живого роутера. Инструкция — [`docs/BETA.md`](docs/BETA.md).
+
 ### Added
 - **Вход по логину и паролю вместо токена.** Панель роутера — логин `root` и пароль
   Entware (тот же, что для SSH; сверяется с `/opt/etc/shadow`), контроллер на Pi —
@@ -186,6 +191,8 @@
 - Настоящего `S52xray` нет, пакетов opkg нет.
 - Токен прототипа вшит в JS-сборку — только для изолированного стенда.
 
-[Unreleased]: https://github.com/AtomAlex12/nuxk-horizon/compare/v0.1.0-beta.1...HEAD
+[Unreleased]: https://github.com/AtomAlex12/nuxk-horizon/compare/v0.2.0-beta.2...HEAD
+[0.2.0-beta.2]: https://github.com/AtomAlex12/nuxk-horizon/releases/tag/v0.2.0-beta.2
+[0.2.0-beta.1]: https://github.com/AtomAlex12/nuxk-horizon/releases/tag/v0.2.0-beta.1
 [0.1.0-beta.1]: https://github.com/AtomAlex12/nuxk-horizon/releases/tag/v0.1.0-beta.1
 [0.1.0-alpha.1]: https://github.com/AtomAlex12/nuxk-horizon/releases/tag/v0.1.0-alpha.1
