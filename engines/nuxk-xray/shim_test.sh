@@ -9,6 +9,7 @@ ROOT=$(mktemp -d)
 export NUXK_ROOT="$ROOT"
 export SYSNET="$ROOT/sys/class/net"
 export XRAY_BIN="$ROOT/bin/xray"
+export NDMC="$ROOT/bin/no-ndmc" # none until the KeeneticOS part below
 trap 'sh "$SHIM" stop >/dev/null 2>&1 || true; rm -rf "$ROOT"' EXIT
 mkdir -p "$ROOT/bin" "$SYSNET"
 
@@ -111,6 +112,30 @@ check "stopped" "$(kv service.running)/$(kv tunnel.state)" "0/stopped"
 check "device gone with xray" "$(ls -A "$SYSNET" | wc -l | tr -d ' ')" "0"
 check "probe when stopped" "$(sh "$SHIM" probe | sed -n 's/^reason //p')" "stopped"
 check "restart" "$(sh "$SHIM" restart >/dev/null && kv tunnel.state)" "connected"
+
+# --- KeeneticOS: OpkgTun1 is configured only when nuxk created it -----------
+cat >"$ROOT/bin/ndmc" <<EOF
+#!/bin/sh
+echo "\$2" >>"$ROOT/ndmc.log"
+case "\$2" in
+"show interface OpkgTun1") printf 'id: OpkgTun1\n  description: %s\n' "\$(cat "$ROOT/ndm.descr")" ;;
+esac
+EOF
+chmod +x "$ROOT/bin/ndmc"
+export NDMC="$ROOT/bin/ndmc"
+echo nuxk-vless >"$ROOT/ndm.descr"
+: >"$ROOT/ndmc.log"
+sh "$SHIM" restart
+check "ndm: ours configured on start" "$(grep -v '^show' "$ROOT/ndmc.log" | tr '\n' ,)" "interface OpkgTun1 down,interface OpkgTun1 ip global auto,interface OpkgTun1 ip tcp adjust-mss pmtu,interface OpkgTun1 ip address 172.16.2.1 255.255.255.255,interface OpkgTun1 up,"
+: >"$ROOT/ndmc.log"
+sh "$SHIM" stop
+check "ndm: down on stop" "$(grep -v '^show' "$ROOT/ndmc.log")" "interface OpkgTun1 down"
+echo my-tunnel >"$ROOT/ndm.descr"
+: >"$ROOT/ndmc.log"
+check "ndm: someone else's says why" "$(sh "$SHIM" start 2>&1 | grep -c 'не создан nuxk')" "1"
+check "ndm: someone else's never touched" "$(grep -vc '^show' "$ROOT/ndmc.log" || true)" "0"
+check "xray still runs on it" "$(kv tunnel.state)" "connected"
+export NDMC="$ROOT/bin/no-ndmc"
 
 # the very first config that won't start leaves nothing behind
 sh "$SHIM" stop

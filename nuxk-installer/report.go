@@ -28,6 +28,11 @@ type Report struct {
 	UsqueReady bool              `json:"usque_contract"`
 	UsqueIface string            `json:"usque_iface,omitempty"` // ndm name, e.g. OpkgTun0
 
+	XrayVersion string            `json:"xray_version,omitempty"` // /opt/sbin/xray, "" = none
+	XrayReady   bool              `json:"xray_ready"`             // xray + S52xray-nuxk
+	XrayIface   string            `json:"xray_iface,omitempty"`   // set by the xray step
+	NdmTuns     map[string]string `json:"ndm_tuns,omitempty"`     // OpkgTunN → description ("-" = none)
+
 	NuxkCore    string `json:"nuxk_core,omitempty"` // installed version, "" = none
 	NuxkConf    bool   `json:"nuxk_conf"`
 	NuxkListen  string `json:"nuxk_listen,omitempty"`
@@ -58,6 +63,7 @@ func ParseReport(out string, at time.Time) Report {
 		NfqwsFeed:  kv["feed.nfqws2"] == "1",
 		Kmods:      map[string]string{},
 		Init:       map[string]bool{},
+		NdmTuns:    map[string]string{},
 		UsqueReady: kv["usque_contract"] == "1",
 		UsqueIface: ndmName(kv["usque_iface"]),
 		NuxkCore:   kv["nuxk_core"],
@@ -78,8 +84,12 @@ func ParseReport(out string, at time.Time) Report {
 			r.Kmods[strings.TrimPrefix(k, "kmod.")] = v
 		case strings.HasPrefix(k, "init."):
 			r.Init[strings.TrimPrefix(k, "init.")] = v == "1"
+		case strings.HasPrefix(k, "ndm_tun."):
+			r.NdmTuns[strings.TrimPrefix(k, "ndm_tun.")] = v
 		}
 	}
+	r.XrayVersion = kv["xray_version"]
+	r.XrayReady = r.XrayVersion != "" && r.Init["S52xray-nuxk"]
 	return r
 }
 

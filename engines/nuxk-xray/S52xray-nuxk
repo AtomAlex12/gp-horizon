@@ -24,6 +24,9 @@ PIDFILE="$R/opt/var/run/xray.pid"
 LOG="$R/opt/var/log/xray.log"
 LOG_MAX=524288
 SYSNET="${SYSNET:-/sys/class/net}"
+NDMC="${NDMC:-/bin/ndmc}"
+TUN_IP="${XRAY_TUN_IP:-172.16.2.1}" # usque takes 172.16.1.x
+MARK="nuxk-vless"                   # description of the OpkgTun nuxk created
 
 die() {
     echo "$*" >&2
@@ -46,6 +49,34 @@ iface() {
 write_tun() {
     printf '{\n  "inbounds": [\n    { "tag": "tun", "protocol": "tun", "port": 0, "settings": { "name": "%s", "mtu": 1500 } }\n  ]\n}\n' "$(iface)" >"$DIR/tun.json"
 }
+
+# KeeneticOS side: the installer created OpkgTunN with the description
+# nuxk-vless (and saved the router's config, with consent). At each start the
+# device xray brings up gets its address and is brought up there — like
+# usque does for OpkgTun0 — and only on that interface: one whose
+# description isn't nuxk's is never touched.
+ndm_iface() { echo "$(iface)" | sed 's/^opkg/Opkg/; s/tun/Tun/'; }
+
+ndm_ours() {
+    [ -x "$NDMC" ] || return 1
+    "$NDMC" -c "show interface $(ndm_iface)" 2>/dev/null | grep -q "description: *$MARK *\$"
+}
+
+ndm() { "$NDMC" -c "$1" >/dev/null 2>&1 || echo "ndmc «$1» не выполнилась" >&2; }
+
+ndm_up() {
+    if ! ndm_ours; then
+        [ -x "$NDMC" ] && echo "интерфейс $(ndm_iface) в Keenetic не создан nuxk (описание не $MARK) — адрес и маршрут не настраиваю; его создаёт инсталлятор, шаг xray" >&2
+        return 0
+    fi
+    i=$(ndm_iface)
+    ndm "interface $i ip global auto"
+    ndm "interface $i ip tcp adjust-mss pmtu"
+    ndm "interface $i ip address $TUN_IP 255.255.255.255"
+    ndm "interface $i up"
+}
+
+ndm_down() { ndm_ours && ndm "interface $(ndm_iface) down"; }
 
 is_running() {
     [ -f "$PIDFILE" ] || return 1
@@ -76,7 +107,10 @@ start() {
     i=0
     while [ "$i" -lt 10 ]; do
         is_running || break
-        [ -e "$SYSNET/$(iface)" ] && return 0
+        if [ -e "$SYSNET/$(iface)" ]; then
+            ndm_up
+            return 0
+        fi
         sleep 1
         i=$((i + 1))
     done
@@ -92,6 +126,7 @@ stop() {
         rm -f "$PIDFILE"
         return 0
     fi
+    ndm_down
     kill "$pid" 2>/dev/null
     i=0
     while [ "$i" -lt 10 ] && kill -0 "$pid" 2>/dev/null; do

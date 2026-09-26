@@ -33,11 +33,18 @@
 </script>
 
 <section class="card xcfg">
-  <div class="card-head"><h2>Сервер VLESS-Reality</h2></div>
+  <div class="card-head"><h2>Сервер VLESS</h2></div>
   <p class="hint muted">
     Текущий:
-    <span class="mono">{engine?.endpoint || '— не задан'}</span>
+    <span class="mono">{engine?.detail?.server || engine?.endpoint || '— не задан'}</span>
+    {#if engine?.detail?.security}· <span class="mono">{engine.detail.security}{engine.detail.network ? ` / ${engine.detail.network}` : ''}</span>{/if}
     {#if engine?.detail?.sni}· SNI <span class="mono">{engine.detail.sni}</span>{/if}
+    {#if engine?.detail?.flow}· <span class="mono">{engine.detail.flow}</span>{/if}
+  </p>
+  <p class="hint muted">
+    Ссылку даёт панель 3x-ui: «Инбаунды» → ваш клиент → «Поделиться». Подходят Reality и TLS, транспорт tcp, ws, grpc,
+    xhttp. Из подписки берётся первый сервер VLESS. xray проверит конфиг сам; если с новым сервером не запустится —
+    вернётся прежний.
   </p>
 
   <div class="src" role="radiogroup" aria-label="Источник конфига">

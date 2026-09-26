@@ -83,7 +83,7 @@ func Install(c *Conn, p *Payload, selected []string, emit func(Event)) (Result, 
 		}
 	}
 	emit(Event{Kind: "ok", Text: fmt.Sprintf("%s · %s · свободно %d МБ", firstNonEmpty(r.Model, "роутер"), r.ArchRaw, r.OptFreeKB/1024)})
-	if want["usque"] {
+	if want["usque"] || want["xray"] {
 		want["start"] = true // nuxk-core picks the new engine up on restart
 	}
 
@@ -92,6 +92,7 @@ func Install(c *Conn, p *Payload, selected []string, emit func(Event)) (Result, 
 		"nfqws2": func() error { return stepNfqws2(c, emit) },
 		"core":   func() error { return stepCore(c, p, r, emit) },
 		"usque":  func() error { return stepUsque(c, p, &r, emit) },
+		"xray":   func() error { return stepXray(c, p, &r, emit) },
 		"config": func() error { return stepConfig(c, r, p.Version(), emit) },
 		"start":  func() error { return stepStart(c, r, emit) },
 	}
@@ -243,9 +244,12 @@ func ifaceSed(iface string) string {
 }
 
 func stepConfig(c *Conn, r Report, version string, emit func(Event)) error {
-	usque := ""
+	usque, xray := "", ""
 	if r.UsqueReady {
 		usque = pUsque
+	}
+	if r.XrayReady {
+		xray = pXrayInit
 	}
 	conf := fmt.Sprintf(`# nuxk-core — written by nuxk-installer %s on %s.
 # Shell-sourceable KEY="value". Edits are kept: the installer never rewrites
@@ -266,7 +270,7 @@ WEB_ROOT="%s"
 # the stock nfqws2-keenetic package.
 ENGINE_NFQWS2="%s"
 ENGINE_USQUE="%s"
-ENGINE_XRAY=""
+ENGINE_XRAY="%s"
 
 # A router CPU is slow: poll engines every 10 s, probe every 2 min.
 INFO_EVERY="10"
@@ -279,8 +283,9 @@ PLANE="keenetic"
 PLANE_APPLY="0"
 PLANE_V6="deny"
 PLANE_IFACE_WARP="%s"
-PLANE_IFACE_VLESS="OpkgTun1"
-`, version, time.Now().Format("2006-01-02"), listenAddr(r), newToken(), pWeb, pShim, usque, firstNonEmpty(r.UsqueIface, "OpkgTun0"))
+PLANE_IFACE_VLESS="%s"
+`, version, time.Now().Format("2006-01-02"), listenAddr(r), newToken(), pWeb, pShim, usque, xray,
+		firstNonEmpty(r.UsqueIface, "OpkgTun0"), firstNonEmpty(r.XrayIface, xrayIface(r), "OpkgTun1"))
 	emit(Event{Kind: "out", Text: pConf + " (права 0600)"})
 	return c.Upload(pConf, []byte(conf), "0600")
 }

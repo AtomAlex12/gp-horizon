@@ -37,8 +37,8 @@ type Plan struct {
 
 // Step IDs, in execution order.
 // usque goes after nfqws2 (its hosts are desynced before it registers) and
-// before config (the config names its tunnel).
-var stepOrder = []string{"deps", "nfqws2", "core", "usque", "config", "start"}
+// before config (the config names its tunnel); xray likewise.
+var stepOrder = []string{"deps", "nfqws2", "core", "usque", "xray", "config", "start"}
 
 var depPkgs = []string{"curl", "ca-certificates", "ipset"}
 
@@ -169,7 +169,7 @@ func BuildPlan(r Report, p *Payload) Plan {
 		usque.Detail = "не установлен. Отметьте, чтобы включить список «WARP»." + consent
 	}
 	add(usque)
-	add(Item{ID: "xray", Title: "xray (VLESS)", Status: StInfo, Detail: "в beta.1 на роутер не ставится"})
+	add(planXray(r))
 
 	willChange := false
 	for _, it := range pl.Items {

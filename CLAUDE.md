@@ -26,6 +26,7 @@
 | `nuxk-installer/` | установка на роутер по SSH (Go, `golang.org/x/crypto` v0.44.0 — не обновлять выше без Go 1.26) |
 | `engines/nuxk-nfqws2/S51nfqws2-nuxk` | прослойка над штатным пакетом nfqws2-keenetic |
 | `engines/nuxk-usque/` | форк usque-keenetic (ipk для mips/mipsel/aarch64) |
+| `engines/nuxk-xray/S52xray-nuxk` | init-скрипт xray (VLESS): свой TUN `opkgtunN`, конфиг от агента, проверка и откат; xray — официальный релиз XTLS, версия и хеши в `nuxk-installer/xray.go` |
 | `deploy/pi/`, `deploy/proto/` | стек для Raspberry Pi: стенд, инсталлятор, контроллер |
 | `docs/BETA.md` | пошаговая установка и тест на роутере |
 

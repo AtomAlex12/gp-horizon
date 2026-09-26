@@ -75,7 +75,7 @@ func (p *Payload) UsqueIPK(arch string) string {
 // Missing returns required payload files that aren't there.
 func (p *Payload) Missing() []string {
 	var miss []string
-	for _, f := range []string{"VERSION", "S99nuxk-core", "S51nfqws2-nuxk", path.Join("web", "index.html")} {
+	for _, f := range []string{"VERSION", "S99nuxk-core", "S51nfqws2-nuxk", "S52xray-nuxk", path.Join("web", "index.html")} {
 		if _, err := fs.Stat(p.fs, f); err != nil {
 			miss = append(miss, f)
 		}

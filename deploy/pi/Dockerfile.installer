@@ -42,7 +42,7 @@ COPY nuxk-installer/ ./
 COPY --from=core /payload/ ./payload/
 COPY --from=usque /payload/ ./payload/
 COPY --from=web /src/dist-lite ./payload/web
-COPY nuxk-core/fs/opt/etc/init.d/S99nuxk-core engines/nuxk-nfqws2/S51nfqws2-nuxk ./payload/
+COPY nuxk-core/fs/opt/etc/init.d/S99nuxk-core engines/nuxk-nfqws2/S51nfqws2-nuxk engines/nuxk-xray/S52xray-nuxk ./payload/
 COPY VERSION ./payload/VERSION
 RUN CGO_ENABLED=0 go build -ldflags "-s -w" -o /nuxk-installer . && /nuxk-installer -version
 
