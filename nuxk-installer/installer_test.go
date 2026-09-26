@@ -1,11 +1,19 @@
 package main
 
 import (
+	"archive/zip"
+	"bytes"
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
+	"fmt"
 	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -80,6 +88,11 @@ esac
 		t.Fatal(err)
 	}
 	write("S51nfqws2-nuxk", string(shim), 0o755)
+	xshim, err := os.ReadFile("../engines/nuxk-xray/S52xray-nuxk")
+	if err != nil {
+		t.Fatal(err)
+	}
+	write("S52xray-nuxk", string(xshim), 0o755)
 	write("usque-keenetic-x86_64.ipk", "fake ipk", 0o644)
 	write("web/index.html", "<!doctype html><title>nuxk</title>", 0o644)
 	write("web/assets/app-1.js", "console.log(1)", 0o644)
@@ -214,7 +227,18 @@ install) shift; for p in "$@"; do case "$p" in --*) continue ;; esac; echo "Inst
   if [ "$p" = nfqws2-keenetic ]; then printf '#!/bin/sh\necho stock $1\n' >"` + root + `/opt/etc/init.d/S51nfqws2"; chmod +x "` + root + `/opt/etc/init.d/S51nfqws2"; fi; done ;;
 esac
 `,
-		"ndmc":  "#!/bin/sh\necho '   release: 4.3.1'\necho '     model: Keenetic Test'\n",
+		// ndmc: the version, and interfaces that remember their description
+		"ndmc": `#!/bin/sh
+echo "$2" >>"` + root + `/ndmc.log"
+D="` + root + `/ndm"
+case "$2" in
+"show version") echo '   release: 4.3.1'; echo '     model: Keenetic Test' ;;
+"show interface "*) f="$D/${2#show interface }"; [ -f "$f" ] || exit 1; echo "  description: $(cat "$f")" ;;
+"interface "*" description "*) r=${2#interface }; mkdir -p "$D"; echo "${r#* description }" >"$D/${r%% *}" ;;
+"interface "*) i=${2#interface }; mkdir -p "$D"; [ -f "$D/$i" ] || echo - >"$D/$i" ;;
+"system configuration save") echo saved >>"` + root + `/ndm.saved" ;;
+esac
+`,
 		"lsmod": "#!/bin/sh\necho 'nfnetlink_queue 1 0'\necho 'xt_NFQUEUE 1 0'\necho 'xt_connbytes 1 0'\necho 'xt_multiport 1 0'\n",
 		"curl":  "#!/bin/sh\necho '{\"status\":\"ok\"}'\n",
 	}
@@ -482,5 +506,158 @@ func TestEndToEndUsque(t *testing.T) {
 	}
 	if !started {
 		t.Error("installing usque must restart nuxk-core")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// xray (VLESS)
+
+func TestXrayIface(t *testing.T) {
+	for name, c := range map[string]struct {
+		tuns  map[string]string
+		usque string
+		want  string
+	}{
+		"fresh":                   {nil, "", "OpkgTun1"},
+		"usque on 0":              {map[string]string{"OpkgTun0": "usque"}, "OpkgTun0", "OpkgTun1"},
+		"usque on 1":              {map[string]string{"OpkgTun1": "usque"}, "OpkgTun1", "OpkgTun2"},
+		"someone else's 1":        {map[string]string{"OpkgTun0": "usque", "OpkgTun1": "my-vpn"}, "OpkgTun0", "OpkgTun2"},
+		"ours again, wherever":    {map[string]string{"OpkgTun1": "my-vpn", "OpkgTun3": "nuxk-vless"}, "", "OpkgTun3"},
+		"no description is taken": {map[string]string{"OpkgTun1": "-"}, "", "OpkgTun2"},
+	} {
+		if got := xrayIface(Report{NdmTuns: c.tuns, UsqueIface: c.usque}); got != c.want {
+			t.Errorf("%s: %q, want %q", name, got, c.want)
+		}
+	}
+	all := map[string]string{}
+	for n := 1; n < 10; n++ {
+		all[fmt.Sprintf("OpkgTun%d", n)] = "x"
+	}
+	if got := xrayIface(Report{NdmTuns: all}); got != "" {
+		t.Errorf("all taken: %q", got)
+	}
+}
+
+func TestPlanXray(t *testing.T) {
+	p, _ := testPayload(t, "0.1.0-beta.1")
+	r := Report{Entware: true, Arch: "x86_64", OptFreeKB: 500000, Pkgs: map[string]string{}, Kmods: map[string]string{}, Init: map[string]bool{}}
+	it := item(BuildPlan(r, p), "xray")
+	if it.Status != StInstall || !it.Selectable || it.Selected || !strings.Contains(it.Detail, "сохранит конфигурацию роутера") || !strings.Contains(it.Detail, "OpkgTun1") {
+		t.Errorf("xray = %+v, want installable, not preselected, with the consent text", it)
+	}
+	r.OptFreeKB = 30 * 1024
+	if it := item(BuildPlan(r, p), "xray"); it.Selectable || !strings.Contains(it.Detail, "мало места") {
+		t.Errorf("no room: %+v", it)
+	}
+	r.OptFreeKB, r.XrayReady, r.XrayVersion = 500000, true, "25.1.1"
+	if it := item(BuildPlan(r, p), "xray"); it.Status != StUpgrade || it.Selected {
+		t.Errorf("older xray: %+v", it)
+	}
+	r.XrayVersion = xrayVersion
+	if it := item(BuildPlan(r, p), "xray"); it.Status != StOK || !it.Selectable {
+		t.Errorf("current xray: %+v", it)
+	}
+	r.Arch = "armv7"
+	if it := item(BuildPlan(r, p), "xray"); it.Selectable {
+		t.Errorf("no xray build: %+v", it)
+	}
+}
+
+// fakeXTLS serves a release archive like XTLS's, with a script for xray,
+// and pins its hash for x86_64 while the test runs.
+func fakeXTLS(t *testing.T) *httptest.Server {
+	t.Helper()
+	var zb bytes.Buffer
+	zw := zip.NewWriter(&zb)
+	w, _ := zw.Create("xray")
+	_, _ = io.WriteString(w, "#!/bin/sh\n[ \"$1\" = version ] && echo 'Xray "+xrayVersion+" (Xray, Penetrates Everything.) test'\ntrue\n")
+	g, _ := zw.Create("geoip.dat")
+	_, _ = g.Write(make([]byte, 1000))
+	must(t, zw.Close())
+	sum := sha256.Sum256(zb.Bytes())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v"+xrayVersion+"/Xray-linux-64.zip" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = w.Write(zb.Bytes())
+	}))
+	t.Cleanup(srv.Close)
+	oldURL, oldAsset := xrayBaseURL, xrayAssets["x86_64"]
+	t.Cleanup(func() { xrayBaseURL, xrayAssets["x86_64"] = oldURL, oldAsset })
+	xrayBaseURL = srv.URL
+	xrayAssets["x86_64"] = xrayAsset{"Xray-linux-64.zip", "xray", hex.EncodeToString(sum[:])}
+	return srv
+}
+
+func TestFetchXrayRefusesAnotherFile(t *testing.T) {
+	fakeXTLS(t)
+	a := xrayAssets["x86_64"]
+	a.sha256 = strings.Repeat("0", 64)
+	xrayAssets["x86_64"] = a
+	if _, err := fetchXray(context.Background(), "x86_64", func(Event) {}); err == nil || !strings.Contains(err.Error(), "хеш архива xray не совпал") {
+		t.Errorf("err = %v", err)
+	}
+}
+
+func TestEndToEndXray(t *testing.T) {
+	fr := newFakeRouter(t)
+	p, _ := testPayload(t, "0.1.0-beta.1")
+	fakeXTLS(t)
+	// usque already took OpkgTun0; someone's own VPN sits on OpkgTun1
+	must(t, os.MkdirAll(filepath.Join(fr.root, "ndm"), 0o755))
+	must(t, os.WriteFile(filepath.Join(fr.root, "ndm/OpkgTun0"), []byte("usque\n"), 0o644))
+	must(t, os.WriteFile(filepath.Join(fr.root, "ndm/OpkgTun1"), []byte("my-vpn\n"), 0o644))
+
+	c, err := Dial(fr.target())
+	must(t, err)
+	defer c.Close()
+	_, err = Install(c, p, []string{"deps", "nfqws2", "core", "config", "start"}, func(Event) {})
+	must(t, err)
+
+	var events []Event
+	_, err = Install(c, p, []string{"xray"}, func(e Event) { events = append(events, e) })
+	if err != nil {
+		for _, e := range events {
+			t.Log(e.Kind, e.Text)
+		}
+		t.Fatal(err)
+	}
+	if b, err := os.ReadFile(filepath.Join(fr.root, "opt/sbin/xray")); err != nil || !strings.Contains(string(b), "Penetrates") {
+		t.Errorf("xray binary: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(fr.root, "opt/sbin/geoip.dat")); err == nil {
+		t.Error("geoip.dat must not go to the router")
+	}
+	if b, _ := os.ReadFile(filepath.Join(fr.root, "opt/etc/init.d/S52xray-nuxk")); !strings.Contains(string(b), "S52xray-nuxk") {
+		t.Error("init script not installed")
+	}
+	if d, _ := os.ReadFile(filepath.Join(fr.root, "ndm/OpkgTun2")); strings.TrimSpace(string(d)) != "nuxk-vless" {
+		t.Errorf("OpkgTun2 description = %q, want nuxk-vless", d)
+	}
+	if d, _ := os.ReadFile(filepath.Join(fr.root, "ndm/OpkgTun1")); strings.TrimSpace(string(d)) != "my-vpn" {
+		t.Errorf("someone else's OpkgTun1 touched: %q", d)
+	}
+	if b, _ := os.ReadFile(filepath.Join(fr.root, "ndm.saved")); !strings.Contains(string(b), "saved") {
+		t.Error("the router's config must be saved after creating the interface")
+	}
+	conf, _ := os.ReadFile(filepath.Join(fr.root, "opt/etc/nuxk/nuxk.conf"))
+	for _, want := range []string{`ENGINE_XRAY="/opt/etc/init.d/S52xray-nuxk"`, `PLANE_IFACE_VLESS="OpkgTun2"`} {
+		if !strings.Contains(string(conf), want) {
+			t.Errorf("nuxk.conf lacks %s", want)
+		}
+	}
+
+	// the second time: the same interface, found by its description, not a new one
+	must(t, os.Remove(filepath.Join(fr.root, "ndm.saved")))
+	r, err := Detect(c)
+	must(t, err)
+	if !r.XrayReady || r.XrayVersion != xrayVersion || xrayIface(r) != "OpkgTun2" {
+		t.Errorf("after install: ready=%v version=%q iface=%q", r.XrayReady, r.XrayVersion, xrayIface(r))
+	}
+	_, err = Install(c, p, []string{"xray"}, func(Event) {})
+	must(t, err)
+	if _, err := os.Stat(filepath.Join(fr.root, "ndm/OpkgTun3")); err == nil {
+		t.Error("reinstall created another interface")
 	}
 }

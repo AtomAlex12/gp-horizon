@@ -49,7 +49,7 @@ for m in nfnetlink_queue xt_NFQUEUE xt_connbytes xt_multiport; do
 done
 
 # --- engines ------------------------------------------------------------------
-for e in S51nfqws2 S51usque S52xray S99nuxk-core; do
+for e in S51nfqws2 S51usque S52xray-nuxk S99nuxk-core; do
     [ -x "$R/opt/etc/init.d/$e" ] && kv "init.$e" 1 || kv "init.$e" 0
 done
 # usque-keenetic speaks nuxk's contract only in our fork (feature/web-ui)
@@ -60,6 +60,22 @@ else
 fi
 # tunnel the usque package picked (opkgtun0 → ndm name OpkgTun0)
 kv usque_iface "$(sed -n 's/^IFACE="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "$R/opt/etc/usque/usque.conf" 2>/dev/null | tail -n 1)"
+
+# xray (VLESS): the binary nuxk put there, if any
+if [ -x "$R/opt/sbin/xray" ]; then
+    kv xray_version "$("$R/opt/sbin/xray" version 2>/dev/null | sed -n '1s/^Xray \([^ ]*\).*/\1/p')"
+else
+    kv xray_version ""
+fi
+# OpkgTun interfaces KeeneticOS has, with their description — nuxk's is
+# nuxk-vless; any other is someone else's and never taken
+if have ndmc; then
+    for n in 0 1 2 3 4 5 6 7 8 9; do
+        out=$(ndmc -c "show interface OpkgTun$n" 2>/dev/null) || continue
+        d=$(echo "$out" | sed -n 's/^ *description: *//p' | head -n 1)
+        kv "ndm_tun.OpkgTun$n" "${d:--}"
+    done
+fi
 
 # --- nuxk itself ----------------------------------------------------------------
 if [ -x "$R/opt/usr/bin/nuxk-core" ]; then

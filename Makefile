@@ -29,6 +29,7 @@ web-check:
 installer-check:
 	cd nuxk-installer && gofmt -l . | (! grep .) && go vet ./... && go test ./...
 	sh engines/nuxk-nfqws2/shim_test.sh
+	sh engines/nuxk-xray/shim_test.sh
 
 controller-check:
 	cd nuxk-controller && gofmt -l . | (! grep .) && go vet ./... && go test ./...
@@ -42,7 +43,7 @@ installer-payload:
 	cd nuxk-web && npm install --no-audit --no-fund && npm run build:lite
 	find $(PAYLOAD) -mindepth 1 ! -name README.md -exec rm -rf {} +
 	cp nuxk-core/dist/nuxk-core-mips nuxk-core/dist/nuxk-core-mipsel nuxk-core/dist/nuxk-core-aarch64 nuxk-core/dist/nuxk-core-x86_64 $(PAYLOAD)/
-	cp nuxk-core/fs/opt/etc/init.d/S99nuxk-core engines/nuxk-nfqws2/S51nfqws2-nuxk $(PAYLOAD)/
+	cp nuxk-core/fs/opt/etc/init.d/S99nuxk-core engines/nuxk-nfqws2/S51nfqws2-nuxk engines/nuxk-xray/S52xray-nuxk $(PAYLOAD)/
 	cp -r nuxk-web/dist-lite $(PAYLOAD)/web
 	echo $(VERSION) > $(PAYLOAD)/VERSION
 	# WARP: the usque-keenetic fork's ipk per router arch (downloads usque

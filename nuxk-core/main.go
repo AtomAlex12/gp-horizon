@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -87,6 +88,16 @@ func main() {
 	if *webRoot != "" {
 		cfg.WebRoot = *webRoot
 	}
+	// Entware keeps its CA bundle under /opt and Go looks in /etc: without
+	// this, HTTPS from the router (a 3x-ui subscription) can't be verified
+	if os.Getenv("SSL_CERT_FILE") == "" {
+		for _, f := range []string{"/opt/etc/ssl/certs/ca-certificates.crt", "/opt/etc/ssl/cert.pem"} {
+			if _, err := os.Stat(f); err == nil {
+				os.Setenv("SSL_CERT_FILE", f)
+				break
+			}
+		}
+	}
 
 	st, err := state.Open(cfg.StateDir)
 	if err != nil {
@@ -106,7 +117,7 @@ func main() {
 	}{
 		{engine.KindUsque, cfg.Engines.Usque, func(s string) engine.Engine { return usque.New(s) }},
 		{engine.KindNfqws2, cfg.Engines.Nfqws2, func(s string) engine.Engine { return nfqws2.New(s) }},
-		{engine.KindXray, cfg.Engines.Xray, func(s string) engine.Engine { return xray.New(s) }},
+		{engine.KindXray, cfg.Engines.Xray, func(s string) engine.Engine { return xray.New(s, strings.ToLower(cfg.Plane.IfaceVless)) }},
 	} {
 		switch _, err := os.Stat(w.script); {
 		case w.script == "":

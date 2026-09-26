@@ -27,6 +27,7 @@ node_modules/
 /nuxk-core/testdata/mock.state
 /nuxk-core/testdata/mock.xray.state
 /nuxk-core/testdata/mock.xray-config
+/nuxk-core/testdata/mock.xray-meta
 /nuxk-controller/.data/
 
 # committed before the first release (npm install for now)

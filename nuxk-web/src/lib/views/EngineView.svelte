@@ -101,7 +101,7 @@
       Движок не установлен на этом узле или выключен в <span class="mono">nuxk.conf</span>
       ({kind === 'nfqws2' ? 'ENGINE_NFQWS2' : kind === 'usque' ? 'ENGINE_USQUE' : 'ENGINE_XRAY'}).
       {#if kind === 'usque'}WARP ставится инсталлятором — шаг «usque (WARP)».{/if}
-      {#if kind === 'xray'}VLESS на роутере появится в следующих версиях.{/if}
+      {#if kind === 'xray'}xray ставится инсталлятором — шаг «xray (VLESS)»; потом здесь задаётся сервер.{/if}
     </p>
   </section>
 {:else}

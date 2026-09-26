@@ -2,6 +2,12 @@ package xray
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"nuxk.dev/horizon/core/internal/engine"
@@ -141,34 +147,64 @@ func TestActions(t *testing.T) {
 
 func TestSetConfigVlessURI(t *testing.T) {
 	f := &fakeRunner{}
-	a := &Adapter{x: f}
-	err := a.SetConfig(context.Background(), map[string]string{
-		"vless_uri": "vless://uuid@host:443?type=tcp&security=reality",
-	})
-	if err != nil {
+	a := &Adapter{x: f, Iface: "opkgtun1"}
+	if err := a.SetConfig(context.Background(), map[string]string{"vless_uri": realityLink}); err != nil {
 		t.Fatalf("SetConfig: %v", err)
 	}
 	if len(f.inputs) != 1 {
 		t.Fatalf("inputs = %v, want 1 call", f.inputs)
 	}
-	want := "set-config:VLESS_URI=vless://uuid@host:443?type=tcp&security=reality\n"
-	if f.inputs[0] != want {
-		t.Errorf("input = %q, want %q", f.inputs[0], want)
+	in := strings.TrimPrefix(f.inputs[0], "set-config:")
+	head, conf, ok := strings.Cut(in, "---\n")
+	if !ok {
+		t.Fatalf("no --- between meta and config: %q", in)
+	}
+	for _, want := range []string{"server 203.0.113.9:443\n", "endpoint 203.0.113.9:443\n", "security reality\n", "flow xtls-rprx-vision\n", "iface opkgtun1\n"} {
+		if !strings.Contains(head, want) {
+			t.Errorf("meta lacks %q: %q", want, head)
+		}
+	}
+	if strings.Contains(head, "0e2b3c4d") {
+		t.Error("the user id must not go into meta (info shows it)")
+	}
+	var c map[string]any
+	if err := json.Unmarshal([]byte(conf), &c); err != nil {
+		t.Fatalf("config is not JSON: %v", err)
+	}
+}
+
+func TestSetConfigRefusals(t *testing.T) {
+	f := &fakeRunner{}
+	a := &Adapter{x: f, Iface: "opkgtun1"}
+	for _, cfg := range []map[string]string{
+		{},
+		{"vless_uri": realityLink, "sub_url": "https://panel.example/sub/x"},
+		{"vless_uri": "vmess://abc"},
+		{"vless_uri": strings.Replace(realityLink, "pbk=", "nopbk=", 1)},
+	} {
+		if err := a.SetConfig(context.Background(), cfg); !errors.Is(err, engine.ErrBadConfig) {
+			t.Errorf("%v: err = %v, want ErrBadConfig", cfg, err)
+		}
+	}
+	if len(f.inputs) != 0 {
+		t.Errorf("nothing may reach the router on a bad link: %v", f.inputs)
 	}
 }
 
 func TestSetConfigSubURL(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 3x-ui: base64 of one link per line, other protocols mixed in
+		body := "vmess://eyJhZGQiOiJ4In0=\n" + realityLink + "\n" + strings.Replace(realityLink, "203.0.113.9", "198.51.100.7", 1) + "\n"
+		_, _ = w.Write([]byte(base64.StdEncoding.EncodeToString([]byte(body))))
+	}))
+	defer srv.Close()
 	f := &fakeRunner{}
-	a := &Adapter{x: f}
-	err := a.SetConfig(context.Background(), map[string]string{
-		"sub_url": "https://panel.example/sub/xxxx",
-	})
-	if err != nil {
+	a := &Adapter{x: f, Iface: "opkgtun1", HTTP: srv.Client()}
+	if err := a.SetConfig(context.Background(), map[string]string{"sub_url": srv.URL + "/sub/xxxx"}); err != nil {
 		t.Fatalf("SetConfig: %v", err)
 	}
-	want := "set-config:SUB_URL=https://panel.example/sub/xxxx\n"
-	if len(f.inputs) != 1 || f.inputs[0] != want {
-		t.Errorf("inputs = %v, want [%q]", f.inputs, want)
+	if len(f.inputs) != 1 || !strings.Contains(f.inputs[0], "server 203.0.113.9:443\n") {
+		t.Errorf("the subscription's first VLESS server: %v", f.inputs)
 	}
 }
 
