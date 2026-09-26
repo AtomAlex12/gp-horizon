@@ -10,6 +10,22 @@
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-09-26
+
+Третий путь для доменов — **VLESS через xray** — и **проба nfqws2, которая проверяет ваши
+сайты** и говорит, почему сайт не открывается: блокировка по имени (нужна стратегия) или
+по IP (нужен туннель). Инструкция — [`docs/BETA.md`](docs/BETA.md), VLESS — этап 6.
+
+**Обновление с 0.2.0-beta.3:** на Pi — `git pull && sh deploy/pi/bootstrap.sh`; на
+роутере — инсталлятор: шаг nuxk-core покажет «0.2.0-beta.3 → 0.3.0» (вместе с ним
+обновятся адаптер nfqws2 с новой пробой и веб; `nuxk.conf` остаётся как есть). VLESS —
+отдельный шаг «xray (VLESS)», по желанию: он создаёт в Keenetic интерфейс OpkgTun и
+сохраняет конфигурацию роутера.
+
+**Не проверено на настоящем Keenetic:** как KeeneticOS подхватывает интерфейс xray и ведёт
+в него список «VLESS» — на Pi всё проверено со своим сервером VLESS + Reality. Начните с
+одного домена.
+
 ### Added
 - **VLESS через xray — движок на роутере.** Вставьте в панели ссылку `vless://` или
   подписку 3x-ui: агент разберёт её сам (Reality, TLS; tcp/vision, ws, grpc, xhttp,
@@ -275,7 +291,8 @@ nuxk-core покажет «0.2.0-beta.2 → 0.2.0-beta.3», вместе с ни
 - Настоящего `S52xray` нет, пакетов opkg нет.
 - Токен прототипа вшит в JS-сборку — только для изолированного стенда.
 
-[Unreleased]: https://github.com/AtomAlex12/nuxk-horizon/compare/v0.2.0-beta.3...HEAD
+[Unreleased]: https://github.com/AtomAlex12/nuxk-horizon/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/AtomAlex12/nuxk-horizon/releases/tag/v0.3.0
 [0.2.0-beta.3]: https://github.com/AtomAlex12/nuxk-horizon/releases/tag/v0.2.0-beta.3
 [0.2.0-beta.2]: https://github.com/AtomAlex12/nuxk-horizon/releases/tag/v0.2.0-beta.2
 [0.2.0-beta.1]: https://github.com/AtomAlex12/nuxk-horizon/releases/tag/v0.2.0-beta.1
