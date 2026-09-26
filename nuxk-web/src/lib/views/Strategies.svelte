@@ -16,7 +16,9 @@
 
   async function load() {
     try {
-      candidates = (await gp.candidates()).candidates;
+      // everything found = candidates of every domain a run has checked
+      const runDomains = [...new Set((await gp.history()).runs.flatMap((r) => r.domains ?? []))];
+      candidates = runDomains.length ? (await gp.candidates(runDomains)).candidates : [];
       err = '';
     } catch (e) {
       err = e instanceof Error ? e.message : String(e);
@@ -60,6 +62,21 @@
     const picked: Record<string, boolean> = {};
     for (const d of domainsOf(c)) picked[d] = true;
     pending = { c, protocol: protocolOf(c.protocol), picked };
+  }
+
+  // the agent's rule (engine.ValidateStrategy), checked here first so the
+  // button can say why before anyone clicks: desync args only, no files,
+  // no Lua code (--lua-init), no shell characters
+  const ARG = /^--(payload|lua-desync|out-range|in-range)=[A-Za-z0-9_.,:=+<%-]+$/;
+  function blocker(args: string): string {
+    const toks = args
+      .split(/\s+/)
+      .filter(Boolean)
+      .filter((t, i) => !(i === 0 && /(^|\/)nfqws2$/.test(t)) && !t.startsWith('--filter-') && !t.startsWith('--hostlist'));
+    const bad = toks.find((t) => !ARG.test(t));
+    if (bad) return bad.startsWith('--lua-init') ? 'содержит --lua-init (код Lua) — только вручную' : `аргумент ${bad.split('=')[0]} — только вручную`;
+    if (!toks.some((t) => t.startsWith('--lua-desync='))) return 'нет --lua-desync';
+    return '';
   }
 
   const sid = (c: StrategyCandidate) => ('gp-' + c.id).replace(/[^A-Za-z0-9_.:-]/g, '-').slice(0, 80);
@@ -195,7 +212,13 @@
               <td title={ds.join('\n')}>{ds.slice(0, 2).join(', ')}{ds.length > 2 ? ` +${ds.length - 2}` : ''}</td>
               <td class="hint">{c.family ?? '—'}</td>
               <td class="hint">{c.last_seen_at ? new Date(c.last_seen_at).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' }) : '—'}</td>
-              <td><button class="ghost sm" onclick={() => startApply(c)} disabled={busy || !ds.length}>На роутер…</button></td>
+              <td>
+                {#if blocker(c.args)}
+                  <span class="hint" title="nuxk пишет на роутер только аргументы десинка без файлов и кода">{blocker(c.args)}</span>
+                {:else}
+                  <button class="ghost sm" onclick={() => startApply(c)} disabled={busy || !ds.length}>На роутер…</button>
+                {/if}
+              </td>
             </tr>
           {/each}
         </tbody>

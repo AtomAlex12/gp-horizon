@@ -158,8 +158,9 @@ export const gp = {
   start: (r: StartRun) => req<{ accepted: boolean; run_id: string; status: string }>('POST', core('strategy-discovery/start-run'), r),
   stop: () => req<{ accepted: boolean; run_id: string; status: string }>('POST', core('strategy-discovery/stop-current-run')),
   history: () => req<{ runs: RunHistoryItem[] }>('GET', core('runs/history')),
-  candidates: (domain?: string) =>
-    req<CandidatesResponse>('GET', core('strategy-candidates') + (domain ? `?domain=${encodeURIComponent(domain)}` : '')),
+  // GP answers only filtered requests: pass the domains of interest
+  candidates: (domains: string[]) =>
+    req<CandidatesResponse>('GET', core('strategy-candidates') + `?domains=${encodeURIComponent(domains.join(','))}`),
 };
 
 export const RUN_STATUS_LABEL: Record<string, string> = {
