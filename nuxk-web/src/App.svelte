@@ -38,13 +38,18 @@
     plugins: { label: 'Плагины', icon: 'plugins' },
     system: { label: 'Система', icon: 'system' },
   };
+  // The plugin host and GP's strategy search live in nuxk-controller on the
+  // Pi. The router build (lite) leaves them out — tabs and code: a mips
+  // router has nothing to run them with.
+  const PI_ONLY = ['runs', 'results', 'strategies', 'plugins'];
+  const shown = (k: string) => !(__LITE__ && PI_ONLY.includes(k));
   const NAV = [
     { title: 'Статус', items: ['dashboard', 'conns', 'devices'] },
     { title: 'Подбор', items: ['runs', 'results', 'strategies', 'decisions'] },
     { title: 'Списки и данные', items: ['lists', 'dns'] },
     { title: 'Движки', items: ['nfqws2', 'usque', 'xray'] },
     { title: 'Управление', items: ['logs', 'plugins', 'system'] },
-  ];
+  ].map((g) => ({ ...g, items: g.items.filter(shown) }));
   // screens the design has but the agent doesn't feed yet — said plainly
   const SOON: Record<string, string> = {
     devices: 'Устройства LAN и что у каждого не открывается — появится вместе со списком соединений.',
@@ -55,7 +60,7 @@
   // #lists etc. — a reload keeps the page
   const fromHash = () => {
     const h = location.hash.slice(1);
-    return TABS[h] ? h : h === 'overview' ? 'dashboard' : 'dashboard';
+    return TABS[h] && shown(h) ? h : 'dashboard';
   };
   let tab = $state(fromHash());
   let menuOpen = $state(false);
@@ -202,13 +207,13 @@
           <Lists />
         {:else if tab === 'logs'}
           <Logs />
-        {:else if tab === 'plugins'}
+        {:else if !__LITE__ && tab === 'plugins'}
           <Plugins />
-        {:else if tab === 'runs'}
+        {:else if !__LITE__ && tab === 'runs'}
           <GpGate {go}><Runs {go} /></GpGate>
-        {:else if tab === 'results'}
+        {:else if !__LITE__ && tab === 'results'}
           <GpGate {go}><Results {go} /></GpGate>
-        {:else if tab === 'strategies'}
+        {:else if !__LITE__ && tab === 'strategies'}
           <GpGate {go}><Strategies /></GpGate>
         {:else if tab === 'system'}
           <System />

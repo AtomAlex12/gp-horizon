@@ -10,6 +10,18 @@
 
 ## [Unreleased]
 
+## [0.2.0-beta.3] — 2026-09-26
+
+Подбор стратегий nfqws2 на Pi: плагины в контроллере, плагин GP, вкладки «Прогоны»,
+«Результаты», «Стратегии» и применение найденной стратегии на роутере — кнопкой, с копией
+конфига и откатом. Только в полной версии: лёгкий веб на роутере этого не содержит.
+Инструкция — [`docs/BETA.md`](docs/BETA.md), этап 3б.
+
+**Обновление с 0.2.0-beta.2:** на Pi — `git pull && sh deploy/pi/bootstrap.sh` (образ
+контроллера собирается заново, первый раз дольше); на роутере — инсталлятор: шаг
+nuxk-core покажет «0.2.0-beta.2 → 0.2.0-beta.3», вместе с ним обновятся init-скрипт,
+адаптер nfqws2 (он нужен для применения стратегий) и веб; `nuxk.conf` остаётся как есть.
+
 ### Added
 - **Плагины в контроллере на Pi — в том же контейнере, без новых.** Контейнер стартует
   с `nuxk-controller supervise` (root): он запускает веб/API от `nobody` без прав, а
@@ -33,6 +45,10 @@
   аргументы в `NFQWS_ARGS_CUSTOM` nuxk не перезаписывает. Агент:
   `GET/PUT /api/v1/engines/{kind}/strategies`; в конфиг попадают только
   `--payload / --lua-desync / --out-range / --in-range` без файлов и символов оболочки.
+- Подбор стратегий и плагины — **только в полной версии (контроллер на Pi)**. В
+  лёгкой, которая ставится на роутер без Pi, нет ни вкладок «Прогоны», «Результаты»,
+  «Стратегии», «Плагины», ни их кода (веб на роутере стал меньше: 128 КБ вместо
+  163); на сам роутер плагины не ставятся никогда.
 
 ### Changed
 - Образ контроллера — Debian slim с Python и сетевыми утилитами для плагинов
@@ -229,7 +245,8 @@
 - Настоящего `S52xray` нет, пакетов opkg нет.
 - Токен прототипа вшит в JS-сборку — только для изолированного стенда.
 
-[Unreleased]: https://github.com/AtomAlex12/nuxk-horizon/compare/v0.2.0-beta.2...HEAD
+[Unreleased]: https://github.com/AtomAlex12/nuxk-horizon/compare/v0.2.0-beta.3...HEAD
+[0.2.0-beta.3]: https://github.com/AtomAlex12/nuxk-horizon/releases/tag/v0.2.0-beta.3
 [0.2.0-beta.2]: https://github.com/AtomAlex12/nuxk-horizon/releases/tag/v0.2.0-beta.2
 [0.2.0-beta.1]: https://github.com/AtomAlex12/nuxk-horizon/releases/tag/v0.2.0-beta.1
 [0.1.0-beta.1]: https://github.com/AtomAlex12/nuxk-horizon/releases/tag/v0.1.0-beta.1

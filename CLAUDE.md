@@ -75,6 +75,9 @@ root / nuxk-dev), на контроллере — admin из мастера. `AP
 - Код плагина не лежит в репозитории: `install.sh` скачивает его на устройстве с его
   релизов, с проверкой хешей. Разрешённые права — `allowedCaps` в `plugin.go`.
 - В панель — только нужные вызовы API плагина (белый список, как `gpAllowed`).
+- Лёгкий веб для роутера (`build:lite`, `__LITE__`) плагинов не содержит: вкладки
+  только для Pi — в `PI_ONLY` в `App.svelte`, их ветки под `!__LITE__`, чтобы код
+  не попал в бандл (проверка: `grep strategy-discovery dist-lite/assets/*.js` пусто).
 - Стратегии на роутер — только кнопкой, через `PUT /engines/nfqws2/strategies`
   (профиль в `NFQWS_ARGS_CUSTOM`, копия конфига, откат при сбое).
 - Тесты хоста плагинов — Linux-only (`supervisor_linux_test.go`); на Windows их

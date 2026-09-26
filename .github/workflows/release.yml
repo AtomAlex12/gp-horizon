@@ -29,7 +29,8 @@ jobs:
       - run: make check
       - run: make release
       - name: release notes from CHANGELOG
-        run: awk -v v="$VERSION" '$0 ~ "^## \\[" v "\\]" {p=1; next} /^## \[/ {p=0} p' CHANGELOG.md > notes.md
+        # plain prefix match: "\\[" in a dynamic regex is a bracket in gawk
+        run: awk -v v="$VERSION" 'index($0, "## [" v "]") == 1 {p=1; next} index($0, "## [") == 1 {p=0} p' CHANGELOG.md > notes.md
       - uses: softprops/action-gh-release@v2
         with:
           body_path: notes.md
