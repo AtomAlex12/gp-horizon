@@ -1,5 +1,5 @@
 // Small shared helpers for the views — formatting and labels only.
-import type { EngineState, ListMode, NodeInfo, PlaneStatus, Status } from './api';
+import type { EngineState, ListMode, NodeInfo, PlaneStatus, Probe, Status } from './api';
 
 export const ENGINE_LABEL: Record<string, string> = {
   nfqws2: 'nfqws2 (DPI)',
@@ -70,12 +70,44 @@ export const HEALTH_LABEL: Record<string, string> = {
   unknown: '—',
 };
 
-/** The probe line under an engine: "проба ok · 9 мс" / "проба: timeout_or_reset". */
+// where a probe site broke, in words (the agent's engine.Reason*)
+const PROBE_REASON: Record<string, string> = {
+  dns: 'не находится в DNS',
+  connect: 'нет соединения',
+  connect_timeout: 'не соединяется — похоже, блокировка по IP',
+  tls_timeout: 'соединение есть, но TLS молча режут — блокировка по имени сайта',
+  reset: 'соединение сбрасывают — блокировка по имени сайта',
+  cert: 'чужой сертификат — заглушка или подмена',
+  slow: 'соединился, но ответа нет 8 с',
+  timeout_or_reset: 'таймаут или сброс',
+};
+export function reasonText(r?: string | null): string {
+  if (!r) return 'нет ответа';
+  if (r.startsWith('error_')) return `ошибка curl ${r.slice(6)}`;
+  return PROBE_REASON[r] ?? r;
+}
+
+/** ok: everything opens; part: nfqws2 opens some of its sites, not all; bad: none / failed. */
+export function probeState(p?: Probe | null): 'ok' | 'part' | 'bad' | '' {
+  if (!p) return '';
+  if (!p.ok) return 'bad';
+  return p.checks?.some((c) => !c.ok) ? 'part' : 'ok';
+}
+
+const opens = (n: number) => (n % 10 === 1 && n % 100 !== 11 ? 'открывается' : 'открываются');
+
+/** The probe line under an engine: "проба ok · 9 мс" / "проба: открываются 3 из 5". */
 export function probeText(e: Pick<EngineState, 'probe'>): string {
   const p = e.probe;
   if (!p) return 'проба не запускалась';
-  if (p.ok) return `проба ok${p.rtt_ms ? ` · ${Math.round(p.rtt_ms)} мс` : ''}`;
-  return `проба не прошла: ${p.reason ?? 'нет ответа'}`;
+  const cs = p.checks ?? [];
+  if (cs.length > 1) {
+    const n = cs.filter((c) => c.ok).length;
+    return n ? `проба: ${opens(n)} ${n} из ${cs.length}` : `проба: не открывается ни один из ${cs.length}`;
+  }
+  const site = cs.length ? ` ${cs[0].domain}` : '';
+  if (p.ok) return `проба ok${site}${p.rtt_ms ? ` · ${Math.round(p.rtt_ms)} мс` : ''}`;
+  return `проба${site} не прошла: ${reasonText(p.reason)}`;
 }
 
 export function fmtDur(s: number): string {

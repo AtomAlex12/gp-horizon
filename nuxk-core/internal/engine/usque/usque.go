@@ -72,7 +72,7 @@ func (a *Adapter) Info(ctx context.Context) (engine.Info, error) {
 	return info, nil
 }
 
-func (a *Adapter) Probe(ctx context.Context) (engine.Probe, error) {
+func (a *Adapter) Probe(ctx context.Context, _ []string) (engine.Probe, error) {
 	kv, _, err := a.x.KV(ctx, "probe")
 	if err != nil {
 		return engine.Probe{}, err

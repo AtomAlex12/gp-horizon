@@ -2,6 +2,7 @@ package nfqws2
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"nuxk.dev/horizon/core/internal/engine"
@@ -29,6 +30,11 @@ func (f *fakeRunner) KV(_ context.Context, sub string) (map[string]string, []str
 		return kv, list, nil
 	}
 	return map[string]string{}, nil, nil
+}
+
+func (f *fakeRunner) KVWithInput(ctx context.Context, sub, input string) (map[string]string, []string, error) {
+	f.inputs = append(f.inputs, sub+":"+input)
+	return f.KV(ctx, sub)
 }
 
 func (f *fakeRunner) Action(_ context.Context, action string) error {
@@ -106,9 +112,10 @@ func TestInfoHealth(t *testing.T) {
 	}
 }
 
-func TestProbe(t *testing.T) {
+// a shim from before per-site checks: one canary, ok/target/rtt_ms
+func TestProbeOldShim(t *testing.T) {
 	a := &Adapter{x: &fakeRunner{probe: sampleProbe}}
-	got, err := a.Probe(context.Background())
+	got, err := a.Probe(context.Background(), nil)
 	if err != nil {
 		t.Fatalf("Probe: %v", err)
 	}
@@ -117,6 +124,40 @@ func TestProbe(t *testing.T) {
 	}
 	if got.Detail["target"] != "browserleaks.com" {
 		t.Errorf("probe detail target = %q", got.Detail["target"])
+	}
+}
+
+func TestProbeSites(t *testing.T) {
+	// the parallel checks finish in any order
+	out := "check b.com 0 8001 tls_timeout\ncheck c.com 1 120\ncheck a.com 1 350\ncheck d.com 0 30 reset\nts 1758268800\n"
+	f := &fakeRunner{probe: out}
+	a := &Adapter{x: f}
+	got, err := a.Probe(context.Background(), []string{"a.com", "b.com", "c.com", "d.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(f.inputs) != 1 || f.inputs[0] != "probe:a.com\nb.com\nc.com\nd.com" {
+		t.Errorf("sites to the shim: %q", f.inputs)
+	}
+	var order []string
+	for _, c := range got.Checks {
+		order = append(order, c.Domain)
+	}
+	if strings.Join(order, ",") != "a.com,b.com,c.com,d.com" {
+		t.Errorf("checks in the order asked: %v", order)
+	}
+	if !got.OK || got.RTTms != 120 || got.Detail["opened"] != "2" || got.Detail["total"] != "4" {
+		t.Errorf("two of four open → ok, fastest rtt: %+v", got)
+	}
+	if b := got.Checks[1]; b.OK || b.Reason != engine.ReasonTLSTimeout {
+		t.Errorf("b.com: %+v", b)
+	}
+
+	// none opens: not ok, the commonest reason
+	f.probe = "check a.com 0 30 reset\ncheck b.com 0 8001 tls_timeout\ncheck c.com 0 8001 tls_timeout\nts 1\n"
+	got, _ = a.Probe(context.Background(), []string{"a.com", "b.com", "c.com"})
+	if got.OK || got.Reason != engine.ReasonTLSTimeout || got.Detail["opened"] != "0" {
+		t.Errorf("none opens: %+v", got)
 	}
 }
 

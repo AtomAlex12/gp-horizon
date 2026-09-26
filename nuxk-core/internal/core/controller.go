@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/netip"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -21,6 +22,13 @@ var (
 	ErrBadAction       = errors.New("action must be start|stop|restart")
 	ErrNoStrategies    = errors.New("engine does not take strategies")
 	ErrBadStrategy     = errors.New("invalid strategy")
+	ErrNoProbeSites    = errors.New("engine does not take probe sites")
+	ErrBadProbeSites   = errors.New("invalid probe sites")
+)
+
+const (
+	autoProbeSites = 5  // picked from the DPI list when the person chose none
+	maxProbeSites  = 10 // checked in parallel, 8 s each, on a small router
 )
 
 // Controller owns the engines' desired state and converges them to it.
@@ -40,6 +48,11 @@ type Controller struct {
 	// PlaneStatus, when set, fills Snapshot.Plane (the routing plane runs its
 	// own loop; the controller only reports it).
 	PlaneStatus func() any
+
+	// Tunneled, when set, names the domains the router sends into tunnels
+	// (nuxk's WARP/VLESS groups, the person's own routed lists): opening
+	// them never meets the ISP's DPI, so they prove nothing about nfqws2.
+	Tunneled func() []string
 
 	InfoEvery     time.Duration // cheap Info poll
 	ProbeEvery    time.Duration // active Probe (network cost)
@@ -240,6 +253,146 @@ func (c *Controller) Strategies(k engine.Kind) ([]engine.Strategy, error) {
 	return d.Strategies, err
 }
 
+// ProbeSites is what an engine's probe opens, and whether nuxk chose it.
+type ProbeSites struct {
+	Targets []string `json:"targets"`
+	Auto    bool     `json:"auto"`
+}
+
+// ProbeTargets returns the sites nfqws2's probe opens.
+func (c *Controller) ProbeTargets(k engine.Kind) (ProbeSites, error) {
+	if _, ok := c.Reg.Get(k); !ok {
+		return ProbeSites{}, ErrEngineNotFound
+	}
+	if k != engine.KindNfqws2 {
+		return ProbeSites{}, ErrNoProbeSites
+	}
+	return c.probeSites(k, c.lastItems(k)), nil
+}
+
+// SetProbeTargets stores the person's own probe sites; none = automatic.
+// A pasted "https://site/path" is cut down to the site.
+func (c *Controller) SetProbeTargets(k engine.Kind, targets []string) (ProbeSites, error) {
+	if _, ok := c.Reg.Get(k); !ok {
+		return ProbeSites{}, ErrEngineNotFound
+	}
+	if k != engine.KindNfqws2 {
+		return ProbeSites{}, ErrNoProbeSites
+	}
+	clean := []string{}
+	for _, t := range targets {
+		t = strings.ToLower(strings.TrimSpace(t))
+		t = strings.TrimPrefix(strings.TrimPrefix(t, "https://"), "http://")
+		t, _, _ = strings.Cut(t, "/")
+		t = strings.TrimSuffix(t, ".")
+		if t == "" || slices.Contains(clean, t) {
+			continue
+		}
+		if !engine.ValidDomain(t) {
+			return ProbeSites{}, fmt.Errorf("%w: %q is not a site name", ErrBadProbeSites, t)
+		}
+		clean = append(clean, t)
+	}
+	if len(clean) > maxProbeSites {
+		return ProbeSites{}, fmt.Errorf("%w: at most %d sites", ErrBadProbeSites, maxProbeSites)
+	}
+	if _, err := c.Store.UpdateDesired(k, func(d *state.Desired) { d.ProbeTargets = clean }); err != nil {
+		return ProbeSites{}, err
+	}
+	return c.probeSites(k, c.lastItems(k)), nil
+}
+
+// Probe runs an engine's probe now, with its sites, and keeps the result
+// as if the schedule had taken it.
+func (c *Controller) Probe(ctx context.Context, k engine.Kind) (engine.Probe, error) {
+	e, ok := c.Reg.Get(k)
+	if !ok {
+		return engine.Probe{}, ErrEngineNotFound
+	}
+	p, err := e.Probe(ctx, c.probeSites(k, c.lastItems(k)).Targets)
+	if err != nil {
+		return p, err
+	}
+	c.mu.Lock()
+	if st, ok := c.last[k]; ok {
+		st.Probe, st.ProbeAt = &p, time.Now().Unix()
+		c.last[k] = st
+	}
+	c.mu.Unlock()
+	c.Kick()
+	return p, nil
+}
+
+// probeSites: the person's own, else picked from the hostlist nfqws2 reports
+// (items, comma-joined). Only nfqws2's probe takes sites.
+func (c *Controller) probeSites(k engine.Kind, items string) ProbeSites {
+	if k != engine.KindNfqws2 {
+		return ProbeSites{}
+	}
+	if d, err := c.Store.LoadDesired(k); err == nil && len(d.ProbeTargets) > 0 {
+		return ProbeSites{Targets: d.ProbeTargets}
+	}
+	var tun []string
+	if c.Tunneled != nil {
+		tun = c.Tunneled()
+	}
+	return ProbeSites{Targets: autoSites(strings.Split(items, ","), tun, autoProbeSites), Auto: true}
+}
+
+func (c *Controller) lastItems(k engine.Kind) string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.last[k].Detail["items"]
+}
+
+// autoSites picks n probe sites from a hostlist: names the router doesn't
+// send into a tunnel, sites (example.com) before subdomains (a CDN name
+// often has no page), spread over the list rather than its first letters.
+func autoSites(hostlist, tunneled []string, n int) []string {
+	tun := map[string]bool{}
+	for _, d := range tunneled {
+		tun[strings.ToLower(strings.TrimSpace(d))] = true
+	}
+	covered := func(d string) bool {
+		for {
+			if tun[d] {
+				return true
+			}
+			_, parent, ok := strings.Cut(d, ".")
+			if !ok {
+				return false
+			}
+			d = parent
+		}
+	}
+	var sites, subs []string
+	seen := map[string]bool{}
+	for _, d := range hostlist {
+		d = strings.ToLower(strings.TrimSpace(d))
+		if seen[d] || !engine.ValidDomain(d) || covered(d) {
+			continue
+		}
+		seen[d] = true
+		if strings.Count(d, ".") == 1 {
+			sites = append(sites, d)
+		} else {
+			subs = append(subs, d)
+		}
+	}
+	pick := func(from []string, k int) []string {
+		if len(from) <= k {
+			return from
+		}
+		out := make([]string, 0, k)
+		for i := range k {
+			out = append(out, from[i*len(from)/k])
+		}
+		return out
+	}
+	out := append([]string{}, pick(sites, n)...) // never null in JSON
+	return append(out, pick(subs, n-len(out))...)
+}
+
 // --- reconcile loop ---------------------------------------------------------
 
 func (c *Controller) tick(ctx context.Context, doProbe bool) {
@@ -276,6 +429,11 @@ func (c *Controller) tick(ctx context.Context, doProbe bool) {
 	c.mu.Lock()
 	for i, k := range kinds {
 		states[i].LastError = c.lastErr[k]
+		// a probe on demand (Controller.Probe) may have landed while this
+		// tick waited on the engine: keep the newer one
+		if cur := c.last[k]; cur.ProbeAt > states[i].ProbeAt {
+			states[i].Probe, states[i].ProbeAt = cur.Probe, cur.ProbeAt
+		}
 		c.last[k] = states[i]
 	}
 	c.mu.Unlock()
@@ -313,7 +471,7 @@ func (c *Controller) observe(ctx context.Context, k engine.Kind, doProbe bool) E
 		st.UptimeSec = engine.ProcUptime(st.PID) // the script couldn't tell
 	}
 	if doProbe {
-		if p, err := e.Probe(ctx); err != nil {
+		if p, err := e.Probe(ctx, c.probeSites(k, st.Detail["items"]).Targets); err != nil {
 			slog.Warn("reconcile probe", "engine", k, "err", err)
 		} else {
 			st.Probe = &p

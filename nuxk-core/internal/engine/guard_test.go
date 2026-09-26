@@ -25,7 +25,7 @@ func (s *slowEngine) Info(ctx context.Context) (Info, error) {
 	time.Sleep(5 * time.Millisecond)
 	return Info{}, nil
 }
-func (s *slowEngine) Probe(ctx context.Context) (Probe, error)          { return Probe{}, nil }
+func (s *slowEngine) Probe(context.Context, []string) (Probe, error)    { return Probe{}, nil }
 func (s *slowEngine) Start(ctx context.Context) error                   { return nil }
 func (s *slowEngine) Stop(ctx context.Context) error                    { return nil }
 func (s *slowEngine) Restart(ctx context.Context) error                 { return nil }

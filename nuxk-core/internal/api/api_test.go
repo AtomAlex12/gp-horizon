@@ -9,6 +9,7 @@ import (
 
 	"nuxk.dev/horizon/core/internal/core"
 	"nuxk.dev/horizon/core/internal/engine"
+	"nuxk.dev/horizon/core/internal/engine/nfqws2"
 	"nuxk.dev/horizon/core/internal/engine/usque"
 	"nuxk.dev/horizon/core/internal/plane"
 	"nuxk.dev/horizon/core/internal/state"
@@ -139,5 +140,32 @@ func TestStrategiesAPI(t *testing.T) {
 	}
 	if w := do(h, "PUT", "/api/v1/engines/nfqws2/strategies", `nope`, lo, ""); w.Code != http.StatusBadRequest {
 		t.Errorf("bad body -> %d", w.Code)
+	}
+}
+
+func TestProbeTargetsAPI(t *testing.T) {
+	st, err := state.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := engine.NewRegistry()
+	reg.Add(usque.New("/nonexistent/S51usque"))
+	reg.Add(nfqws2.New("/nonexistent/S51nfqws2-nuxk"))
+	hub := core.NewHub("test")
+	h := NewRouter(Deps{Version: "test", Engines: reg, Hub: hub, Ctl: core.NewController(reg, st, hub, "test")})
+	lo := "127.0.0.1:5000"
+
+	if w := do(h, "GET", "/api/v1/engines/nfqws2/probe-targets", "", lo, ""); w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"targets":[]`) {
+		t.Errorf("auto, nothing to pick yet -> %d %s", w.Code, w.Body)
+	}
+	w := do(h, "PUT", "/api/v1/engines/nfqws2/probe-targets", `{"targets":["rutracker.org","https://x.com/home"]}`, lo, "")
+	if w.Code != http.StatusOK || w.Body.String() != `{"targets":["rutracker.org","x.com"],"auto":false}`+"\n" {
+		t.Errorf("set -> %d %s", w.Code, w.Body)
+	}
+	if w := do(h, "PUT", "/api/v1/engines/nfqws2/probe-targets", `{"targets":["$(reboot)"]}`, lo, ""); w.Code != http.StatusBadRequest {
+		t.Errorf("junk -> %d", w.Code)
+	}
+	if w := do(h, "GET", "/api/v1/engines/usque/probe-targets", "", lo, ""); w.Code != http.StatusNotFound {
+		t.Errorf("usque -> %d", w.Code)
 	}
 }

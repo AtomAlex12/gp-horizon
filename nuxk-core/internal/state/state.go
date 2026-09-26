@@ -175,6 +175,9 @@ type Desired struct {
 	Config map[string]string `json:"config,omitempty"`
 	// Strategies last set via PUT /engines/{kind}/strategies (nfqws2).
 	Strategies []engine.Strategy `json:"strategies,omitempty"`
+	// ProbeTargets: the sites the probe opens, set via PUT
+	// /engines/{kind}/probe-targets (nfqws2); empty = chosen automatically.
+	ProbeTargets []string `json:"probe_targets,omitempty"`
 }
 
 // LoadDesired returns engines/<kind>.json, or a zero Desired if absent.

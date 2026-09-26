@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -26,18 +27,26 @@ type fakeEngine struct {
 	calls    []string
 	routings []engine.Routing
 	configs  []map[string]string
+	items    string     // Detail["items"]: the hostlist nfqws2 reports
+	targets  [][]string // the sites each Probe was asked to open
+	onInfo   func()     // runs inside Info, outside the lock
 }
 
 func (f *fakeEngine) log(c string)      { f.mu.Lock(); f.calls = append(f.calls, c); f.mu.Unlock() }
 func (f *fakeEngine) Kind() engine.Kind { return f.kind }
 func (f *fakeEngine) Info(context.Context) (engine.Info, error) {
+	if f.onInfo != nil {
+		f.onInfo()
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return engine.Info{Kind: f.kind, Running: f.running, Endpoint: f.endpoint, Health: f.health, PID: f.pid}, nil
+	return engine.Info{Kind: f.kind, Running: f.running, Endpoint: f.endpoint, Health: f.health, PID: f.pid,
+		Detail: map[string]string{"items": f.items}}, nil
 }
-func (f *fakeEngine) Probe(context.Context) (engine.Probe, error) {
+func (f *fakeEngine) Probe(_ context.Context, targets []string) (engine.Probe, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.targets = append(f.targets, targets)
 	if f.probe == nil {
 		return engine.Probe{OK: true}, nil
 	}
@@ -308,6 +317,105 @@ func TestFailingProbeDegradesHealth(t *testing.T) {
 	old.ProbeAt = now.Unix() - 30
 	if !probeFailing(old, now) {
 		t.Error("a failed probe of this run degrades it")
+	}
+}
+
+func TestAutoSites(t *testing.T) {
+	hostlist := []string{"rutracker.org", "rr1---sn-abc.googlevideo.com", "instagram.com", "static.cdninstagram.com",
+		"x.com", "chatgpt.com", "BrowserLeaks.com", "bad;name", "youtube.com", "rutracker.org", "4pda.to", "ytimg.com"}
+	tunneled := []string{"chatgpt.com", "cdninstagram.com", "instagram.com"}
+	// sites before subdomains; tunnel-bound (and their subdomains), junk and
+	// repeats out; six sites left, five spread over them
+	got := autoSites(hostlist, tunneled, 5)
+	if want := "rutracker.org,x.com,browserleaks.com,youtube.com,4pda.to"; strings.Join(got, ",") != want {
+		t.Errorf("got %v, want %s", got, want)
+	}
+	if got := autoSites(hostlist[:2], nil, 5); strings.Join(got, ",") != "rutracker.org,rr1---sn-abc.googlevideo.com" {
+		t.Errorf("few sites: subdomains fill up: %v", got)
+	}
+	if got := autoSites([]string{""}, nil, 5); len(got) != 0 {
+		t.Errorf("empty hostlist: %v", got)
+	}
+}
+
+func TestProbeSites(t *testing.T) {
+	n := &fakeEngine{kind: engine.KindNfqws2, running: true, health: engine.HealthOK,
+		items: "rutracker.org,chatgpt.com,x.com"}
+	u := &fakeEngine{kind: engine.KindUsque, running: true, health: engine.HealthOK}
+	c, _ := newTestController(t, n, u)
+	c.Tunneled = func() []string { return []string{"chatgpt.com"} }
+	ctx := context.Background()
+	c.tick(ctx, true)
+
+	n.mu.Lock()
+	asked := n.targets
+	n.mu.Unlock()
+	if len(asked) != 1 || strings.Join(asked[0], ",") != "rutracker.org,x.com" {
+		t.Errorf("auto sites without the tunneled one: %v", asked)
+	}
+	if u.targets[0] != nil {
+		t.Errorf("a tunnel's probe takes no sites: %v", u.targets)
+	}
+	ps, err := c.ProbeTargets(engine.KindNfqws2)
+	if err != nil || !ps.Auto || len(ps.Targets) != 2 {
+		t.Errorf("GET: %+v %v", ps, err)
+	}
+
+	ps, err = c.SetProbeTargets(engine.KindNfqws2, []string{" https://RuTracker.org/forum/", "x.com.", "x.com", ""})
+	if err != nil || ps.Auto || strings.Join(ps.Targets, ",") != "rutracker.org,x.com" {
+		t.Errorf("own sites, cleaned: %+v %v", ps, err)
+	}
+	if _, err := c.SetProbeTargets(engine.KindNfqws2, []string{"a.com; reboot"}); !errors.Is(err, ErrBadProbeSites) {
+		t.Errorf("junk refused: %v", err)
+	}
+	if _, err := c.SetProbeTargets(engine.KindUsque, []string{"a.com"}); !errors.Is(err, ErrNoProbeSites) {
+		t.Errorf("usque takes no sites: %v", err)
+	}
+
+	// a probe on demand uses them and is kept like a scheduled one
+	n.mu.Lock()
+	n.probe = &engine.Probe{OK: false, Reason: engine.ReasonTLSTimeout}
+	n.mu.Unlock()
+	if _, err := c.Probe(ctx, engine.KindNfqws2); err != nil {
+		t.Fatal(err)
+	}
+	n.mu.Lock()
+	last := n.targets[len(n.targets)-1]
+	n.mu.Unlock()
+	if strings.Join(last, ",") != "rutracker.org,x.com" {
+		t.Errorf("on-demand probe sites: %v", last)
+	}
+	c.tick(ctx, false)
+	for _, e := range c.Hub.Get().Engines {
+		if e.Kind == engine.KindNfqws2 && (e.Probe == nil || e.Probe.Reason != engine.ReasonTLSTimeout || e.Health != engine.HealthDegraded) {
+			t.Errorf("on-demand probe not kept: %+v", e)
+		}
+	}
+
+	ps, _ = c.SetProbeTargets(engine.KindNfqws2, nil)
+	if !ps.Auto {
+		t.Errorf("none = automatic again: %+v", ps)
+	}
+}
+
+// An info tick that started before a probe on demand finished must not put
+// the older probe back (it waits on the same engine while the probe runs).
+func TestProbeOnDemandSurvivesATickInFlight(t *testing.T) {
+	n := &fakeEngine{kind: engine.KindNfqws2, running: true, health: engine.HealthOK}
+	c, _ := newTestController(t, n)
+	ctx := context.Background()
+	c.tick(ctx, true) // the scheduled probe: ok
+	newer := &engine.Probe{OK: false, Reason: engine.ReasonReset}
+	n.onInfo = func() { // the probe on demand lands mid-tick
+		c.mu.Lock()
+		st := c.last[engine.KindNfqws2]
+		st.Probe, st.ProbeAt = newer, time.Now().Unix()+1
+		c.last[engine.KindNfqws2] = st
+		c.mu.Unlock()
+	}
+	c.tick(ctx, false)
+	if p := c.Hub.Get().Engines[0].Probe; p == nil || p.Reason != engine.ReasonReset {
+		t.Errorf("the newer probe was overwritten: %+v", p)
 	}
 }
 

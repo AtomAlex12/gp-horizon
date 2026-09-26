@@ -22,10 +22,10 @@ func (g *guarded) Info(ctx context.Context) (Info, error) {
 	return g.inner.Info(ctx)
 }
 
-func (g *guarded) Probe(ctx context.Context) (Probe, error) {
+func (g *guarded) Probe(ctx context.Context, targets []string) (Probe, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	return g.inner.Probe(ctx)
+	return g.inner.Probe(ctx, targets)
 }
 
 func (g *guarded) Start(ctx context.Context) error {

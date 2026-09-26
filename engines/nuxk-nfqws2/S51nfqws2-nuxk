@@ -9,7 +9,7 @@
 #
 #   start|stop|restart|reload|status   → stock init script, unchanged
 #   info                                → state as flat "key value" lines
-#   probe                               → does a known SNI-blocked site load
+#   probe < sites                       → do these sites load, and where each breaks
 #   apply-desync   < domains            → lists/user.list, then reload (SIGHUP)
 #   apply-endpoints < ips               → lists/endpoints.list (tunnel upstreams)
 #   apply-strategies < spec             → nuxk-sN.list + NFQWS_ARGS_CUSTOM, restart;
@@ -72,22 +72,56 @@ info() {
     grep . "$LISTS/user.list" 2>/dev/null | head -n 200 | while read -r d; do echo "item $d"; done
 }
 
-# The meaningful nfqws2 probe: does a site the ISP SNI-blocks actually load
-# through the router's real egress (egress_ip means nothing — no reroute).
+# The meaningful nfqws2 probe: do sites of the DPI list actually load through
+# the router's real egress (egress_ip means nothing — no reroute).
+#   probe < sites    one per line, up to 10; none = NFQWS2_PROBE_TARGET
+# All at once, ${NFQWS2_PROBE_TIMEOUT:-8} s each; one line per site:
+#   check <site> 1 <ms>            it opened (any HTTP answer)
+#   check <site> 0 <ms> <reason>   where it broke: dns | connect |
+#                                  connect_timeout (by IP) | tls_timeout,
+#                                  reset (by name, SNI) | cert | slow | error_N
 probe() {
-    target="${NFQWS2_PROBE_TARGET:-browserleaks.com}"
-    t0=$(date +%s%N 2>/dev/null)
-    code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 8 "https://$target/" 2>/dev/null)
-    t1=$(date +%s%N 2>/dev/null)
-    echo "target $target"
-    if [ -n "$code" ] && [ "$code" != "000" ]; then
-        echo "ok 1"
-        case "$t0$t1" in *N*) ;; *) echo "rtt_ms $(((t1 - t0) / 1000000))" ;; esac
-    else
-        echo "ok 0"
-        echo "reason timeout_or_reset"
-    fi
+    T=${NFQWS2_PROBE_TIMEOUT:-8}
+    sites=""
+    [ -t 0 ] || sites=$(sed 's/\r$//' | grep -E '^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$' | head -n 10)
+    [ -n "$sites" ] || sites="${NFQWS2_PROBE_TARGET:-browserleaks.com}"
+    for d in $sites; do probe_one "$d" & done
+    wait
     echo "ts $(date +%s)"
+}
+
+positive() { awk -v t="${1:-0}" 'BEGIN { exit !(t + 0 > 0) }'; }
+
+# probe_one SITE — one HTTPS request; a single echo, so the parallel lines
+# don't interleave
+probe_one() {
+    out=$(curl -sS -o /dev/null --max-time "$T" \
+        -w '%{http_code} %{time_connect} %{time_appconnect} %{time_total}' "https://$1/" 2>/dev/null)
+    rc=$?
+    # shellcheck disable=SC2086 # split curl's four numbers
+    set -- "$1" $out
+    ms=$(awk -v t="${5:-0}" 'BEGIN { printf "%d", t * 1000 + 0.5 }')
+    if [ "${2:-000}" != 000 ]; then
+        echo "check $1 1 $ms"
+        return
+    fi
+    case $rc in
+    6) r=dns ;;
+    7) r=connect ;;
+    28)
+        if ! positive "$3"; then
+            r=connect_timeout
+        elif ! positive "$4"; then
+            r=tls_timeout
+        else
+            r=slow
+        fi
+        ;;
+    35 | 52 | 56) r=reset ;;
+    51 | 60) r=cert ;;
+    *) r=error_$rc ;;
+    esac
+    echo "check $1 0 $ms $r"
 }
 
 apply_list() {

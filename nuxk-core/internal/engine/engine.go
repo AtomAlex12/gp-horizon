@@ -28,8 +28,10 @@ type Engine interface {
 	Info(ctx context.Context) (Info, error)
 
 	// Probe runs an ACTIVE connectivity check through this engine's path
-	// (real request to a canary target). Has network side effects — not cheap.
-	Probe(ctx context.Context) (Probe, error)
+	// (real requests). Has network side effects — not cheap. targets are the
+	// sites it should open (nfqws2: sites from the DPI list, one Check
+	// each); nil = the engine's own canary. Tunnels ignore them for now.
+	Probe(ctx context.Context, targets []string) (Probe, error)
 
 	Start(ctx context.Context) error
 	Stop(ctx context.Context) error
@@ -79,7 +81,30 @@ type Probe struct {
 	Detail   map[string]string `json:"detail,omitempty"` // warp=on, colo=DME, ...
 	Reason   string            `json:"reason,omitempty"` // set when !OK
 	TS       int64             `json:"ts"`               // unix seconds
+	// Checks: one per target site, in the order asked (nfqws2). OK is then
+	// "at least one opens": the engine does its job; the sites it doesn't
+	// open are named here, each with where it broke.
+	Checks []ProbeCheck `json:"checks,omitempty"`
 }
+
+// ProbeCheck is one site of a probe.
+type ProbeCheck struct {
+	Domain string  `json:"domain"`
+	OK     bool    `json:"ok"`
+	RTTms  float64 `json:"rtt_ms,omitempty"`
+	Reason string  `json:"reason,omitempty"` // one of the Reason* below, when !OK
+}
+
+// Where a site's HTTPS request broke (from curl's exit code and timings).
+const (
+	ReasonDNS            = "dns"             // the name doesn't resolve
+	ReasonConnect        = "connect"         // no TCP connection (refused / unreachable)
+	ReasonConnectTimeout = "connect_timeout" // TCP never answers: dropped by IP
+	ReasonTLSTimeout     = "tls_timeout"     // TCP up, TLS silently dropped: by name (SNI)
+	ReasonReset          = "reset"           // connection reset during TLS: by name
+	ReasonCert           = "cert"            // someone else's certificate: a stub or MITM
+	ReasonSlow           = "slow"            // TLS up, no HTTP answer in time
+)
 
 // Routing is the target set for one engine.
 type Routing struct {

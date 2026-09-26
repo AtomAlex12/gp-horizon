@@ -101,6 +101,30 @@ fi
 check "own custom args kept" "$(grep '^NFQWS_ARGS_CUSTOM=' "$C")" 'NFQWS_ARGS_CUSTOM="--filter-tcp=5222 --lua-desync=mine"'
 check "refusal says why" "$(grep -c 'ваши собственные' "$ROOT/err")" "1"
 
+# --- probe: one line per site, where each broke (fake curl by site) ---
+mkdir -p "$ROOT/bin"
+cat >"$ROOT/bin/curl" <<'EOF'
+#!/bin/sh
+for a; do url=$a; done
+case "$url" in
+https://ok.test/) printf '200 0.010 0.020 0.050'; exit 0 ;;
+https://sni.test/) printf '000 0.010 0.000 8.001'; exit 28 ;;
+https://ip.test/) printf '000 0.000 0.000 8.001'; exit 28 ;;
+https://slow.test/) printf '000 0.010 0.020 8.001'; exit 28 ;;
+https://rst.test/) printf '000 0.010 0.000 0.030'; exit 56 ;;
+https://nodns.test/) printf '000 0.000 0.000 0.001'; exit 6 ;;
+https://cert.test/) printf '000 0.010 0.000 0.040'; exit 60 ;;
+esac
+printf '000 0.000 0.000 0.002'
+exit 7
+EOF
+chmod +x "$ROOT/bin/curl"
+probe_out=$(printf 'ok.test\r\nsni.test\nip.test\nslow.test\nrst.test\nnodns.test\ncert.test\nbad;name\n' |
+    PATH="$ROOT/bin:$PATH" sh "$SHIM" probe | grep '^check ' | sort | tr '\n' '|')
+check "probe per site" "$probe_out" "check cert.test 0 40 cert|check ip.test 0 8001 connect_timeout|check nodns.test 0 1 dns|check ok.test 1 50|check rst.test 0 30 reset|check slow.test 0 8001 slow|check sni.test 0 8001 tls_timeout|"
+check "probe canary without sites" "$(PATH="$ROOT/bin:$PATH" sh "$SHIM" probe </dev/null | grep '^check ')" "check browserleaks.com 0 2 connect"
+check "probe stamps ts" "$(PATH="$ROOT/bin:$PATH" sh "$SHIM" probe </dev/null | grep -c '^ts [0-9]')" "1"
+
 sh "$SHIM" restart >/dev/null
 check "lifecycle passes through" "$(tail -n 1 "$ROOT/stock.log")" "stock restart"
 
