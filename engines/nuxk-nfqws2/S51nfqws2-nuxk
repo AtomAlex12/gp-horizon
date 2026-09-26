@@ -12,6 +12,8 @@
 #   probe                               → does a known SNI-blocked site load
 #   apply-desync   < domains            → lists/user.list, then reload (SIGHUP)
 #   apply-endpoints < ips               → lists/endpoints.list (tunnel upstreams)
+#   apply-strategies < spec             → nuxk-sN.list + NFQWS_ARGS_CUSTOM, restart;
+#                                         back to the old conf if nfqws2 won't start
 #
 # NUXK_ROOT prefixes every path (tests run it against a fake /opt).
 
@@ -97,9 +99,126 @@ apply_list() {
     echo "applied $(count "$LISTS/$1")"
 }
 
+die() {
+    echo "$*" >&2
+    exit 1
+}
+
+# nuxk's strategies live in NFQWS_ARGS_CUSTOM (the stock script puts it
+# first, as its own profile) plus one hostlist each, lists/nuxk-sN.list.
+# nuxk only writes NFQWS_ARGS_CUSTOM when it is empty or still holds what
+# nuxk wrote last (.nuxk-custom): a person's own custom args are never
+# overwritten.
+
+# custom_current — the one-line NFQWS_ARGS_CUSTOM value, or die if it isn't
+# nuxk's to change.
+custom_current() {
+    n=$(grep -c '^NFQWS_ARGS_CUSTOM=' "$CONF" 2>/dev/null || true)
+    [ "$n" = 1 ] || die "в $CONF строк NFQWS_ARGS_CUSTOM: ${n:-0} — nuxk правит только одну однострочную"
+    line=$(grep '^NFQWS_ARGS_CUSTOM=' "$CONF")
+    case "$line" in
+    'NFQWS_ARGS_CUSTOM=""' | 'NFQWS_ARGS_CUSTOM=' | NFQWS_ARGS_CUSTOM=\"*[!\\]\") ;;
+    *) die "NFQWS_ARGS_CUSTOM в $CONF многострочная или без кавычек — nuxk её не трогает" ;;
+    esac
+    cur=${line#NFQWS_ARGS_CUSTOM=}
+    cur=${cur#\"}
+    cur=${cur%\"}
+    prev=$(cat "$MARK" 2>/dev/null || true)
+    [ -z "$cur" ] || [ "$cur" = "$prev" ] ||
+        die "в NFQWS_ARGS_CUSTOM ваши собственные аргументы — nuxk их не перезаписывает (уберите их или перенесите в NFQWS_ARGS)"
+    printf '%s' "$cur"
+}
+
+# swap_lists — the staged lists become the live nuxk-sN.list; the old ones
+# wait in .nuxk-old until the change is confirmed (or restore_lists).
+swap_lists() {
+    rm -rf "$OLD"
+    mkdir -p "$OLD"
+    for f in "$LISTS"/nuxk-s*.list; do [ -e "$f" ] && mv "$f" "$OLD/"; done
+    for f in "$STAGE"/nuxk-s*.list; do [ -e "$f" ] && mv "$f" "$LISTS/"; done
+    rm -rf "$STAGE"
+}
+
+restore_lists() {
+    for f in "$LISTS"/nuxk-s*.list; do [ -e "$f" ] && rm -f "$f"; done
+    for f in "$OLD"/nuxk-s*.list; do [ -e "$f" ] && mv "$f" "$LISTS/"; done
+    rm -rf "$OLD"
+}
+
+# apply-strategies < spec:
+#   list nuxk-s1.list      domains, one per line, up to a line "."
+#   custom <args>          the NFQWS_ARGS_CUSTOM value ("" = no strategies)
+# Same args, other domains: the lists are swapped and nfqws2 re-reads them
+# (reload). New args: the conf is copied to nfqws2.conf.nuxk-bak (and once,
+# the untouched original to .nuxk-orig), nfqws2 restarts, and if it doesn't
+# come back both the conf and the lists are put back.
+apply_strategies() {
+    MARK="$R/opt/etc/nfqws2/.nuxk-custom"
+    STAGE="$LISTS/.nuxk-stage"
+    OLD="$LISTS/.nuxk-old"
+    # die inside $(…) only leaves the subshell: carry its refusal out
+    cur_before=$(custom_current) || exit 1
+    rm -rf "$STAGE"
+    mkdir -p "$STAGE"
+    new=""
+    open=""
+    cr=$(printf '\r')
+    while IFS= read -r line || [ -n "$line" ]; do
+        line=${line%"$cr"}
+        if [ -n "$open" ]; then
+            if [ "$line" = . ]; then
+                open=""
+            elif [ -n "$line" ]; then
+                printf '%s\n' "$line" >>"$STAGE/$open"
+            fi
+            continue
+        fi
+        case "$line" in
+        "list "*)
+            open=${line#list }
+            case "$open" in nuxk-s[0-9]*.list) ;; *) rm -rf "$STAGE"; die "bad list name: $open" ;; esac
+            : >"$STAGE/$open"
+            ;;
+        custom | "custom "*)
+            new=${line#custom}
+            new=${new# }
+            ;;
+        esac
+    done
+    [ -z "$open" ] || { rm -rf "$STAGE"; die "list $open: no closing line '.'"; }
+
+    swap_lists
+    if [ "$new" = "$cur_before" ]; then
+        rm -rf "$OLD"
+        is_running && "$STOCK" reload >/dev/null 2>&1
+        echo "lists updated"
+        return 0
+    fi
+
+    [ -e "$CONF.nuxk-orig" ] || cp -p "$CONF" "$CONF.nuxk-orig"
+    cp -p "$CONF" "$CONF.nuxk-bak"
+    awk -v v="$new" '/^NFQWS_ARGS_CUSTOM=/ { print "NFQWS_ARGS_CUSTOM=\"" v "\""; next } { print }' "$CONF.nuxk-bak" >"$CONF.nuxk-tmp" &&
+        mv "$CONF.nuxk-tmp" "$CONF"
+    prev=$(cat "$MARK" 2>/dev/null || true)
+    printf '%s\n' "$new" >"$MARK"
+
+    "$STOCK" restart >/dev/null 2>&1 || true
+    sleep "${NUXK_SETTLE:-2}"
+    if ! is_running; then
+        cp -p "$CONF.nuxk-bak" "$CONF"
+        printf '%s\n' "$prev" >"$MARK"
+        restore_lists
+        "$STOCK" restart >/dev/null 2>&1 || true
+        die "nfqws2 не запустился с новой стратегией — вернул прежний $CONF"
+    fi
+    rm -rf "$OLD"
+    echo "applied"
+}
+
 case "$1" in
 info) info ;;
 probe) probe ;;
+apply-strategies) apply_strategies ;;
 apply-desync)
     apply_list user.list
     # SIGHUP re-reads the lists without dropping the queue
@@ -112,7 +231,7 @@ start | stop | restart | reload | status)
     exec "$STOCK" "$@"
     ;;
 *)
-    echo "usage: $0 {start|stop|restart|reload|status|info|probe|apply-desync|apply-endpoints}" >&2
+    echo "usage: $0 {start|stop|restart|reload|status|info|probe|apply-desync|apply-endpoints|apply-strategies}" >&2
     exit 1
     ;;
 esac

@@ -257,6 +257,45 @@ paths:
         "404": { $ref: "#/components/responses/Error" }
         "502": { $ref: "#/components/responses/Error" }
 
+  /api/v1/engines/{kind}/strategies:
+    get:
+      tags: [engines]
+      operationId: engineStrategies
+      summary: nuxk's per-domain strategies on this engine (nfqws2 only)
+      parameters: [{ $ref: "#/components/parameters/kind" }]
+      responses:
+        "200":
+          description: the stored set
+          content: { application/json: { schema: { $ref: "#/components/schemas/StrategySet" } } }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+    put:
+      tags: [engines]
+      operationId: setEngineStrategies
+      summary: Replace nuxk's strategies (an empty list removes them)
+      description: >
+        nfqws2: each strategy becomes its own profile in NFQWS_ARGS_CUSTOM
+        (the stock script puts it before the others) with a hostlist
+        nuxk-sN.list of its domains and a protocol filter. Only --payload,
+        --lua-desync, --out-range and --in-range are accepted, without files;
+        a leading "nfqws2" and --filter-*/--hostlist* are dropped. nfqws2
+        restarts; the conf is copied to nfqws2.conf.nuxk-bak first (and the
+        original once to .nuxk-orig). If nfqws2 won't start, the old conf is
+        restored and the answer is 502. Custom args a person wrote there
+        themselves are never overwritten (502 with the reason).
+      parameters: [{ $ref: "#/components/parameters/kind" }]
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/StrategySet" } } }
+      responses:
+        "200":
+          description: applied, nfqws2 running with them
+          content: { application/json: { schema: { $ref: "#/components/schemas/Ok" } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "502": { $ref: "#/components/responses/Error" }
+
   /api/v1/plane:
     get:
       tags: [plane]
@@ -502,6 +541,26 @@ components:
         cidrs: { type: array, items: { type: string } }
         endpoints: { type: array, items: { type: string } }
         strategy: { type: string }
+
+    Strategy:
+      type: object
+      required: [id, protocol, domains, args]
+      properties:
+        id: { type: string, pattern: "^[A-Za-z0-9_.:-]{1,80}$" }
+        protocol: { type: string, enum: [tls, http, quic] }
+        domains: { type: array, items: { type: string }, minItems: 1, maxItems: 5000 }
+        args:
+          type: string
+          maxLength: 2000
+          description: nfqws2 desync args, e.g. "--payload=tls_client_hello --lua-desync=multisplit:pos=1"
+        source: { type: string, description: 'where it was found, e.g. "gp:<run_id>"' }
+        applied_at: { type: integer, format: int64, description: unix seconds, set by the agent }
+
+    StrategySet:
+      type: object
+      required: [strategies]
+      properties:
+        strategies: { type: array, items: { $ref: "#/components/schemas/Strategy" } }
 
     EngineConfig:
       type: object

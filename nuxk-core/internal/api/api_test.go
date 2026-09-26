@@ -127,3 +127,17 @@ func TestPlaneAPI(t *testing.T) {
 		t.Errorf("plane off -> %d", w.Code)
 	}
 }
+
+func TestStrategiesAPI(t *testing.T) {
+	h := newTestRouter(t, "") // usque only: takes no strategies
+	lo := "127.0.0.1:5000"
+	if w := do(h, "GET", "/api/v1/engines/usque/strategies", "", lo, ""); w.Code != http.StatusNotFound {
+		t.Errorf("usque strategies -> %d", w.Code)
+	}
+	if w := do(h, "PUT", "/api/v1/engines/usque/strategies", `{"strategies":[]}`, lo, ""); w.Code != http.StatusNotFound {
+		t.Errorf("usque set -> %d", w.Code)
+	}
+	if w := do(h, "PUT", "/api/v1/engines/nfqws2/strategies", `nope`, lo, ""); w.Code != http.StatusBadRequest {
+		t.Errorf("bad body -> %d", w.Code)
+	}
+}

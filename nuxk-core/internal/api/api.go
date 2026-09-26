@@ -63,6 +63,8 @@ var Routes = []Route{
 	{"GET /api/v1/engines/{kind}", false, func(d Deps) http.HandlerFunc { return d.handleEngine }},
 	{"POST /api/v1/engines/{kind}/{action}", false, func(d Deps) http.HandlerFunc { return d.handleEngineAction }},
 	{"PUT /api/v1/engines/{kind}/config", false, func(d Deps) http.HandlerFunc { return d.handleEngineConfig }},
+	{"GET /api/v1/engines/{kind}/strategies", false, func(d Deps) http.HandlerFunc { return d.handleStrategies }},
+	{"PUT /api/v1/engines/{kind}/strategies", false, func(d Deps) http.HandlerFunc { return d.handleSetStrategies }},
 	{"GET /api/v1/plane", false, func(d Deps) http.HandlerFunc { return d.handlePlane }},
 	{"GET /api/v1/plane/lists", false, func(d Deps) http.HandlerFunc { return d.handlePlaneLists }},
 	{"PUT /api/v1/plane/lists", false, func(d Deps) http.HandlerFunc { return d.handlePlaneSetLists }},
@@ -210,6 +212,49 @@ func (d Deps) handleEngineConfig(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "engine_not_found", "no such engine: "+string(k))
 	case errors.Is(err, core.ErrNotConfigurable):
 		writeErr(w, http.StatusNotFound, "not_configurable", "engine does not accept runtime config: "+string(k))
+	case err != nil:
+		writeErr(w, http.StatusBadGateway, "engine_error", err.Error())
+	default:
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	}
+}
+
+// StrategySet is GET/PUT /engines/{kind}/strategies.
+type StrategySet struct {
+	Strategies []engine.Strategy `json:"strategies"`
+}
+
+func (d Deps) handleStrategies(w http.ResponseWriter, r *http.Request) {
+	ss, err := d.Ctl.Strategies(engine.Kind(r.PathValue("kind")))
+	switch {
+	case errors.Is(err, core.ErrEngineNotFound), errors.Is(err, core.ErrNoStrategies):
+		writeErr(w, http.StatusNotFound, "no_strategies", "this engine takes no strategies")
+	case err != nil:
+		writeErr(w, http.StatusInternalServerError, "state", err.Error())
+	default:
+		writeJSON(w, http.StatusOK, StrategySet{Strategies: ss})
+	}
+}
+
+// handleSetStrategies replaces the engine's nuxk strategies. It restarts the
+// engine; if it won't start with them, the engine's old config is restored
+// and the answer is an error.
+func (d Deps) handleSetStrategies(w http.ResponseWriter, r *http.Request) {
+	var set StrategySet
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<20)).Decode(&set); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad_body", "want {\"strategies\":[...]}")
+		return
+	}
+	if set.Strategies == nil {
+		set.Strategies = []engine.Strategy{}
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
+	defer cancel()
+	switch err := d.Ctl.SetStrategies(ctx, engine.Kind(r.PathValue("kind")), set.Strategies); {
+	case errors.Is(err, core.ErrEngineNotFound), errors.Is(err, core.ErrNoStrategies):
+		writeErr(w, http.StatusNotFound, "no_strategies", "this engine takes no strategies")
+	case errors.Is(err, core.ErrBadStrategy):
+		writeErr(w, http.StatusBadRequest, "bad_strategy", err.Error())
 	case err != nil:
 		writeErr(w, http.StatusBadGateway, "engine_error", err.Error())
 	default:

@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/netip"
@@ -18,6 +19,8 @@ var (
 	ErrEngineNotFound  = errors.New("no such engine")
 	ErrNotConfigurable = errors.New("engine does not accept runtime config")
 	ErrBadAction       = errors.New("action must be start|stop|restart")
+	ErrNoStrategies    = errors.New("engine does not take strategies")
+	ErrBadStrategy     = errors.New("invalid strategy")
 )
 
 // Controller owns the engines' desired state and converges them to it.
@@ -174,6 +177,67 @@ func (c *Controller) SetConfig(ctx context.Context, k engine.Kind, cfg map[strin
 	_, err := c.Store.UpdateDesired(k, func(d *state.Desired) { d.Config = cfg })
 	c.Kick()
 	return err
+}
+
+// SetStrategies replaces the engine's nuxk strategies (nfqws2: per-domain
+// profiles in NFQWS_ARGS_CUSTOM); an empty set removes them. The engine
+// restarts to take them and restores its old config if it won't start —
+// then the error says so and nothing is stored.
+func (c *Controller) SetStrategies(ctx context.Context, k engine.Kind, ss []engine.Strategy) error {
+	e, ok := c.Reg.Get(k)
+	if !ok {
+		return ErrEngineNotFound
+	}
+	se, ok := e.(engine.Strategist)
+	if !ok {
+		return ErrNoStrategies
+	}
+	old, _ := c.Store.LoadDesired(k)
+	since := map[string]int64{}
+	for _, s := range old.Strategies {
+		since[s.ID] = s.AppliedAt
+	}
+	now := time.Now().Unix()
+	seen := map[string]bool{}
+	for i := range ss {
+		ss[i].Args = engine.NormalizeArgs(ss[i].Args)
+		if err := engine.ValidateStrategy(ss[i]); err != nil {
+			return fmt.Errorf("%w: %v", ErrBadStrategy, err)
+		}
+		if seen[ss[i].ID] {
+			return fmt.Errorf("%w: id %q twice", ErrBadStrategy, ss[i].ID)
+		}
+		seen[ss[i].ID] = true
+		ss[i].AppliedAt = now
+		if t, ok := since[ss[i].ID]; ok && t > 0 {
+			ss[i].AppliedAt = t
+		}
+	}
+	if err := se.ApplyStrategies(ctx, ss); err != nil {
+		c.setLastErr(k, err)
+		return err
+	}
+	c.setLastErr(k, nil)
+	slog.Info("strategies applied", "engine", k, "count", len(ss))
+	_, err := c.Store.UpdateDesired(k, func(d *state.Desired) { d.Strategies = ss })
+	c.Kick()
+	return err
+}
+
+// Strategies returns the engine's stored nuxk strategies.
+func (c *Controller) Strategies(k engine.Kind) ([]engine.Strategy, error) {
+	e, ok := c.Reg.Get(k)
+	if !ok {
+		return nil, ErrEngineNotFound
+	}
+	if _, ok := e.(engine.Strategist); !ok {
+		return nil, ErrNoStrategies
+	}
+	d, err := c.Store.LoadDesired(k)
+	if d.Strategies == nil {
+		d.Strategies = []engine.Strategy{}
+	}
+	return d.Strategies, err
 }
 
 // --- reconcile loop ---------------------------------------------------------

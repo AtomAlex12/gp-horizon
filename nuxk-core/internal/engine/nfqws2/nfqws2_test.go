@@ -175,3 +175,22 @@ func TestApplyRoutingNilDomainsEmptyEndpoints(t *testing.T) {
 		t.Errorf("inputs = %q, want only an empty apply-endpoints", f.inputs)
 	}
 }
+
+func TestApplyStrategiesInput(t *testing.T) {
+	f := &fakeRunner{}
+	a := &Adapter{x: f}
+	ss := []engine.Strategy{{ID: "gp-1", Protocol: "tls", Domains: []string{"a.com", "b.com"}, Args: "--lua-desync=multisplit:pos=1"}}
+	if err := a.ApplyStrategies(context.Background(), ss); err != nil {
+		t.Fatal(err)
+	}
+	want := "apply-strategies:list nuxk-s1.list\na.com\nb.com\n.\n" +
+		"custom --filter-tcp=443 --filter-l7=tls --hostlist=/opt/etc/nfqws2/lists/nuxk-s1.list --lua-desync=multisplit:pos=1\n"
+	if len(f.inputs) != 1 || f.inputs[0] != want {
+		t.Errorf("shim input:\n%q\nwant\n%q", f.inputs, want)
+	}
+	f.inputs = nil
+	a.ApplyStrategies(context.Background(), nil)
+	if f.inputs[0] != "apply-strategies:custom \n" {
+		t.Errorf("clearing: %q", f.inputs[0])
+	}
+}
