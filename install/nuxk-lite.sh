@@ -358,14 +358,24 @@ do_nfqws2() {
     warn "штатный nfqws2 сразу обрабатывает трафик по своему конфигу; если что-то перестало открываться: $P_NFQ_INIT stop"
 }
 
-# keep_prev — the running version (agent, its init, the nfqws2 adapter, web)
-# into $P_PREV. The `nuxk` command isn't kept: a newer one runs older agents.
+# core_files — what do_core puts on the router: the agent's files, and the
+# xray adapter when xray is there (the adapter moves with the agent that
+# drives it; xray itself only when its pinned version changes)
+core_files() {
+    echo "nuxk-core-$ARCH nuxk-web-lite-$VERSION.tar.gz S99nuxk-core S51nfqws2-nuxk nuxk-lite.sh"
+    [ -x "$R$P_XRAY_INIT" ] && echo S52xray-nuxk
+    return 0
+}
+
+# keep_prev — the running version (agent, its init, the adapters, web) into
+# $P_PREV. The `nuxk` command isn't kept: a newer one runs older agents.
 keep_prev() {
     [ -x "$R$P_BIN" ] || return 0
     rm -rf "$R$P_PREV" && mkdir -p "$R$P_PREV" || return 0
     cp -f "$R$P_BIN" "$R$P_PREV/nuxk-core"
     [ -f "$R$P_INIT" ] && cp -f "$R$P_INIT" "$R$P_PREV/S99nuxk-core"
     [ -f "$R$P_SHIM" ] && cp -f "$R$P_SHIM" "$R$P_PREV/S51nfqws2-nuxk"
+    [ -f "$R$P_XRAY_INIT" ] && cp -f "$R$P_XRAY_INIT" "$R$P_PREV/S52xray-nuxk"
     [ -d "$R$P_WEB" ] && cp -R "$R$P_WEB" "$R$P_PREV/web"
     return 0
 }
@@ -378,7 +388,7 @@ rollback() {
     [ -x "$R$P_PREV/nuxk-core" ] || return 1
     "$R$P_INIT" stop >/dev/null 2>&1
     cp -f "$R$P_PREV/nuxk-core" "$R$P_BIN" && chmod 755 "$R$P_BIN" || return 1
-    for f in "S99nuxk-core:$P_INIT" "S51nfqws2-nuxk:$P_SHIM"; do
+    for f in "S99nuxk-core:$P_INIT" "S51nfqws2-nuxk:$P_SHIM" "S52xray-nuxk:$P_XRAY_INIT"; do
         [ -f "$R$P_PREV/${f%%:*}" ] && cp -f "$R$P_PREV/${f%%:*}" "$R${f#*:}" && chmod 755 "$R${f#*:}"
     done
     [ -d "$R$P_PREV/web" ] && rm -rf "$R$P_WEB" && cp -R "$R$P_PREV/web" "$R$P_WEB"
@@ -417,9 +427,7 @@ healthy() {
 do_core() {
     step "nuxk-core $VERSION и веб"
     report running "Ставлю агент и веб $VERSION"
-    fetch "nuxk-core-$ARCH"
-    fetch "nuxk-web-lite-$VERSION.tar.gz"
-    for f in S99nuxk-core S51nfqws2-nuxk nuxk-lite.sh; do fetch "$f"; done
+    for f in $(core_files); do fetch "$f"; done
     chmod 755 "$TMP/nuxk-core-$ARCH"
     "$TMP/nuxk-core-$ARCH" -version >/dev/null 2>&1 || die "nuxk-core-$ARCH не запускается на этом роутере ($ARCH_RAW)"
     mkdir -p "$TMP/web" && tar -xzf "$TMP/nuxk-web-lite-$VERSION.tar.gz" -C "$TMP/web" || die "веб не распаковался"
@@ -431,11 +439,14 @@ do_core() {
     [ -x "$R$P_INIT" ] && "$R$P_INIT" stop >/dev/null 2>&1
     mkdir -p "$R$(dirname $P_BIN)" "$R$(dirname $P_INIT)" "$R$(dirname $P_SHIM)" "$R$(dirname $P_SELF)" "$R$(dirname $P_WEB)"
     cp -f "$TMP/nuxk-core-$ARCH" "$R$P_BIN" && chmod 755 "$R$P_BIN" || undo "не записался $P_BIN"
-    for f in "S99nuxk-core:$P_INIT" "S51nfqws2-nuxk:$P_SHIM" "nuxk-lite.sh:$P_SELF"; do
+    set -- "S99nuxk-core:$P_INIT" "S51nfqws2-nuxk:$P_SHIM" "nuxk-lite.sh:$P_SELF"
+    xa=""
+    [ -x "$R$P_XRAY_INIT" ] && [ -f "$TMP/S52xray-nuxk" ] && set -- "$@" "S52xray-nuxk:$P_XRAY_INIT" && xa=" · адаптер xray"
+    for f in "$@"; do
         cp -f "$TMP/${f%%:*}" "$R${f#*:}" && chmod 755 "$R${f#*:}" || undo "не записался ${f#*:}"
     done
     rm -rf "$R$P_WEB.new" && cp -R "$TMP/web" "$R$P_WEB.new" && rm -rf "$R$P_WEB" && mv "$R$P_WEB.new" "$R$P_WEB" || undo "веб не записался в $P_WEB"
-    ok "$("$R$P_BIN" -version 2>/dev/null) · веб · адаптер nfqws2 · команда nuxk"
+    ok "$("$R$P_BIN" -version 2>/dev/null) · веб · адаптер nfqws2$xa · команда nuxk"
     [ -n "$CORE_VER" ] && [ "$CORE_VER" != "$VERSION" ] && note "прежняя версия $CORE_VER — в $P_PREV (вернуть: nuxk rollback)"
     CORE_VER=$VERSION
     return 0
@@ -689,8 +700,11 @@ mode_install() {
     }
     ask "Начать установку?" y || die "отменено — на роутере ничего не изменилось"
 
+    # over an older nuxk: the same as an update — if the new agent doesn't
+    # answer, the one that ran comes back by itself
+    [ -n "$want_core" ] && [ -n "$CORE_VER" ] && UPDATING=1
     files=""
-    [ -n "$want_core" ] && files="nuxk-core-$ARCH nuxk-web-lite-$VERSION.tar.gz S99nuxk-core S51nfqws2-nuxk nuxk-lite.sh"
+    [ -n "$want_core" ] && files=$(core_files)
     [ -n "$want_usque" ] && files="$files usque-keenetic-$ARCH.ipk"
     [ -n "$want_xray" ] && files="$files S52xray-nuxk"
     # shellcheck disable=SC2086
@@ -725,10 +739,8 @@ mode_update() {
     [ "$XRAY_READY" = 1 ] && [ "$XRAY_VER" != "$XRAY_VERSION" ] && STEPS=3
     printf '\n'
     row do "nuxk-core" "$CORE_VER → $VERSION"
-    xf=""
-    [ "$STEPS" = 3 ] && xf=S52xray-nuxk
-    # shellcheck disable=SC2086
-    prefetch "nuxk-core-$ARCH" "nuxk-web-lite-$VERSION.tar.gz" S99nuxk-core S51nfqws2-nuxk nuxk-lite.sh $xf
+    # shellcheck disable=SC2046
+    prefetch $(core_files)
     do_core
     if [ "$STEPS" = 3 ]; then
         report running "Обновляю xray до $XRAY_VERSION"
