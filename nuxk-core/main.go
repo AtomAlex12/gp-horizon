@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -34,7 +35,9 @@ import (
 	"nuxk.dev/horizon/core/internal/node"
 	"nuxk.dev/horizon/core/internal/plane"
 	"nuxk.dev/horizon/core/internal/plane/keenetic"
+	"nuxk.dev/horizon/core/internal/release"
 	"nuxk.dev/horizon/core/internal/state"
+	"nuxk.dev/horizon/core/internal/update"
 )
 
 // Set by -ldflags at build time (see VERSION at the repo root and the Makefile).
@@ -51,12 +54,25 @@ func main() {
 		debug   = flag.Bool("debug", false, "verbose logging")
 		showVer = flag.Bool("version", false, "print version and exit")
 		logPath = flag.String("log", "", "log file, rotated in-process at 512 KiB (empty = stderr)")
+		verify  = flag.String("verify", "", "check FILE against FILE.sig, the nuxk Horizon release signature, and exit (1 = not signed by it)")
 	)
 	flag.Parse()
 	if *showVer {
 		// One machine-readable line — nuxk-lite.sh parses it to decide
 		// whether the router's copy needs an upgrade.
 		fmt.Printf("nuxk-core %s %s\n", version, commit)
+		return
+	}
+	if *verify != "" {
+		// nuxk-lite.sh asks the agent already on the router whether a new
+		// release's SHA256SUMS is signed by the release key: exit 0 = it is.
+		// (An agent too old to know -verify exits 2 on the unknown flag.)
+		k, err := release.VerifyFile(*verify)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		fmt.Printf("%s %s\n", k.Principal, k.Fingerprint())
 		return
 	}
 
@@ -186,17 +202,35 @@ func main() {
 	}
 	go ctl.Run(ctx)
 
+	// browser logins; an update from the panel hands them to the next agent
+	// (sessions.handoff), so the person who pressed the button stays logged in
 	var guard *auth.Guard
+	handoff := filepath.Join(cfg.StateDir, "sessions.handoff")
 	if cfg.AuthUser != "" {
 		guard = auth.New(cfg.AuthUser, cfg.AuthFiles...)
+		if n := guard.TakeHandoff(handoff); n > 0 {
+			slog.Info("logins kept across the update", "sessions", n)
+		}
 	}
+
+	upd := update.New(update.Options{
+		Current: version, Repo: cfg.UpdateRepo, API: cfg.UpdateAPI, Command: cfg.UpdateCommand, Dir: cfg.StateDir,
+		Handoff: func() error {
+			if guard == nil {
+				return nil
+			}
+			return guard.Handoff(handoff)
+		},
+	}, st)
+	go upd.Run(ctx)
 
 	srv := &http.Server{
 		Addr: cfg.Listen,
 		Handler: api.NewRouter(api.Deps{
 			Version: version, Commit: commit, Engines: reg, Hub: hub, Ctl: ctl, Plane: pm,
 			WebRoot: cfg.WebRoot, Token: cfg.APIToken, Auth: guard, Logs: logs,
-			Node: node.New(cfg.NodeRole, cfg.Plane.RCI, version, commit),
+			Node:   node.New(cfg.NodeRole, cfg.Plane.RCI, version, commit),
+			Update: upd,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		WriteTimeout:      30 * time.Second,

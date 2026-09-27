@@ -35,6 +35,10 @@ export type ListMode = S['ListMode'];
 export type OnDown = S['OnDown'];
 export type Strategy = S['Strategy'];
 export type StrategySet = S['StrategySet'];
+export type UpdateStatus = S['UpdateStatus'];
+export type UpdateRun = S['UpdateRun'];
+export type UpdateRelease = S['UpdateRelease'];
+export type UpdateSettings = S['UpdateSettings'];
 
 // nuxk-controller's own API (not part of the agent contract).
 export interface AgentState {
@@ -130,6 +134,11 @@ export const api = {
   planeLists: () => req<PlaneDesired>('GET', v1('/plane/lists')),
   setPlaneLists: (d: PlaneDesired) => req<S['Ok']>('PUT', v1('/plane/lists'), d),
   planeImport: (groups: string[], mode: ListMode) => req<PlaneDesired>('POST', v1('/plane/import'), { groups, mode }),
+
+  update: () => req<UpdateStatus>('GET', v1('/update')),
+  checkUpdate: () => req<UpdateStatus>('POST', v1('/update/check')),
+  startUpdate: (version: string) => req<UpdateStatus>('POST', v1('/update'), { version }),
+  setUpdateSettings: (s: UpdateSettings) => req<UpdateStatus>('PUT', v1('/update/settings'), s),
 
   // controller only (404 when the UI is served by the agent itself)
   agent: () => req<AgentState>('GET', '/ctl/v1/agent'),

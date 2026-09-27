@@ -20,6 +20,7 @@ import (
 	"nuxk.dev/horizon/core/internal/logbuf"
 	"nuxk.dev/horizon/core/internal/node"
 	"nuxk.dev/horizon/core/internal/plane"
+	"nuxk.dev/horizon/core/internal/update"
 )
 
 type Deps struct {
@@ -34,6 +35,7 @@ type Deps struct {
 	Auth    *auth.Guard      // browser login with the box's root account; nil = off
 	Node    *node.Node       // /info, /metrics
 	Logs    *logbuf.Ring     // /logs, log events on /events
+	Update  *update.Updater  // /update: new releases, the router updated from the panel; nil = off
 }
 
 // Route is one API endpoint. Routes is the single list the mux is built from
@@ -74,6 +76,10 @@ var Routes = []Route{
 	{"GET /api/v1/plane/lists", false, func(d Deps) http.HandlerFunc { return d.handlePlaneLists }},
 	{"PUT /api/v1/plane/lists", false, func(d Deps) http.HandlerFunc { return d.handlePlaneSetLists }},
 	{"POST /api/v1/plane/import", false, func(d Deps) http.HandlerFunc { return d.handlePlaneImport }},
+	{"GET /api/v1/update", false, func(d Deps) http.HandlerFunc { return d.handleUpdate }},
+	{"POST /api/v1/update", false, func(d Deps) http.HandlerFunc { return d.handleUpdateStart }},
+	{"POST /api/v1/update/check", false, func(d Deps) http.HandlerFunc { return d.handleUpdateCheck }},
+	{"PUT /api/v1/update/settings", false, func(d Deps) http.HandlerFunc { return d.handleUpdateSettings }},
 }
 
 // maxBody bounds every request body (the largest is a full set of lists).

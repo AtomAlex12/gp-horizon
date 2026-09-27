@@ -18,6 +18,7 @@
   import Strategies from './lib/views/Strategies.svelte';
   import { planeOf, healthDot, roleLabel, last } from './lib/ui';
   import { history as hist } from './lib/status.svelte';
+  import { upd, running as updating, watchUpdates } from './lib/update.svelte';
 
   startPolling();
 
@@ -111,6 +112,11 @@
   // before the console: the first connect, the login form, the setup wizard
   const booting = $derived(status.loading && !status.data && !setup.step);
   const gated = $derived(booting || !!setup.step || (status.needLogin && !status.loading));
+  // new releases: looked at once the console is open
+  $effect(() => {
+    if (!gated && status.data) watchUpdates();
+  });
+  const newVersion = $derived(upd.s?.available && upd.s.latest ? upd.s.latest.version : '');
 </script>
 
 {#snippet brandMark()}
@@ -167,6 +173,8 @@
               <span class="count end warnc">{conflicts}</span>
             {:else if k === 'conns' && conns !== null}
               <span class="count end">{conns}</span>
+            {:else if k === 'system' && (newVersion || updating())}
+              <span class="dot acc end" title={updating() ? 'идёт обновление' : `доступна ${newVersion}`}></span>
             {/if}
           </button>
         {/each}
@@ -188,6 +196,11 @@
           {node.via === 'controller' ? 'контроллер' : 'агент'}
         </span>
         <span class="muted mono ver">core {status.data.version}</span>
+      {/if}
+      {#if updating()}
+        <button class="chip acc upd" onclick={() => go('system')}>обновляется…</button>
+      {:else if newVersion}
+        <button class="chip acc upd" onclick={() => go('system')} title="Обновления — в разделе «Система»">доступна {newVersion}</button>
       {/if}
       <button class="ghost sm" onclick={toggleTheme} aria-label="Сменить тему"><Icon name={theme === 'dark' ? 'sun' : 'moon'} size={15} /></button>
     </header>
@@ -334,6 +347,11 @@
   }
   .ver {
     font-size: 12px;
+  }
+  .upd {
+    border: 0;
+    cursor: pointer;
+    white-space: nowrap;
   }
   .menu-btn {
     display: none;

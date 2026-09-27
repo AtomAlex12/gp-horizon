@@ -35,6 +35,7 @@ tags:
   - { name: agent, description: the box itself — liveness, identity, counters, log, live events }
   - { name: engines, description: nfqws2 / usque / xray }
   - { name: plane, description: "routing plane: the DPI / WARP / VLESS lists" }
+  - { name: update, description: "new releases; the router updated from the panel" }
 
 paths:
   /api/v1/healthz:
@@ -460,6 +461,83 @@ paths:
         "400": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
 
+  /api/v1/update:
+    get:
+      tags: [update]
+      operationId: update
+      summary: This version, the newest release, the last update from the panel
+      description: >
+        The agent looks at the repository's releases on GitHub a couple of
+        minutes after start and then once a day (settings.check). `run` is
+        the last update started from the panel, as its script reported it —
+        it outlives the agent's restart.
+      responses:
+        "200":
+          description: the update state
+          content: { application/json: { schema: { $ref: "#/components/schemas/UpdateStatus" } } }
+        "401": { $ref: "#/components/responses/Error" }
+    post:
+      tags: [update]
+      operationId: startUpdate
+      summary: Update this router to the release found (the router's own `nuxk update`)
+      description: >
+        Answers at once; the update runs in the background: the release's
+        files checked against its SHA256SUMS, whose signature this agent
+        checks with the built-in release key; then the agent is restarted and
+        asked whether it answers — if not, the previous version is put back.
+        The agent is down for a few seconds on the way: follow `run` with GET.
+        Only a version newer than this one, and only the one GET shows as
+        `latest`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [version]
+              properties:
+                version: { type: string, example: 0.4.1 }
+      responses:
+        "202":
+          description: started
+          content: { application/json: { schema: { $ref: "#/components/schemas/UpdateStatus" } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "409":
+          description: "update_busy: one is running; update_stale: not the version found, or not newer"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "503":
+          description: "update_unavailable: no `nuxk` command here (not installed by nuxk-lite)"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /api/v1/update/check:
+    post:
+      tags: [update]
+      operationId: checkUpdate
+      summary: Look for a new release now
+      description: At most once a minute goes to GitHub; more often answers with the last look.
+      responses:
+        "200":
+          description: the update state after the look
+          content: { application/json: { schema: { $ref: "#/components/schemas/UpdateStatus" } } }
+        "401": { $ref: "#/components/responses/Error" }
+
+  /api/v1/update/settings:
+    put:
+      tags: [update]
+      operationId: setUpdateSettings
+      summary: Daily check on or off, and the channel
+      description: Turning the check on or changing the channel looks right away.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/UpdateSettings" } } }
+      responses:
+        "200":
+          description: the update state with the new settings
+          content: { application/json: { schema: { $ref: "#/components/schemas/UpdateStatus" } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+
 components:
   securitySchemes:
     bearer: { type: http, scheme: bearer }
@@ -824,3 +902,49 @@ components:
         last_error: { type: string }
         checked_at: { type: integer }
         applied_at: { type: integer }
+
+    UpdateSettings:
+      type: object
+      required: [check, channel]
+      properties:
+        check: { type: boolean, description: look for a new release once a day }
+        channel: { type: string, enum: [stable, beta], description: "beta: pre-releases too" }
+
+    UpdateRelease:
+      type: object
+      required: [version, url, published_at, prerelease]
+      properties:
+        version: { type: string }
+        name: { type: string }
+        notes: { type: string, description: "the release's text (its CHANGELOG section), Markdown, ≤16 KiB" }
+        url: { type: string, description: the release on GitHub }
+        published_at: { type: integer, description: unix seconds }
+        prerelease: { type: boolean }
+
+    UpdateRun:
+      type: object
+      required: [state, from, to, started_at, at, log]
+      properties:
+        state: { type: string, enum: [running, done, failed, rolled_back, interrupted] }
+        from: { type: string }
+        to: { type: string }
+        message: { type: string }
+        started_at: { type: integer }
+        at: { type: integer, description: the script's last report }
+        log: { type: array, items: { type: string }, description: "the last lines of the update's output" }
+
+    UpdateStatus:
+      type: object
+      required: [current, settings, latest, available, can_apply, run]
+      properties:
+        current: { type: string }
+        settings: { $ref: "#/components/schemas/UpdateSettings" }
+        latest:
+          oneOf: [{ $ref: "#/components/schemas/UpdateRelease" }, { type: "null" }]
+        available: { type: boolean, description: latest is newer than current }
+        checked_at: { type: integer, description: "unix seconds; absent = not yet" }
+        check_error: { type: string }
+        can_apply: { type: boolean }
+        cannot: { type: string, description: "why the panel can't update this box" }
+        run:
+          oneOf: [{ $ref: "#/components/schemas/UpdateRun" }, { type: "null" }]

@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -13,6 +15,7 @@ import (
 	"nuxk.dev/horizon/core/internal/engine/usque"
 	"nuxk.dev/horizon/core/internal/plane"
 	"nuxk.dev/horizon/core/internal/state"
+	"nuxk.dev/horizon/core/internal/update"
 )
 
 func newTestRouter(t *testing.T, token string) http.Handler {
@@ -167,5 +170,63 @@ func TestProbeTargetsAPI(t *testing.T) {
 	}
 	if w := do(h, "GET", "/api/v1/engines/usque/probe-targets", "", lo, ""); w.Code != http.StatusNotFound {
 		t.Errorf("usque -> %d", w.Code)
+	}
+}
+
+func TestUpdateAPI(t *testing.T) {
+	st, err := state.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := engine.NewRegistry()
+	hub := core.NewHub("0.4.0")
+	up := update.New(update.Options{Current: "0.4.0", Command: "/nonexistent/nuxk", Dir: t.TempDir(), API: "http://127.0.0.1:1"}, st)
+	h := NewRouter(Deps{Version: "0.4.0", Engines: reg, Hub: hub, Ctl: core.NewController(reg, st, hub, "0.4.0"), Update: up})
+
+	w := do(h, "GET", "/api/v1/update", "", "127.0.0.1:1", "")
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"can_apply":false`) || !strings.Contains(w.Body.String(), `"channel":"stable"`) {
+		t.Fatalf("GET: %d %s", w.Code, w.Body)
+	}
+	for body, want := range map[string]int{
+		`{"version":"latest"}`: http.StatusBadRequest,
+		`{}`:                   http.StatusBadRequest,
+		`{"version":"0.4.1"}`:  http.StatusServiceUnavailable, // no nuxk command here
+	} {
+		if w := do(h, "POST", "/api/v1/update", body, "127.0.0.1:1", ""); w.Code != want {
+			t.Errorf("POST %s: %d %s", body, w.Code, w.Body)
+		}
+	}
+	if w := do(h, "PUT", "/api/v1/update/settings", `{"check":false,"channel":"nightly"}`, "127.0.0.1:1", ""); w.Code != http.StatusBadRequest {
+		t.Errorf("bad channel: %d", w.Code)
+	}
+	w = do(h, "PUT", "/api/v1/update/settings", `{"check":false,"channel":"beta"}`, "127.0.0.1:1", "")
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"settings":{"check":false,"channel":"beta"}`) {
+		t.Fatalf("settings: %d %s", w.Code, w.Body)
+	}
+	var saved update.Settings
+	if err := st.LoadJSON("update", &saved); err != nil || saved.Channel != "beta" || saved.Check {
+		t.Fatalf("settings not kept: %+v %v", saved, err)
+	}
+	// off: 404, not a crash
+	off := NewRouter(Deps{Version: "t", Engines: reg, Hub: hub, Ctl: core.NewController(reg, st, hub, "t")})
+	if w := do(off, "GET", "/api/v1/update", "", "127.0.0.1:1", ""); w.Code != http.StatusNotFound {
+		t.Fatalf("off: %d", w.Code)
+	}
+}
+
+// After an update the browser must load the new page: it's never taken from
+// the cache unasked; the hashed assets may be.
+func TestWebPageNotCached(t *testing.T) {
+	root := t.TempDir()
+	_ = os.MkdirAll(filepath.Join(root, "assets"), 0o755)
+	_ = os.WriteFile(filepath.Join(root, "index.html"), []byte("<!doctype html>"), 0o644)
+	_ = os.WriteFile(filepath.Join(root, "assets", "app-1a2b.js"), []byte("1"), 0o644)
+	h := spaFallback(root, http.FileServer(http.Dir(root)))
+	for path, want := range map[string]string{"/": "no-cache", "/lists": "no-cache", "/assets/app-1a2b.js": ""} {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest("GET", path, nil))
+		if got := w.Header().Get("Cache-Control"); got != want || w.Code != http.StatusOK {
+			t.Errorf("%s: %d Cache-Control %q, want %q", path, w.Code, got, want)
+		}
 	}
 }

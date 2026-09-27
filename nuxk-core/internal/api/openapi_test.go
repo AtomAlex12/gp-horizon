@@ -13,6 +13,7 @@ import (
 	"nuxk.dev/horizon/core/internal/logbuf"
 	"nuxk.dev/horizon/core/internal/node"
 	"nuxk.dev/horizon/core/internal/plane"
+	"nuxk.dev/horizon/core/internal/update"
 )
 
 func readSpec(t *testing.T) string {
@@ -85,6 +86,10 @@ func TestOpenAPISchemasCoverJSONFields(t *testing.T) {
 		"PlaneConflict":  plane.Conflict{},
 		"PlaneForeign":   plane.Foreign{},
 		"Status":         core.Snapshot{},
+		"UpdateSettings": update.Settings{},
+		"UpdateRelease":  update.Release{},
+		"UpdateRun":      update.Run{},
+		"UpdateStatus":   update.Status{},
 	} {
 		block := schemaBlock(t, spec, schema)
 		typ := reflect.TypeOf(v)

@@ -8,11 +8,14 @@
 #   sh nuxk-full.sh            install or update the controller, then (asks) the router
 #   sh nuxk-full.sh router     install or update nuxk on the router, over SSH
 #   sh nuxk-full.sh status     sh nuxk-full.sh uninstall [--purge]
+#   sh ~/nuxk/nuxk-full.sh update    the latest release (the script keeps a copy there)
 #
-# The controller is a prebuilt image from GitHub (ghcr.io) — nothing is
-# compiled here. The router gets nuxk-lite from the same release, checked
-# against its SHA256SUMS, run on the router over SSH: its password goes to
-# ssh only, never through this script.
+# The controller is a prebuilt image from GitHub (ghcr.io), pulled by the
+# digest the release lists — nothing is compiled here. The release's
+# SHA256SUMS is checked against the nuxk Horizon release signature
+# (ssh-keygen, the key below). The router gets nuxk-lite from the same
+# release, checked against that SHA256SUMS, run on the router over SSH: its
+# password goes to ssh only, never through this script.
 #
 # Options: --yes (defaults without questions), --no-router (skip the router).
 # Env: NUXK_VERSION, NUXK_REPO, NUXK_DIR (default ~/nuxk), NUXK_PORT (4200),
@@ -24,6 +27,11 @@ REPO="${NUXK_REPO:-AtomAlex12/nuxk-horizon}"
 DIR="${NUXK_DIR:-$HOME/nuxk}"
 PORT="${NUXK_PORT:-4200}"
 OLD_PROJECT="${NUXK_OLD_PROJECT:-nuxk-pi}" # deploy/pi (building from source, for development)
+
+# The release key: the release workflow signs SHA256SUMS with it; nuxk-core
+# carries the same (nuxk-core/internal/release/allowed_signers — a test
+# checks they match). NUXK_SIGNERS: another allowed_signers file (tests).
+RELEASE_KEY='release@nuxk-horizon namespaces="nuxk-release" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOFUe/OQavfYPddqeudJtzQnJ5ndibBW9foQnKtSXo0P'
 
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
     B=$(printf '\033[1m') D=$(printf '\033[2m') G=$(printf '\033[32m') Y=$(printf '\033[33m')
@@ -111,6 +119,53 @@ get() { # get URL FILE
         die "не скачался $1: $(tr '\n' ' ' <"$TMP/.curl")"
 }
 
+sum_of() { awk -v f="$1" '$2 == f || $2 == "*" f { print $1 }' "$TMP/SHA256SUMS"; }
+
+# fetch NAME — a release file into $TMP, checked against the signed SHA256SUMS
+fetch() {
+    get "$BASE/$1" "$TMP/$1"
+    want=$(sum_of "$1")
+    [ -n "$want" ] || die "$1 нет в SHA256SUMS релиза"
+    [ "$(sha256sum "$TMP/$1" | cut -d' ' -f1)" = "$want" ] || die "хеш $1 не совпал с SHA256SUMS — файл не тот, что в релизе; ставить не буду"
+}
+
+# verify_sums — SHA256SUMS carries the nuxk Horizon release signature: checked
+# with ssh-keygen (OpenSSH 8.1+) against RELEASE_KEY
+SIG_NOTE=""
+verify_sums() {
+    v=$(ssh -V 2>&1 | sed -n 's/^OpenSSH_\([0-9]*\)\.\([0-9]*\).*/\1 \2/p')
+    if ! have ssh-keygen || [ -z "$v" ] || [ "$(echo "$v" | awk '{ print ($1 * 100 + $2 >= 801) }')" != 1 ]; then
+        SIG_NOTE="нет ssh-keygen из OpenSSH 8.1+ — подпись релиза не проверена, только хеши (sudo apt install -y openssh-client)"
+        return 0
+    fi
+    curl -fsSL --retry 2 --connect-timeout 15 -o "$TMP/SHA256SUMS.sig" "$BASE/SHA256SUMS.sig" 2>/dev/null ||
+        die "у релиза нет подписи (SHA256SUMS.sig) — ставить не буду"
+    if [ -n "${NUXK_SIGNERS:-}" ]; then cp "$NUXK_SIGNERS" "$TMP/allowed_signers"; else printf '%s\n' "$RELEASE_KEY" >"$TMP/allowed_signers"; fi
+    ssh-keygen -Y verify -f "$TMP/allowed_signers" -I release@nuxk-horizon -n nuxk-release \
+        -s "$TMP/SHA256SUMS.sig" <"$TMP/SHA256SUMS" >"$TMP/.sig" 2>&1 ||
+        die "SHA256SUMS релиза не подписан ключом nuxk Horizon — файлы не от проекта; ставить не буду ($(tr '\n' ' ' <"$TMP/.sig"))"
+    SIG_NOTE="подпись релиза ✓ $(sed -n 's/.* key \(SHA256:[^ ]*\).*/\1/p' "$TMP/.sig")"
+}
+
+# release_version — the release's version from its BUILD (checked, so the
+# signed one), and the controller image's digest it lists
+IMAGE_DIGEST=""
+release_version() {
+    fetch BUILD
+    rel=$(sed -n 's/^version //p' "$TMP/BUILD")
+    [ -n "$rel" ] || die "не понял версию релиза"
+    if [ "$VERSION" = "@""VERSION@" ]; then
+        VERSION=$rel
+    elif [ "$VERSION" != "$rel" ]; then
+        die "в релизе $VERSION лежит версия $rel — не тот релиз; ставить не буду"
+    fi
+    if [ -n "$(sum_of controller-image)" ]; then
+        fetch controller-image
+        IMAGE_DIGEST=$(tr -d ' \r\n' <"$TMP/controller-image")
+        case "$IMAGE_DIGEST" in sha256:*) ;; *) die "controller-image релиза — не отпечаток образа" ;; esac
+    fi
+}
+
 # --- the host ------------------------------------------------------------------------
 
 DOCKER=""
@@ -142,7 +197,28 @@ check_host() {
     row ok "Адрес" "${IP:-?}"
 }
 
-image() { echo "${NUXK_IMAGE:-ghcr.io/$(echo "$REPO" | cut -d/ -f1 | tr 'A-Z' 'a-z')/nuxk-horizon-controller:$VERSION}"; }
+# the image: by tag and by the digest the signed release lists — Docker
+# refuses anything else under that tag
+image() { echo "${NUXK_IMAGE:-ghcr.io/$(echo "$REPO" | cut -d/ -f1 | tr 'A-Z' 'a-z')/nuxk-horizon-controller:$VERSION${IMAGE_DIGEST:+@$IMAGE_DIGEST}}"; }
+
+# keep_self — this script into $DIR: `sh ~/nuxk/nuxk-full.sh update` later
+keep_self() {
+    case "$0" in */nuxk-full.sh | nuxk-full.sh) ;; *) return 0 ;; esac
+    [ -f "$0" ] && [ "$0" != "$DIR/nuxk-full.sh" ] && cp -f "$0" "$DIR/nuxk-full.sh" 2>/dev/null
+    return 0
+}
+
+# self_update — `update`: the latest release's own script, once its SHA256SUMS
+# signature and its hash check out here, installs that release
+self_update() {
+    VERSION="@""VERSION@"
+    [ -n "${NUXK_VERSION:-}" ] && VERSION=${NUXK_VERSION#v}
+    BASE=$(base_url)
+    get "$BASE/SHA256SUMS" "$TMP/SHA256SUMS"
+    verify_sums
+    fetch nuxk-full.sh
+    NUXK_SELF_UPDATED=1 exec sh "$TMP/nuxk-full.sh" install ${YES:+--yes} ${NO_ROUTER:+--no-router}
+}
 
 # --- the controller ------------------------------------------------------------------
 
@@ -244,8 +320,9 @@ finish() {
     printf '  %s✓ nuxk Horizon %s%s\n' "$G$B" "$VERSION" "$N"
     printf '    %sПанель%s   http://%s:%s\n' "$B" "$N" "${IP:-<адрес Pi>}" "$PORT"
     printf '    %sДальше%s   мастер в панели: пароль admin → роутер%s (root и пароль Entware)\n' "$B" "$N" "${ROUTER:+ $ROUTER}"
-    printf '    %sКоманды%s  sh nuxk-full.sh · router · status · uninstall\n' "$B" "$N"
-    note "Обновление — тот же запуск: новый образ контроллера, затем nuxk update на роутере."
+    printf '    %sКоманды%s  sh %s/nuxk-full.sh update · router · status · uninstall\n' "$B" "$N" "$DIR"
+    note "Обновление: sh $DIR/nuxk-full.sh update — новый образ контроллера, затем (спросит) роутер."
+    note "Роутер обновляется и сам: кнопкой в панели («Система» → «Обновления») или nuxk update по SSH."
     printf '\n'
 }
 
@@ -257,35 +334,35 @@ for a in "$@"; do
     --yes | -y) YES=1 ;;
     --purge) PURGE=1 ;;
     --no-router) NO_ROUTER=1 ;;
-    install | router | status | uninstall) MODE=$a ;;
+    install | update | router | status | uninstall) MODE=$a ;;
     -h | --help)
-        sed -n '2,20p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'
+        sed -n '2,24p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'
         exit 0
         ;;
-    *) die "не понимаю «$a»: sh nuxk-full.sh [install|router|status|uninstall] [--yes]" ;;
+    *) die "не понимаю «$a»: sh nuxk-full.sh [install|update|router|status|uninstall] [--yes]" ;;
     esac
 done
 
 have curl || die "нет curl: sudo apt install -y curl"
 TMP=$(mktemp -d 2>/dev/null) || die "не создать временный каталог"
+[ "$MODE" = update ] && [ -z "${NUXK_SELF_UPDATED:-}" ] && self_update
 [ -n "${NUXK_VERSION:-}" ] && VERSION=${NUXK_VERSION#v}
 BASE=$(base_url)
 if [ "$MODE" = install ] || [ "$MODE" = router ]; then
     get "$BASE/SHA256SUMS" "$TMP/SHA256SUMS"
-    if [ "$VERSION" = "@""VERSION@" ]; then
-        get "$BASE/BUILD" "$TMP/BUILD"
-        VERSION=$(sed -n 's/^version //p' "$TMP/BUILD")
-        [ -n "$VERSION" ] || die "не понял версию последнего релиза"
-    fi
+    verify_sums
+    release_version
 fi
 [ "$VERSION" = "@""VERSION@" ] && VERSION="последняя"
 banner "$VERSION"
+[ -n "$SIG_NOTE" ] && note "$SIG_NOTE"
 
 case "$MODE" in
 install)
     check_host
     STEPS=2
     do_controller
+    keep_self
     if [ -z "$NO_ROUTER" ] && ask "Поставить или обновить nuxk на роутере сейчас (по SSH)?" y; then
         do_router
     else

@@ -4,6 +4,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -135,5 +137,54 @@ func TestSessions(t *testing.T) {
 	}
 	if _, ok := g.Session(""); ok {
 		t.Error("empty id")
+	}
+}
+
+// An update from the panel restarts the agent: the logins go over in a file
+// that holds the sessions' hashes, not the cookies, and only a fresh one counts.
+func TestHandoff(t *testing.T) {
+	g := New("root")
+	now := time.Now()
+	g.now = func() time.Time { return now }
+	id, _ := g.NewSession("root")
+	path := filepath.Join(t.TempDir(), "sessions.handoff")
+	if err := g.Handoff(path); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(path)
+	if strings.Contains(string(b), id) {
+		t.Fatal("the handoff holds a cookie")
+	}
+	if st, _ := os.Stat(path); runtime.GOOS != "windows" && st.Mode().Perm() != 0o600 {
+		t.Fatalf("mode %v", st.Mode().Perm())
+	}
+
+	next := New("root")
+	next.now = g.now
+	if n := next.TakeHandoff(path); n != 1 {
+		t.Fatalf("taken %d", n)
+	}
+	if u, ok := next.Session(id); !ok || u != "root" {
+		t.Fatal("the login didn't survive the update")
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatal("the handoff stays after it's taken")
+	}
+
+	// a stale one (an update that never restarted this agent) is dropped
+	_ = g.Handoff(path)
+	old := now.Add(-time.Hour)
+	_ = os.Chtimes(path, old, old)
+	late := New("root")
+	if n := late.TakeHandoff(path); n != 0 {
+		t.Fatalf("stale handoff taken: %d", n)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatal("a stale handoff stays")
+	}
+	// another account's sessions don't pass
+	_ = g.Handoff(path)
+	if n := New("admin").TakeHandoff(path); n != 0 {
+		t.Fatalf("another user's sessions taken: %d", n)
 	}
 }
