@@ -7,17 +7,21 @@
 #
 # It stays on the router as `nuxk`:
 #   nuxk              state of nuxk and its engines
-#   nuxk update       the latest release: agent, web, adapters (and xray)
+#   nuxk update       the latest release: agent, web, adapters (and xray);
+#                     the old version back by itself if the new one won't start
+#   nuxk rollback     the version before the last update, back
 #   nuxk warp         add WARP (usque)       nuxk vless   add VLESS (xray)
 #   nuxk uninstall    remove nuxk; the router's own settings stay
 #
 # Everything comes prebuilt from the GitHub release and is checked against
-# its SHA256SUMS; xray comes from XTLS's own release, pinned by hash below.
-# Nothing is compiled here.
+# its SHA256SUMS, and SHA256SUMS against the release signature — by the agent
+# already on the router; xray comes from XTLS's own release, pinned by hash
+# below. Nothing is compiled here.
 #
 # Options: --yes (defaults without questions), --with-warp, --with-vless.
 # Env: NUXK_VERSION, NUXK_REPO, NUXK_BASE_URL (a mirror of the release),
-#      NO_COLOR; NUXK_ROOT prefixes every path (tests).
+#      NO_COLOR; NUXK_ROOT prefixes every path (tests). The panel's update
+#      sets NUXK_STATUS (progress for it), NUXK_FROM, NUXK_STARTED.
 
 VERSION="@VERSION@" # stamped by the release; unstamped = the latest release
 REPO="${NUXK_REPO:-AtomAlex12/nuxk-horizon}"
@@ -53,6 +57,7 @@ P_NFQ_FEED=/opt/etc/opkg/nfqws2-keenetic.conf
 P_USQUE=/opt/etc/init.d/S51usque
 P_XRAY=/opt/sbin/xray
 P_XRAY_INIT=/opt/etc/init.d/S52xray-nuxk
+P_PREV=/opt/var/lib/nuxk/prev # the version before the last update: agent, init, adapter, web
 NFQ_FEED="src/gz nfqws2-keenetic https://nfqws.github.io/nfqws2-keenetic/all"
 WARP_HOSTS="cloudflareclient.com" # desynced before usque registers (plane.WarpDomains)
 DEPS="curl ca-certificates ipset"
@@ -93,8 +98,24 @@ step() {
 }
 die() {
     printf '\n  %s✗ %s%s\n' "$E" "$*" "$N" >&2
+    report "${FAIL_STATE:-failed}" "$*"
     cleanup
     exit 1
+}
+
+# report STATE MESSAGE — progress for the panel, when it started this update
+# (NUXK_STATUS): the agent restarts on the way and reads the file back
+report() {
+    [ -n "${NUXK_STATUS:-}" ] || return 0
+    {
+        echo "state $1"
+        echo "from ${NUXK_FROM:-${CORE_VER:-}}"
+        echo "to ${NUXK_VERSION:-$VERSION}"
+        echo "pid $$"
+        echo "started ${NUXK_STARTED:-}"
+        echo "at $(date +%s)"
+        echo "message $(echo "$2" | tr '\n' ' ')"
+    } >"$NUXK_STATUS.tmp" 2>/dev/null && mv -f "$NUXK_STATUS.tmp" "$NUXK_STATUS"
 }
 
 YES=""
@@ -129,7 +150,11 @@ run() {
 # --- downloads -------------------------------------------------------------------------
 
 TMP=""
-cleanup() { [ -n "$TMP" ] && rm -rf "$TMP"; }
+cleanup() {
+    [ -n "$TMP" ] && rm -rf "$TMP"
+    # after `nuxk update` handed over to the new release's script: its folder
+    case "${NUXK_OLD_TMP:-}" in */nuxk-setup.*) rm -rf "$NUXK_OLD_TMP" ;; esac
+}
 trap cleanup EXIT INT TERM
 
 base_url() {
@@ -164,11 +189,65 @@ get() { # get URL FILE
 fetch() {
     [ -f "$TMP/.ok.$1" ] && return 0
     get "$BASE/$1" "$TMP/$1"
+    sum_ok "$1"
+    note "↓ $1 · $(size_mb "$TMP/$1") · sha256 ✓"
+}
+
+sum_ok() { # sum_ok NAME — $TMP/NAME is the release's, or the run stops
     want=$(awk -v f="$1" '$2 == f || $2 == "*" f { print $1 }' "$TMP/SHA256SUMS")
     [ -n "$want" ] || die "$1 нет в SHA256SUMS релиза"
     [ "$(sha256 "$TMP/$1")" = "$want" ] || die "хеш $1 не совпал с SHA256SUMS — файл не тот, что в релизе; ставить не буду"
     : >"$TMP/.ok.$1"
-    note "↓ $1 · $(size_mb "$TMP/$1") · sha256 ✓"
+}
+
+# verify_sums — SHA256SUMS carries the nuxk Horizon release signature
+# (SHA256SUMS.sig, made by the release workflow). The agent already on the
+# router checks it: a newly downloaded one can't vouch for itself. A first
+# install has no agent yet — its files are checked against SHA256SUMS only,
+# as they come over HTTPS from GitHub.
+SIG_NOTE=""
+verify_sums() {
+    if [ ! -x "$R$P_BIN" ]; then
+        SIG_NOTE="подпись релиза проверит уже установленный агент при следующих обновлениях"
+        return 0
+    fi
+    # a missing .sig isn't a download error: the agent refuses it
+    curl -fsSL --retry 2 --connect-timeout 15 --max-time 60 -o "$TMP/SHA256SUMS.sig" "$BASE/SHA256SUMS.sig" 2>/dev/null || rm -f "$TMP/SHA256SUMS.sig"
+    out=$("$R$P_BIN" -verify "$TMP/SHA256SUMS" 2>&1)
+    case $? in
+    0) SIG_NOTE="подпись релиза ✓ ${out##* }" ;;
+    2) SIG_NOTE="установленный агент старше проверки подписей — сверяю хеши; со следующего обновления подпись обязательна" ;;
+    *) die "SHA256SUMS релиза не подписан ключом nuxk Horizon ($out) — файлы не от проекта; ставить не буду" ;;
+    esac
+}
+
+# release_version — the release's own version, from its BUILD (checked like
+# any file, so it's the signed one): a tag that points at other files stops here
+release_version() {
+    get "$BASE/BUILD" "$TMP/BUILD"
+    sum_ok BUILD
+    rel=$(sed -n 's/^version //p' "$TMP/BUILD")
+    [ -n "$rel" ] || die "не понял версию релиза"
+    if [ "$VERSION" = "@""VERSION@" ]; then
+        VERSION=$rel
+    elif [ "$VERSION" != "$rel" ]; then
+        die "в релизе $VERSION лежит версия $rel — не тот релиз; ставить не буду"
+    fi
+}
+
+# newer A B — version A is later than B (a release is later than its pre-releases)
+newer() {
+    awk -v a="$1" -v b="$2" '
+    function key(v,   i, n, p, c, x, s) {
+        sub(/^v/, "", v); p = ""
+        i = index(v, "-"); if (i) { p = substr(v, i + 1); v = substr(v, 1, i - 1) }
+        split(v, c, "."); s = sprintf("%09d.%09d.%09d", c[1], c[2], c[3])
+        if (p == "") return s "~"
+        n = split(p, x, "."); s = s "-"
+        for (i = 1; i <= n; i++) s = s (x[i] ~ /^[0-9]+$/ ? sprintf("0%09d", x[i]) : "1" x[i]) "."
+        return s
+    }
+    BEGIN { exit !(key(a) > key(b)) }'
 }
 
 # prefetch NAME… — every release file a run needs, downloaded and checked
@@ -279,25 +358,85 @@ do_nfqws2() {
     warn "штатный nfqws2 сразу обрабатывает трафик по своему конфигу; если что-то перестало открываться: $P_NFQ_INIT stop"
 }
 
+# keep_prev — the running version (agent, its init, the nfqws2 adapter, web)
+# into $P_PREV. The `nuxk` command isn't kept: a newer one runs older agents.
+keep_prev() {
+    [ -x "$R$P_BIN" ] || return 0
+    rm -rf "$R$P_PREV" && mkdir -p "$R$P_PREV" || return 0
+    cp -f "$R$P_BIN" "$R$P_PREV/nuxk-core"
+    [ -f "$R$P_INIT" ] && cp -f "$R$P_INIT" "$R$P_PREV/S99nuxk-core"
+    [ -f "$R$P_SHIM" ] && cp -f "$R$P_SHIM" "$R$P_PREV/S51nfqws2-nuxk"
+    [ -d "$R$P_WEB" ] && cp -R "$R$P_WEB" "$R$P_PREV/web"
+    return 0
+}
+
+prev_ver() { "$R$P_PREV/nuxk-core" -version 2>/dev/null | awk '{ print $2 }'; }
+
+# rollback — $P_PREV back in place, the agent restarted and asked whether it
+# answers. The engines run on their own meanwhile: only the panel blinks.
+rollback() {
+    [ -x "$R$P_PREV/nuxk-core" ] || return 1
+    "$R$P_INIT" stop >/dev/null 2>&1
+    cp -f "$R$P_PREV/nuxk-core" "$R$P_BIN" && chmod 755 "$R$P_BIN" || return 1
+    for f in "S99nuxk-core:$P_INIT" "S51nfqws2-nuxk:$P_SHIM"; do
+        [ -f "$R$P_PREV/${f%%:*}" ] && cp -f "$R$P_PREV/${f%%:*}" "$R${f#*:}" && chmod 755 "$R${f#*:}"
+    done
+    [ -d "$R$P_PREV/web" ] && rm -rf "$R$P_WEB" && cp -R "$R$P_PREV/web" "$R$P_WEB"
+    "$R$P_INIT" restart >/dev/null 2>&1
+    healthy
+}
+
+# undo MESSAGE — an update broke half way: the previous version back, then stop
+undo() {
+    if [ -n "$UPDATING" ] && [ -x "$R$P_PREV/nuxk-core" ]; then
+        warn "$1 — возвращаю $(prev_ver)"
+        report running "$1 — возвращаю прежнюю версию"
+        if rollback; then
+            FAIL_STATE=rolled_back
+            die "$1. Вернул прежнюю версию $(prev_ver) — она работает"
+        fi
+        die "$1, и прежняя версия тоже не поднялась — посмотрите $P_LOG"
+    fi
+    die "$1"
+}
+
+# healthy — the agent answers on its address within HEALTH_WAIT seconds
+healthy() {
+    listen=$(conf_get LISTEN)
+    host=${listen%:*} port=${listen##*:}
+    case "$host" in "" | 0.0.0.0 | "[::]") host=127.0.0.1 ;; esac
+    i=0
+    while [ "$i" -lt "$HEALTH_WAIT" ]; do
+        curl -fsS -m 2 "http://$host:${port:-4141}/api/v1/healthz" >/dev/null 2>&1 && return 0
+        sleep 1
+        i=$((i + 1))
+    done
+    return 1
+}
+
 do_core() {
     step "nuxk-core $VERSION и веб"
+    report running "Ставлю агент и веб $VERSION"
     fetch "nuxk-core-$ARCH"
     fetch "nuxk-web-lite-$VERSION.tar.gz"
     for f in S99nuxk-core S51nfqws2-nuxk nuxk-lite.sh; do fetch "$f"; done
     chmod 755 "$TMP/nuxk-core-$ARCH"
     "$TMP/nuxk-core-$ARCH" -version >/dev/null 2>&1 || die "nuxk-core-$ARCH не запускается на этом роутере ($ARCH_RAW)"
     mkdir -p "$TMP/web" && tar -xzf "$TMP/nuxk-web-lite-$VERSION.tar.gz" -C "$TMP/web" || die "веб не распаковался"
+    # what runs now goes aside first: back by itself if the new one won't
+    # start, or by hand with `nuxk rollback` (the same version again keeps
+    # the older one there)
+    [ -n "$CORE_VER" ] && [ "$CORE_VER" != "$VERSION" ] && keep_prev
     # stop first: a running binary can't be overwritten on some filesystems
     [ -x "$R$P_INIT" ] && "$R$P_INIT" stop >/dev/null 2>&1
     mkdir -p "$R$(dirname $P_BIN)" "$R$(dirname $P_INIT)" "$R$(dirname $P_SHIM)" "$R$(dirname $P_SELF)" "$R$(dirname $P_WEB)"
-    [ -f "$R$P_BIN" ] && cp -f "$R$P_BIN" "$R$P_BIN.prev"
-    cp -f "$TMP/nuxk-core-$ARCH" "$R$P_BIN" && chmod 755 "$R$P_BIN" || die "не записался $P_BIN"
+    cp -f "$TMP/nuxk-core-$ARCH" "$R$P_BIN" && chmod 755 "$R$P_BIN" || undo "не записался $P_BIN"
     for f in "S99nuxk-core:$P_INIT" "S51nfqws2-nuxk:$P_SHIM" "nuxk-lite.sh:$P_SELF"; do
-        cp -f "$TMP/${f%%:*}" "$R${f#*:}" && chmod 755 "$R${f#*:}" || die "не записался ${f#*:}"
+        cp -f "$TMP/${f%%:*}" "$R${f#*:}" && chmod 755 "$R${f#*:}" || undo "не записался ${f#*:}"
     done
-    rm -rf "$R$P_WEB.new" && cp -R "$TMP/web" "$R$P_WEB.new" && rm -rf "$R$P_WEB" && mv "$R$P_WEB.new" "$R$P_WEB" || die "веб не записался в $P_WEB"
+    rm -rf "$R$P_WEB.new" && cp -R "$TMP/web" "$R$P_WEB.new" && rm -rf "$R$P_WEB" && mv "$R$P_WEB.new" "$R$P_WEB" || undo "веб не записался в $P_WEB"
     ok "$("$R$P_BIN" -version 2>/dev/null) · веб · адаптер nfqws2 · команда nuxk"
-    [ -n "$CORE_VER" ] && [ "$CORE_VER" != "$VERSION" ] && note "прежний агент сохранён как $P_BIN.prev"
+    [ -n "$CORE_VER" ] && [ "$CORE_VER" != "$VERSION" ] && note "прежняя версия $CORE_VER — в $P_PREV (вернуть: nuxk rollback)"
     CORE_VER=$VERSION
     return 0
 }
@@ -354,8 +493,9 @@ do_xray() {
     cp -f "$TMP/S52xray-nuxk" "$R$P_XRAY_INIT" && chmod 755 "$R$P_XRAY_INIT"
     ok "$("$R$P_XRAY" version | head -n 1 | cut -d' ' -f1-2) → $P_XRAY ($xbin)"
     # the interface is created once and saved; S52xray-nuxk gives it its
-    # address at every start, like usque does for OpkgTun0
-    if have ndmc; then
+    # address at every start, like usque does for OpkgTun0. An update finds
+    # it made: the router's configuration isn't saved again.
+    if have ndmc && ! ndmc -c "show interface $tun" 2>/dev/null | grep -q "description: *$XRAY_MARK *\$"; then
         ndmc -c "show interface $tun" >/dev/null 2>&1 || ndmc -c "interface $tun" >/dev/null 2>&1 || die "интерфейс $tun в Keenetic не создался"
         ndmc -c "interface $tun description $XRAY_MARK" >/dev/null 2>&1 && ndmc -c "system configuration save" >/dev/null 2>&1 ||
             die "не удалось подписать $tun и сохранить конфигурацию роутера"
@@ -461,18 +601,13 @@ do_start() {
     seed_plane
     tok=$(conf_get API_TOKEN)
     [ -n "$tok" ] || wire API_TOKEN "$(token)"
-    run "'$R$P_INIT' restart" || die "S99nuxk-core restart не прошёл"
-    listen=$(conf_get LISTEN)
-    host=${listen%:*} port=${listen##*:}
-    case "$host" in "" | 0.0.0.0 | "[::]") host=127.0.0.1 ;; esac
-    i=0
-    while [ "$i" -lt 15 ]; do
-        curl -fsS -m 2 "http://$host:$port/api/v1/healthz" >/dev/null 2>&1 && { ok "nuxk-core отвечает на http://$host:$port"; return 0; }
-        sleep 1
-        i=$((i + 1))
-    done
+    report running "Перезапускаю агент и проверяю, что он отвечает"
+    if run "'$R$P_INIT' restart" && healthy; then
+        ok "nuxk-core отвечает на http://$host:${port:-4141}"
+        return 0
+    fi
     tail -n 15 "$R$P_LOG" 2>/dev/null | while IFS= read -r l; do printf '      %s│ %s%s\n' "$D" "$l" "$N"; done
-    die "nuxk-core не ответил за 15 секунд — последние строки лога выше"
+    undo "nuxk-core $VERSION не ответил за $HEALTH_WAIT секунд"
 }
 
 # --- modes -----------------------------------------------------------------------------
@@ -499,10 +634,11 @@ finish() {
     printf '  %s✓ nuxk Horizon %s на роутере%s\n' "$G$B" "$VERSION" "$N"
     printf '    %sПанель%s   http://%s\n' "$B" "$N" "${listen:-${LAN_IP:-роутер}:4141}"
     printf '    %sВход%s     root и пароль Entware (как для SSH)\n' "$B" "$N"
-    printf '    %sКоманды%s  nuxk · nuxk update · nuxk warp · nuxk vless · nuxk uninstall\n' "$B" "$N"
-    note "Маршрутизация списков выключена (режим плана), пока в $P_CONF не поставить PLANE_APPLY=\"1\"."
+    printf '    %sКоманды%s  nuxk · nuxk update · nuxk rollback · nuxk warp · nuxk vless · nuxk uninstall\n' "$B" "$N"
+    [ "$(conf_get PLANE_APPLY)" = 1 ] || note "Маршрутизация списков выключена (режим плана), пока в $P_CONF не поставить PLANE_APPLY=\"1\"."
     note "Есть Raspberry Pi? Полная версия (история, подбор стратегий): nuxk-full.sh — см. README."
     printf '\n'
+    report done "nuxk Horizon $VERSION работает"
 }
 
 mode_install() {
@@ -576,6 +712,15 @@ mode_update() {
     survey
     [ -n "$ARCH" ] || die "архитектура $ARCH_RAW не поддерживается"
     [ -n "$CORE_VER" ] || die "nuxk не установлен — запустите без аргументов"
+    # the latest release older than what runs (a beta, or a release pulled
+    # back): nothing to do; an older one only when named, NUXK_VERSION=…
+    if [ -z "${NUXK_VERSION:-}" ] && newer "$CORE_VER" "$VERSION"; then
+        ok "на роутере $CORE_VER — новее последнего релиза $VERSION; ничего не меняю"
+        report done "на роутере $CORE_VER — новее последнего релиза"
+        return 0
+    fi
+    UPDATING=1
+    report running "Скачиваю и проверяю файлы $VERSION"
     STEPS=2
     [ "$XRAY_READY" = 1 ] && [ "$XRAY_VER" != "$XRAY_VERSION" ] && STEPS=3
     printf '\n'
@@ -586,10 +731,25 @@ mode_update() {
     prefetch "nuxk-core-$ARCH" "nuxk-web-lite-$VERSION.tar.gz" S99nuxk-core S51nfqws2-nuxk nuxk-lite.sh $xf
     do_core
     if [ "$STEPS" = 3 ]; then
+        report running "Обновляю xray до $XRAY_VERSION"
         do_xray
     fi
     do_start
     finish
+}
+
+mode_rollback() {
+    survey
+    [ -x "$R$P_PREV/nuxk-core" ] || die "прежней версии нет ($P_PREV) — откатывать не на что"
+    pv=$(prev_ver)
+    printf '\n'
+    row do "nuxk-core" "${CORE_VER:-?} → $pv · агент, веб, адаптер nfqws2"
+    note "движки и списки не трогаются; команда nuxk остаётся новой"
+    confirm "Вернуть nuxk $pv?" || die "отменено"
+    STEPS=1
+    step "Откат на $pv"
+    rollback || die "nuxk-core $pv не ответил за $HEALTH_WAIT секунд — посмотрите $P_LOG"
+    ok "nuxk-core $pv отвечает; обновиться снова — nuxk update"
 }
 
 mode_add() { # add warp|vless
@@ -660,7 +820,7 @@ mode_uninstall() {
     # (engines/) goes with the agent
     rm -rf "$R/opt/etc/nuxk/engines" "$R/opt/etc/nuxk.removed"
     [ -d "$R/opt/etc/nuxk" ] && mv -f "$R/opt/etc/nuxk" "$R/opt/etc/nuxk.removed"
-    rm -rf "$R$P_BIN" "$R$P_BIN.prev" "$R$P_INIT" "$R$P_WEB" "$R$P_LOG"* "$R/opt/var/log/nuxk-core.crash"
+    rm -rf "$R$P_BIN" "$R$P_BIN.prev" "$R$P_PREV" "$R$P_INIT" "$R$P_WEB" "$R$P_LOG"* "$R/opt/var/log/nuxk-core.crash"
     ok "агент, веб и объекты nuxk-* убраны; конфиг и списки — /opt/etc/nuxk.removed"
     if [ "$XRAY_READY" = 1 ]; then
         step "xray (VLESS)"
@@ -681,15 +841,20 @@ mode_uninstall() {
     ok "готово. WARP (opkg remove usque-keenetic) и nfqws2-keenetic — отдельно, если нужно"
 }
 
-# nuxk update (the command on the router): the newest release's own script
-# does the update, so what's new in it applies too
+# nuxk update (the command on the router): the target release's own script
+# does the update, so what's new in it applies too — once its SHA256SUMS
+# signature and hash check out here
 self_update() {
     [ -n "${NUXK_SELF_UPDATED:-}" ] && return 1
     VERSION="@""VERSION@"
+    [ -n "${NUXK_VERSION:-}" ] && VERSION=${NUXK_VERSION#v}
     BASE=$(base_url)
+    report running "Проверяю релиз ${NUXK_VERSION:-}"
     get "$BASE/SHA256SUMS" "$TMP/SHA256SUMS"
-    fetch nuxk-lite.sh
-    NUXK_SELF_UPDATED=1 exec sh "$TMP/nuxk-lite.sh" update ${YES:+--yes}
+    verify_sums
+    get "$BASE/nuxk-lite.sh" "$TMP/nuxk-lite.sh"
+    sum_ok nuxk-lite.sh
+    NUXK_SELF_UPDATED=1 NUXK_OLD_TMP=$TMP exec sh "$TMP/nuxk-lite.sh" update ${YES:+--yes}
 }
 
 # --- main ------------------------------------------------------------------------------
@@ -701,12 +866,12 @@ for a in "$@"; do
     --yes | -y) YES=1 ;;
     --with-warp) WITH_WARP=1 ;;
     --with-vless) WITH_VLESS=1 ;;
-    install | update | warp | vless | status | uninstall) MODE=$a ;;
+    install | update | rollback | warp | vless | status | uninstall) MODE=$a ;;
     -h | --help)
-        sed -n '2,20p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'
+        sed -n '2,25p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'
         exit 0
         ;;
-    *) die "не понимаю «$a»: nuxk [install|update|warp|vless|status|uninstall] [--yes]" ;;
+    *) die "не понимаю «$a»: nuxk [install|update|rollback|warp|vless|status|uninstall] [--yes]" ;;
     esac
 done
 # the downloaded script installs; the installed command shows the state
@@ -719,25 +884,34 @@ have curl || die "нет curl: opkg update && opkg install curl ca-certificates"
 mkdir -p "$R/opt/tmp" 2>/dev/null
 TMP=$(mktemp -d "$R/opt/tmp/nuxk-setup.XXXXXX" 2>/dev/null) || TMP="$R/opt/tmp/nuxk-setup.$$"
 mkdir -p "$TMP" || die "не создать $TMP"
+UPDATING="" FAIL_STATE=""
+HEALTH_WAIT=15
+[ -n "$R" ] && HEALTH_WAIT=${NUXK_TEST_WAIT:-15} # tests don't wait out a dead agent
 
-if [ "$MODE" = status ]; then
+# without the network: what's on the router
+case "$MODE" in
+status)
     mode_status
     exit 0
-fi
-if [ "$MODE" = update ] && [ -z "${NUXK_SELF_UPDATED:-}" ] && [ -z "${NUXK_BASE_URL:-}" ] && [ -z "${NUXK_VERSION:-}" ]; then
+    ;;
+rollback)
+    banner "откат"
+    mode_rollback
+    exit 0
+    ;;
+esac
+if [ "$MODE" = update ] && [ -z "${NUXK_SELF_UPDATED:-}" ]; then
     self_update
 fi
 
 [ -n "${NUXK_VERSION:-}" ] && VERSION=${NUXK_VERSION#v}
 BASE=$(base_url)
 get "$BASE/SHA256SUMS" "$TMP/SHA256SUMS"
-if [ "$VERSION" = "@""VERSION@" ]; then
-    get "$BASE/BUILD" "$TMP/BUILD"
-    VERSION=$(sed -n 's/^version //p' "$TMP/BUILD")
-    [ -n "$VERSION" ] || die "не понял версию последнего релиза"
-fi
+verify_sums
+release_version
 
 banner "$VERSION"
+[ -n "$SIG_NOTE" ] && note "$SIG_NOTE"
 case "$MODE" in
 install) mode_install ;;
 update) mode_update ;;

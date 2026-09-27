@@ -39,6 +39,11 @@ func logging(next http.Handler) http.Handler {
 func spaFallback(root string, fs http.Handler) http.Handler {
 	index := filepath.Join(root, "index.html")
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// the page is asked for again each time — after an update the new
+		// one must load; the hashed files under /assets/ may be kept
+		if !strings.HasPrefix(r.URL.Path, "/assets/") {
+			w.Header().Set("Cache-Control", "no-cache")
+		}
 		clean := filepath.Clean(strings.TrimPrefix(r.URL.Path, "/"))
 		if clean == "." || !fileExists(filepath.Join(root, clean)) {
 			if !strings.Contains(filepath.Base(clean), ".") {

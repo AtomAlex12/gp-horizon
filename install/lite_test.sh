@@ -1,7 +1,8 @@
 #!/bin/sh
 # Tests nuxk-lite.sh end to end on a fake router: a temp root (NUXK_ROOT),
-# fake opkg / ndmc / ip / lsmod, a release served as file:// and a fake XTLS
-# archive. Needs curl, sha256sum, tar and python3 (to make the zip).
+# fake opkg / ndmc / ip / lsmod, a release served as file:// and signed with a
+# throwaway key, a fake XTLS archive. Needs curl, sha256sum, tar, ssh-keygen
+# (OpenSSH 8.1+, to sign) and python3 (to make the zip).
 #   sh install/lite_test.sh
 set -eu
 
@@ -13,6 +14,7 @@ trap 'rm -rf "$ROOT"' EXIT
 PY=""
 for p in python3 python; do "$p" -c 1 >/dev/null 2>&1 && PY=$(command -v "$p") && break; done
 [ -n "$PY" ] || { echo "need python3"; exit 1; }
+command -v ssh-keygen >/dev/null 2>&1 || { echo "need ssh-keygen"; exit 1; }
 REAL_CURL=$(command -v curl)
 # file:// URLs for curl; a Windows-native curl (Git Bash) wants D:/… paths
 furl() { if command -v cygpath >/dev/null 2>&1; then echo "file:///$(cygpath -m "$1")"; else echo "file://$1"; fi; }
@@ -24,11 +26,27 @@ XTLS="$ROOT/xtls"
 mkdir -p "$NUXK_ROOT/opt/tmp" "$NUXK_ROOT/opt/etc/nfqws2/lists" "$BIN" "$REL" "$XTLS/v26.3.27"
 printf 'youtube.com\n# mine\nrutracker.org\n' >"$NUXK_ROOT/opt/etc/nfqws2/lists/user.list"
 
-# --- a release, as `make release` lays it out -------------------------------------------
-release() { # release VERSION
+# the release key for these tests: the fake agent checks signatures with it,
+# the way nuxk-core -verify does with the real one
+ssh-keygen -q -t ed25519 -N "" -C "test release key" -f "$ROOT/key"
+printf 'release@nuxk-horizon namespaces="nuxk-release" %s\n' "$(cut -d' ' -f1,2 "$ROOT/key.pub")" >"$ROOT/signers"
+
+# --- a release, as `make release` lays it out and release.yml signs it -------------------
+release() { # release VERSION [broken] — broken: an agent that never answers
     v=$1
     rm -rf "${REL:?}"/*
-    printf '#!/bin/sh\n[ "$1" = -version ] && echo "nuxk-core %s abc123"\ntrue\n' "$v" >"$REL/nuxk-core-x86_64"
+    cat >"$REL/nuxk-core-x86_64" <<EOF
+#!/bin/sh
+# ${2:+BROKEN}
+case "\$1" in
+-version) echo "nuxk-core $v abc123" ;;
+-verify)
+    ssh-keygen -Y verify -f "$ROOT/signers" -I release@nuxk-horizon -n nuxk-release -s "\$2.sig" <"\$2" >/dev/null 2>&1 ||
+        { echo "подпись не сходится" >&2; exit 1; }
+    echo "release@nuxk-horizon SHA256:test-key" ;;
+esac
+true
+EOF
     # the init: restart marks it running, status says so (like the real one)
     cat >"$REL/S99nuxk-core" <<'EOF'
 #!/bin/sh
@@ -45,7 +63,7 @@ EOF
     tar -C "$ROOT/web" -czf "$REL/nuxk-web-lite-$v.tar.gz" .
     echo "fake ipk" >"$REL/usque-keenetic-x86_64.ipk"
     printf 'version %s\ncommit abc123\n' "$v" >"$REL/BUILD"
-    (cd "$REL" && sha256sum -- * >SHA256SUMS)
+    (cd "$REL" && sha256sum -- * >SHA256SUMS && ssh-keygen -Y sign -f "$ROOT/key" -n nuxk-release SHA256SUMS 2>/dev/null)
 }
 
 # --- XTLS: a zip with a script for xray ---------------------------------------------------
@@ -95,11 +113,12 @@ esac
 EOF
 printf '#!/bin/sh\necho "5: br0    inet 192.168.9.1/24 brd 192.168.9.255 scope global br0"\n' >"$BIN/ip"
 printf '#!/bin/sh\nfor m in nfnetlink_queue xt_NFQUEUE xt_connbytes xt_multiport; do echo "$m 1 0"; done\n' >"$BIN/lsmod"
-# curl: the real one for file://; the agent's healthz and the router's RCI answer here
+# curl: the real one for file://; the agent's healthz (not a broken one's) and
+# the router's RCI answer here
 cat >"$BIN/curl" <<EOF
 #!/bin/sh
 case "\$*" in
-*/api/v1/healthz*) echo '{"status":"ok"}'; exit 0 ;;
+*/api/v1/healthz*) grep -q BROKEN "$NUXK_ROOT/opt/usr/bin/nuxk-core" 2>/dev/null && exit 7; echo '{"status":"ok"}'; exit 0 ;;
 *:79/rci/*) echo "\$*" >>"$ROOT/rci.log"; echo '{}'; exit 0 ;;
 esac
 exec "$REAL_CURL" "\$@"
@@ -109,6 +128,7 @@ chmod +x "$BIN"/*
 export PATH="$BIN:$PATH"
 export NUXK_BASE_URL=$(furl "$REL")
 export NO_COLOR=1
+export NUXK_TEST_WAIT=2 # a dead agent: 2 s, not 15
 
 fail=0
 check() { # check DESC ACTUAL EXPECTED
@@ -151,13 +171,15 @@ check "plane: comments left out" "$(has "$(f /opt/etc/nuxk/plane.json)" 'mine')"
 check "started" "$(has "$ROOT/out" 'nuxk-core отвечает')" "1"
 check "the panel's address" "$(has "$ROOT/out" 'Панель   http://192.168.9.1:4141')" "1"
 check "no temp left" "$(ls "$(f /opt/tmp)" | wc -l | tr -d ' ')" "0"
+check "first install: no agent to check the signature yet" "$(has "$ROOT/out" 'подпись релиза проверит уже установленный агент')" "1"
 
 # 3. again: nothing to do — but a router set up before this installer gets
-# the nuxk command
+# the nuxk command; the agent now there checks the release's signature
 rm -f "$(f /opt/bin/nuxk)"
 lite --yes
 check "rerun: nothing to install" "$(has "$ROOT/out" 'всё уже стоит')" "1"
 check "rerun: the command comes back" "$(has "$(f /opt/bin/nuxk)" 'VERSION="0.3.0"')" "1"
+check "rerun: signature checked by the agent" "$(has "$ROOT/out" 'подпись релиза ✓ SHA256:test-key')" "1"
 
 # 4. WARP and VLESS by name; usque sits on OpkgTun0, someone's own VPN on OpkgTun1
 mkdir -p "$ROOT/ndm" && echo usque >"$ROOT/ndm/OpkgTun0" && echo my-vpn >"$ROOT/ndm/OpkgTun1"
@@ -178,22 +200,73 @@ check "token kept" "$(has "$C" "API_TOKEN=\"$TOKEN\"")" "1"
 XRAY_TEST_SUM=0000 $SH "$(f /opt/bin/nuxk)" vless --yes >"$ROOT/out" 2>&1 || true
 check "vless: another archive refused" "$(has "$ROOT/out" 'хеш архива xray не совпал')" "1"
 
-# 6. a newer release: the agent moves, the old one is kept, the config isn't touched
+# 6. a newer release, the way the panel starts it: the new release's own
+# script does it, the agent moves, the old version is kept aside, the config
+# isn't touched, and the panel's status file says how it went
+nuxk() { $SH "$(f /opt/bin/nuxk)" "$@" >"$ROOT/out" 2>&1; }
+RUN="$ROOT/update-run"
+panel() { NUXK_STATUS=$RUN NUXK_FROM=$1 NUXK_STARTED=1700000000 nuxk update --yes; }
+agent() { "$(f /opt/usr/bin/nuxk-core)" -version | cut -d' ' -f2; }
 release 0.3.1
-NUXK_VERSION=0.3.1 $SH "$(f /opt/bin/nuxk)" update --yes >"$ROOT/out" 2>&1 || { cat "$ROOT/out"; exit 1; }
-check "update: new agent" "$("$(f /opt/usr/bin/nuxk-core)" -version)" "nuxk-core 0.3.1 abc123"
-check "update: the old one kept" "$("$(f /opt/usr/bin/nuxk-core.prev)" -version)" "nuxk-core 0.3.0 abc123"
+panel 0.3.0 || { cat "$ROOT/out"; exit 1; }
+[ -n "${SHOW:-}" ] && cat "$ROOT/out"
+check "update: new agent" "$(agent)" "0.3.1"
+check "update: signature checked" "$(has "$ROOT/out" 'подпись релиза ✓')" "1"
+check "update: the old version kept" "$("$(f /opt/var/lib/nuxk/prev/nuxk-core)" -version)" "nuxk-core 0.3.0 abc123"
+check "update: the old web kept" "$(has "$(f /opt/var/lib/nuxk/prev/web/index.html)" 'nuxk 0.3.0')" "1"
 check "update: new web" "$(has "$(f /opt/share/www/nuxk/index.html)" 'nuxk 0.3.1')" "1"
 check "update: new command" "$(has "$(f /opt/bin/nuxk)" 'VERSION="0.3.1"')" "1"
 check "update: config as it was" "$(has "$C" "API_TOKEN=\"$TOKEN\"")/$(has "$C" 'PLANE_IFACE_VLESS="OpkgTun2"')" "1/1"
+check "update: the panel sees it done" "$(sed -n 's/^state //p' "$RUN")/$(sed -n 's/^from //p' "$RUN")/$(sed -n 's/^to //p' "$RUN")/$(sed -n 's/^started //p' "$RUN")" "done/0.3.0/0.3.1/1700000000"
+check "update: no temp left" "$(ls "$(f /opt/tmp)" | wc -l | tr -d ' ')" "0"
+check "update: router config not saved again" "$(has "$ROOT/ndm.saved" saved)" "1"
 
-# 7. status
+# 7. releases the agent refuses: SHA256SUMS changed after signing, no
+# signature at all — nothing on the router changes
+release 0.3.2
+echo "0000  nuxk-core-mips" >>"$REL/SHA256SUMS"
+panel 0.3.1 && check "changed sums: fails" "exit 0" "exit 1"
+check "changed sums: says why" "$(has "$ROOT/out" 'не подписан ключом nuxk Horizon')" "1"
+check "changed sums: agent as it was" "$(agent)" "0.3.1"
+check "changed sums: the panel sees it failed" "$(sed -n 's/^state //p' "$RUN")" "failed"
+release 0.3.2
+rm -f "$REL/SHA256SUMS.sig"
+nuxk update --yes && check "no signature: fails" "exit 0" "exit 1"
+check "no signature: says why" "$(has "$ROOT/out" 'не подписан ключом nuxk Horizon')" "1"
+check "no signature: agent as it was" "$(agent)" "0.3.1"
+
+# 8. the latest release is older than what runs: nothing to do
+release 0.3.0
+nuxk update --yes || { cat "$ROOT/out"; exit 1; }
+check "older release: left alone" "$(has "$ROOT/out" 'новее последнего релиза 0.3.0')/$(agent)" "1/0.3.1"
+
+# 9. nuxk rollback: the version kept aside comes back (offline)
+NUXK_BASE_URL=file:///nonexistent nuxk rollback --yes || { cat "$ROOT/out"; exit 1; }
+check "rollback: old agent" "$(agent)" "0.3.0"
+check "rollback: old web" "$(has "$(f /opt/share/www/nuxk/index.html)" 'nuxk 0.3.0')" "1"
+check "rollback: the command stays new" "$(has "$(f /opt/bin/nuxk)" 'VERSION="0.3.1"')" "1"
+release 0.3.1
+nuxk update --yes || { cat "$ROOT/out"; exit 1; }
+check "and forward again" "$(agent)" "0.3.1"
+
+# 10. a new version that won't answer: the old one back by itself
+release 0.3.2 broken
+panel 0.3.1 && check "broken: fails" "exit 0" "exit 1"
+[ -n "${SHOW:-}" ] && cat "$ROOT/out"
+check "broken: rolled back" "$(agent)" "0.3.1"
+check "broken: old web back" "$(has "$(f /opt/share/www/nuxk/index.html)" 'nuxk 0.3.1')" "1"
+check "broken: says so" "$(has "$ROOT/out" 'Вернул прежнюю версию 0.3.1')" "1"
+check "broken: the panel sees it rolled back" "$(sed -n 's/^state //p' "$RUN")/$(sed -n 's/^to //p' "$RUN")" "rolled_back/0.3.2"
+check "broken: agent running" "$([ -f "$(f /opt/var/run/nuxk.running)" ] && echo yes)" "yes"
+
+# 11. status
 $SH "$(f /opt/bin/nuxk)" >"$ROOT/out" 2>&1
 check "status: running" "$(has "$ROOT/out" '0.3.1 · работает')" "1"
 
-# 8. uninstall: agent gone, routing objects dropped, config and lists aside
+# 12. uninstall: agent gone, routing objects dropped, config and lists aside
 $SH "$(f /opt/bin/nuxk)" uninstall --yes >"$ROOT/out" 2>&1 || { cat "$ROOT/out"; exit 1; }
 check "uninstall: agent gone" "$(ls "$(f /opt/usr/bin)" | wc -l | tr -d ' ')" "0"
+check "uninstall: the kept version gone" "$([ -e "$(f /opt/var/lib/nuxk/prev)" ] && echo left || echo gone)" "gone"
 check "uninstall: command gone" "$([ -e "$(f /opt/bin/nuxk)" ] && echo left || echo gone)" "gone"
 check "uninstall: config aside" "$(has "$(f /opt/etc/nuxk.removed/nuxk.conf)" 'API_TOKEN')" "1"
 check "uninstall: nuxk routes dropped" "$(has "$ROOT/rci.log" '"group":"nuxk-vless","interface":"OpkgTun2","no":true')" "1"

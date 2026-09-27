@@ -30,6 +30,13 @@ type Config struct {
 
 	Engines EnginesConfig
 	Plane   PlaneConfig
+
+	// Updates from the panel: releases from UpdateRepo on GitHub, installed
+	// by the router's own `nuxk update` (UpdateCommand; "" = no updates from
+	// the panel, only the "there's a new version" note).
+	UpdateRepo    string // UPDATE_REPO, owner/name
+	UpdateAPI     string // UPDATE_API, GitHub's API (a mirror); default api.github.com
+	UpdateCommand string // UPDATE_COMMAND, default /opt/bin/nuxk
 }
 
 // PlaneConfig drives the routing plane (internal/plane). Off unless PLANE is
@@ -69,6 +76,7 @@ func Defaults() Config {
 			RCI: "http://127.0.0.1:79", V6Deny: true,
 			IfaceWarp: "OpkgTun0", IfaceVless: "OpkgTun1",
 		},
+		UpdateCommand: "/opt/bin/nuxk",
 	}
 }
 
@@ -138,6 +146,12 @@ func Load(path string) (Config, error) {
 			cfg.Plane.IfaceVless = v
 		case "PLANE_EVERY":
 			cfg.Plane.Every = seconds(v)
+		case "UPDATE_REPO":
+			cfg.UpdateRepo = v
+		case "UPDATE_API":
+			cfg.UpdateAPI = v
+		case "UPDATE_COMMAND":
+			cfg.UpdateCommand = v
 		}
 	}
 	return cfg, sc.Err()

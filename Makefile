@@ -5,7 +5,8 @@
 #   make release    dist/nuxk-horizon-<ver>/: everything the installers download —
 #                   nuxk-core per arch, web full/lite, router init + engine adapters,
 #                   usque ipk per arch, nuxk-controller, nuxk-lite.sh / nuxk-full.sh,
-#                   SHA256SUMS; the controller image is built from it by release.yml
+#                   SHA256SUMS; release.yml builds the controller image from it,
+#                   adds the image's digest and signs SHA256SUMS
 #   make proto      build the real-engine prototype image (deploy/proto, arm64 Pi)
 #   make pi         the development stack on a Pi, from source (deploy/pi)
 #   make dev        run the mock stack in Docker (deploy/dev)
@@ -15,7 +16,7 @@ VERSION := $(shell tr -d ' \n\r' < VERSION)
 COMMIT  := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)$(shell git diff --quiet 2>/dev/null || echo -dirty)
 OUT     := dist/nuxk-horizon-$(VERSION)
 
-.PHONY: version version-check check core-check web-check install-check controller-check release proto pi dev clean
+.PHONY: version version-check check core-check web-check install-check controller-check release sums proto pi dev clean
 
 version:
 	@echo $(VERSION)
@@ -65,9 +66,15 @@ release: version-check
 	tar -C nuxk-web/dist-lite -czf $(OUT)/nuxk-web-lite-$(VERSION).tar.gz .
 	cp CHANGELOG.md $(OUT)/
 	printf 'version %s\ncommit %s\n' '$(VERSION)' '$(COMMIT)' > $(OUT)/BUILD
-	cd $(OUT) && sha256sum -- * > ../SHA256SUMS.tmp && mv ../SHA256SUMS.tmp SHA256SUMS
-	tar -C dist -czf dist/nuxk-horizon-$(VERSION).tar.gz nuxk-horizon-$(VERSION)
+	$(MAKE) sums
 	@ls -lh $(OUT) dist/nuxk-horizon-$(VERSION).tar.gz
+
+# SHA256SUMS over the release's files, and its tarball. release.yml runs it
+# again after adding the controller image's digest (controller-image), then
+# signs SHA256SUMS with the release key (SHA256SUMS.sig).
+sums:
+	cd $(OUT) && rm -f SHA256SUMS SHA256SUMS.sig && sha256sum -- * > ../SHA256SUMS.tmp && mv ../SHA256SUMS.tmp SHA256SUMS
+	tar -C dist -czf dist/nuxk-horizon-$(VERSION).tar.gz nuxk-horizon-$(VERSION)
 
 proto:
 	NUXK_COMMIT=$(COMMIT) docker compose -f deploy/proto/docker-compose.yml build

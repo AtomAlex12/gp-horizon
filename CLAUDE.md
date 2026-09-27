@@ -18,13 +18,13 @@
 
 | Каталог | Что |
 |---|---|
-| `nuxk-core/` | агент (Go 1.24, **только stdlib**). `internal/api` — маршруты, `core` — контроллер движков, `plane` — списки → Keenetic, `engine` — адаптеры init-скриптов, `node` — метрики `/proc`, `logbuf` — лог |
+| `nuxk-core/` | агент (Go 1.24, **только stdlib**). `internal/api` — маршруты, `core` — контроллер движков, `plane` — списки → Keenetic, `engine` — адаптеры init-скриптов, `node` — метрики `/proc`, `logbuf` — лог, `release` — проверка подписи релиза (`-verify`, ключ в `allowed_signers`), `update` — новые релизы и обновление из панели (запускает `nuxk update`) |
 | `nuxk-core/api/openapi.yaml` | **контракт** агента — источник правды для API |
 | `nuxk-controller/` | контроллер на Pi (Go, stdlib): прокси, история `/ctl/v1/*`, хост плагинов (`supervise` → `serve` + плагины, `plugin.go`) |
 | `nuxk-controller/plugins/<name>/` | рецепты плагинов: `plugin.json` + `install.sh` (GP — подбор стратегий) |
 | `nuxk-web/` | Svelte 5 + Vite; типы API в `src/lib/schema.d.ts` генерируются |
-| `install/nuxk-lite.sh` | установщик на роутер (busybox sh): проверка, план, скачивание готовых файлов релиза со сверкой `SHA256SUMS`, остаётся на роутере командой `nuxk` (update / warp / vless / uninstall); версия и хеши xray — в нём |
-| `install/nuxk-full.sh` | установщик на Pi: контроллер из образа `ghcr.io/…/nuxk-horizon-controller`, потом `nuxk-lite.sh` на роутере по SSH |
+| `install/nuxk-lite.sh` | установщик на роутер (busybox sh): проверка, план, скачивание готовых файлов релиза со сверкой `SHA256SUMS` (его подпись проверяет уже стоящий агент), остаётся на роутере командой `nuxk` (update / rollback / warp / vless / uninstall); откат сам, если новый агент не ответил; отчёт для панели — `NUXK_STATUS`; версия и хеши xray — в нём |
+| `install/nuxk-full.sh` | установщик на Pi: подпись релиза через `ssh-keygen` (ключ — в нём же), контроллер из образа `ghcr.io/…/nuxk-horizon-controller` по отпечатку из релиза, потом `nuxk-lite.sh` на роутере по SSH; копия себя в `~/nuxk` для `update` |
 | `engines/nuxk-nfqws2/S51nfqws2-nuxk` | прослойка над штатным пакетом nfqws2-keenetic |
 | `engines/nuxk-usque/` | форк usque-keenetic (ipk для mips/mipsel/aarch64) |
 | `engines/nuxk-xray/S52xray-nuxk` | init-скрипт xray (VLESS): свой TUN `opkgtunN`, конфиг от агента, проверка и откат; xray — официальный релиз XTLS, версия и хеши в `install/nuxk-lite.sh` |
@@ -70,6 +70,15 @@ root / nuxk-dev), на контроллере — admin из мастера. `AP
   `SHA256SUMS`. Новый файл, нужный на роутере или Pi, → в `make release` (он попадёт в
   `SHA256SUMS`) и в `install/nuxk-lite.sh` / `nuxk-full.sh`; `lite_test.sh` проверяет
   установку на имитации роутера. Скрипты — POSIX sh для busybox ash.
+- **Релизы подписаны.** `release.yml` подписывает `SHA256SUMS` ключом из секрета
+  `NUXK_SIGNING_KEY` (ed25519, `ssh-keygen -Y sign -n nuxk-release`); открытый ключ —
+  в `nuxk-core/internal/release/allowed_signers` и `install/nuxk-full.sh` (тест сверяет,
+  что одинаковый). Закрытый ключ существует только в секрете GitHub — не выводить, не
+  сохранять в файлы. Смена ключа: новый агент с новым ключом выходит в релизе,
+  подписанном ещё старым.
+- **Обновление из панели не должно ломать совместимость:** новый агент работает со
+  старым `nuxk.conf` (новые ключи — со значениями по умолчанию), со старым контроллером
+  (API только дополняется) и отдаёт статус прошлого запуска (`update-run` в `STATE_DIR`).
 - Каждое изменение для пользователя — строка в `CHANGELOG.md` (раздел `[Unreleased]`).
 - Перед пушем — `make check`. PR — в `main`; после мержа ставится тег `vX.Y.Z`.
 - Не коммитить: `e0-report-*.txt` (схема сети), токены, пароли, `.env`.
