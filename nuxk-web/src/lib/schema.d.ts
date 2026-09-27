@@ -258,6 +258,63 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/engines/{kind}/upstream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * What the engine's config points at (xray) — no secrets
+         * @description The servers of the link or subscription, the one in use, and what the subscription's panel reports (3x-ui: title, traffic, term, how often to re-read it). A subscription is re-read on the router every Profile-Update-Interval (12 h if unset, within 1–24 h); the same server with the same settings restarts nothing.
+         */
+        get: operations["engineUpstream"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/engines/{kind}/upstream/pick": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Switch to another server of the stored subscription */
+        post: operations["engineUpstreamPick"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/engines/{kind}/upstream/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Re-read the stored subscription now
+         * @description A failure keeps the running config; its reason is in the stored Upstream's error.
+         */
+        post: operations["engineUpstreamRefresh"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/engines/{kind}/strategies": {
         parameters: {
             query?: never;
@@ -503,6 +560,40 @@ export interface components {
             rtt_ms?: number;
             /** @description where it broke — dns (no address), connect (no TCP), connect_timeout (TCP never answers: by IP), tls_timeout (TCP up, TLS silently dropped: by name), reset (reset during TLS: by name), cert (someone else's certificate), slow (no answer in time), error_N (curl exit N) */
             reason?: string;
+        };
+        Upstream: {
+            /** @enum {string} */
+            source: "" | "link" | "subscription";
+            /** @description the subscription's Profile-Title */
+            title?: string;
+            servers: components["schemas"]["UpstreamServer"][];
+            /** @description index into servers */
+            active: number;
+            usage?: components["schemas"]["UpstreamUsage"];
+            fetched_at?: number;
+            /** @description Profile-Update-Interval, seconds */
+            refresh_s?: number;
+            /** @description vless:// links of the subscription that don't parse */
+            skipped?: number;
+            notice?: string;
+            /** @description the last refresh failed: why */
+            error?: string;
+        };
+        UpstreamServer: {
+            /** @description name@host:port — stable across refreshes */
+            key: string;
+            name: string;
+            address: string;
+            security: string;
+            network: string;
+            flow?: string;
+        };
+        /** @description 3x-ui's subscription-userinfo: bytes; unix seconds; 0 = unlimited / never */
+        UpstreamUsage: {
+            upload: number;
+            download: number;
+            total: number;
+            expire: number;
         };
         ProbeSites: {
             targets: string[];
@@ -962,17 +1053,117 @@ export interface operations {
             };
         };
         responses: {
+            /** @description applied; what the config now points at */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Upstream"];
+                };
+            };
+            400: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            502: components["responses"]["Error"];
+        };
+    };
+    engineUpstream: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                kind: components["parameters"]["kind"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description source "" = nothing set yet */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Upstream"];
+                };
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    engineUpstreamPick: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                kind: components["parameters"]["kind"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description an UpstreamServer key (name@host:port) */
+                    server: string;
+                };
+            };
+        };
+        responses: {
             /** @description applied */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Ok"];
+                    "application/json": components["schemas"]["Upstream"];
                 };
             };
             400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
             404: components["responses"]["Error"];
+            /** @description the server is a link, not a subscription */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            502: components["responses"]["Error"];
+        };
+    };
+    engineUpstreamRefresh: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                kind: components["parameters"]["kind"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description re-read */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Upstream"];
+                };
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /** @description nothing set yet */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
             502: components["responses"]["Error"];
         };
     };

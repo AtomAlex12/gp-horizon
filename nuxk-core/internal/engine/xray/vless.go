@@ -1,15 +1,10 @@
 package xray
 
 import (
-	"bufio"
 	"context"
-	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"net"
-	"net/http"
 	"net/url"
 	"regexp"
 	"strconv"
@@ -237,69 +232,4 @@ func endpointOf(ctx context.Context, s Server) string {
 		return ""
 	}
 	return net.JoinHostPort(ips[0].String(), port)
-}
-
-// Subscription fetches a 3x-ui subscription and returns its VLESS servers,
-// in the panel's order. The body is base64 of one link per line (plain text
-// is accepted too); links of other protocols are skipped.
-func Subscription(ctx context.Context, client *http.Client, link string) ([]Server, error) {
-	u, err := url.Parse(strings.TrimSpace(link))
-	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
-		return nil, bad("подписка — это ссылка http(s)://")
-	}
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
-	if err != nil {
-		return nil, bad("подписка — непонятная ссылка")
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		// not the url.Error itself: the link carries the subscription's secret
-		var ue *url.Error
-		if errors.As(err, &ue) {
-			err = ue.Err
-		}
-		return nil, fmt.Errorf("подписка не скачалась: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("подписка не скачалась: HTTP %d", resp.StatusCode)
-	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return nil, fmt.Errorf("подписка не скачалась: %w", err)
-	}
-	text := strings.TrimSpace(string(body))
-	if !strings.Contains(text, "://") {
-		compact := strings.Join(strings.Fields(text), "")
-		for _, enc := range []*base64.Encoding{base64.StdEncoding, base64.RawStdEncoding, base64.URLEncoding, base64.RawURLEncoding} {
-			if d, err := enc.DecodeString(compact); err == nil {
-				text = string(d)
-				break
-			}
-		}
-	}
-	var out []Server
-	skipped := 0
-	sc := bufio.NewScanner(strings.NewReader(text))
-	sc.Buffer(make([]byte, 64<<10), 64<<10)
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if !strings.HasPrefix(line, "vless://") {
-			continue
-		}
-		if s, err := ParseVLESS(line); err == nil {
-			out = append(out, s)
-		} else {
-			skipped++
-		}
-	}
-	if len(out) == 0 {
-		if skipped > 0 {
-			return nil, bad("в подписке %d ссылок vless://, и ни одну не удалось разобрать", skipped)
-		}
-		return nil, bad("в подписке нет ссылок vless://")
-	}
-	return out, nil
 }

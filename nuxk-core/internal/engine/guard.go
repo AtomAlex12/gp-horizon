@@ -60,7 +60,7 @@ type guardedConfigurable struct {
 	c Configurable
 }
 
-func (g guardedConfigurable) SetConfig(ctx context.Context, cfg map[string]string) error {
+func (g guardedConfigurable) SetConfig(ctx context.Context, cfg map[string]string) (Upstream, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	return g.c.SetConfig(ctx, cfg)

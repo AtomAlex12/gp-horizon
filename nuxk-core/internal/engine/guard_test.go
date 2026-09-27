@@ -33,8 +33,10 @@ func (s *slowEngine) ApplyRouting(ctx context.Context, r Routing) error { return
 
 type cfgEngine struct{ slowEngine }
 
-func (c *cfgEngine) Kind() Kind                                               { return KindXray }
-func (c *cfgEngine) SetConfig(ctx context.Context, m map[string]string) error { return nil }
+func (c *cfgEngine) Kind() Kind { return KindXray }
+func (c *cfgEngine) SetConfig(ctx context.Context, m map[string]string) (Upstream, error) {
+	return Upstream{}, nil
+}
 
 func TestRegistrySerialisesCalls(t *testing.T) {
 	s := &slowEngine{}

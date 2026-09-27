@@ -148,7 +148,7 @@ func TestActions(t *testing.T) {
 func TestSetConfigVlessURI(t *testing.T) {
 	f := &fakeRunner{}
 	a := &Adapter{x: f, Iface: "opkgtun1"}
-	if err := a.SetConfig(context.Background(), map[string]string{"vless_uri": realityLink}); err != nil {
+	if _, err := a.SetConfig(context.Background(), map[string]string{"vless_uri": realityLink}); err != nil {
 		t.Fatalf("SetConfig: %v", err)
 	}
 	if len(f.inputs) != 1 {
@@ -182,7 +182,7 @@ func TestSetConfigRefusals(t *testing.T) {
 		{"vless_uri": "vmess://abc"},
 		{"vless_uri": strings.Replace(realityLink, "pbk=", "nopbk=", 1)},
 	} {
-		if err := a.SetConfig(context.Background(), cfg); !errors.Is(err, engine.ErrBadConfig) {
+		if _, err := a.SetConfig(context.Background(), cfg); !errors.Is(err, engine.ErrBadConfig) {
 			t.Errorf("%v: err = %v, want ErrBadConfig", cfg, err)
 		}
 	}
@@ -200,11 +200,51 @@ func TestSetConfigSubURL(t *testing.T) {
 	defer srv.Close()
 	f := &fakeRunner{}
 	a := &Adapter{x: f, Iface: "opkgtun1", HTTP: srv.Client()}
-	if err := a.SetConfig(context.Background(), map[string]string{"sub_url": srv.URL + "/sub/xxxx"}); err != nil {
+	if _, err := a.SetConfig(context.Background(), map[string]string{"sub_url": srv.URL + "/sub/xxxx"}); err != nil {
 		t.Fatalf("SetConfig: %v", err)
 	}
 	if len(f.inputs) != 1 || !strings.Contains(f.inputs[0], "server 203.0.113.9:443\n") {
 		t.Errorf("the subscription's first VLESS server: %v", f.inputs)
+	}
+}
+
+func TestSetConfigSubscriptionInfoAndPick(t *testing.T) {
+	second := strings.Replace(strings.Replace(realityLink, "203.0.113.9", "198.51.100.7", 1), "#%D0%B4%D0%BE%D0%BC", "#nl", 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// what 3x-ui sends with a subscription
+		w.Header().Set("Profile-Title", "base64:"+base64.StdEncoding.EncodeToString([]byte("Мой VPN")))
+		w.Header().Set("Subscription-Userinfo", "upload=1024; download=2048; total=10737418240; expire=1893456000")
+		w.Header().Set("Profile-Update-Interval", "6")
+		_, _ = w.Write([]byte(base64.StdEncoding.EncodeToString([]byte(realityLink + "\nvless://broken\n" + second + "\n"))))
+	}))
+	defer srv.Close()
+	f := &fakeRunner{}
+	a := &Adapter{x: f, Iface: "opkgtun1", HTTP: srv.Client()}
+	up, err := a.SetConfig(context.Background(), map[string]string{"sub_url": srv.URL + "/sub/x", "pick": "nl@198.51.100.7:443"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if up.Source != "subscription" || up.Title != "Мой VPN" || up.RefreshS != 6*3600 || up.Skipped != 1 || len(up.Servers) != 2 {
+		t.Errorf("upstream: %+v", up)
+	}
+	if u := up.Usage; u == nil || u.Upload != 1024 || u.Download != 2048 || u.Total != 10737418240 || u.Expire != 1893456000 {
+		t.Errorf("usage: %+v", up.Usage)
+	}
+	if up.Active != 1 || !strings.Contains(f.inputs[0], "server 198.51.100.7:443\n") {
+		t.Errorf("the picked server: active=%d, sent %q", up.Active, f.inputs)
+	}
+	if up.Servers[0].Name != "дом" || up.Servers[0].Address != "203.0.113.9:443" || up.Servers[0].Security != "reality" {
+		t.Errorf("public parts: %+v", up.Servers[0])
+	}
+	b, _ := json.Marshal(up)
+	if strings.Contains(string(b), "0e2b3c4d") || strings.Contains(string(b), "/sub/x") || strings.Contains(string(b), "Q1l8e0") {
+		t.Errorf("secrets in the upstream: %s", b)
+	}
+
+	// the picked server is gone: the first one, and it says so
+	up, _ = a.SetConfig(context.Background(), map[string]string{"sub_url": srv.URL + "/sub/x", "pick": "gone@1.2.3.4:443"})
+	if up.Active != 0 || up.Notice == "" {
+		t.Errorf("pick gone: %+v", up)
 	}
 }
 

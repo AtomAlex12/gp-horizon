@@ -234,6 +234,16 @@ set_config() {
         rm -rf "$STAGE"
         die "set-config: no config after ---"
     }
+    # the same server with the same settings (a subscription re-read with
+    # nothing new): nothing to test, nothing to restart — only what info
+    # reports may have moved (the server's name resolving elsewhere)
+    # (compared in the shell: a config is a few KB, and cmp isn't everywhere)
+    if is_running && [ -f "$CONF" ] && [ "$(cat "$STAGE/config.json")" = "$(cat "$CONF")" ]; then
+        mv -f "$STAGE/meta" "$META"
+        rm -rf "$STAGE"
+        echo "unchanged"
+        return 0
+    fi
     if ! "$XRAY_BIN" run -test -config "$STAGE/config.json" >"$STAGE/test.log" 2>&1; then
         msg=$(grep -i 'failed\|error\|invalid' "$STAGE/test.log" | tail -n 2 | tr '\n' ' ')
         [ -n "$msg" ] || msg=$(tail -n 1 "$STAGE/test.log")

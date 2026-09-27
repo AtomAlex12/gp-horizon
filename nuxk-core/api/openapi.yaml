@@ -258,10 +258,70 @@ paths:
         content: { application/json: { schema: { $ref: "#/components/schemas/EngineConfig" } } }
       responses:
         "200":
-          description: applied
-          content: { application/json: { schema: { $ref: "#/components/schemas/Ok" } } }
+          description: applied; what the config now points at
+          content: { application/json: { schema: { $ref: "#/components/schemas/Upstream" } } }
         "400": { $ref: "#/components/responses/Error" }
         "404": { $ref: "#/components/responses/Error" }
+        "502": { $ref: "#/components/responses/Error" }
+
+  /api/v1/engines/{kind}/upstream:
+    get:
+      tags: [engines]
+      operationId: engineUpstream
+      summary: What the engine's config points at (xray) — no secrets
+      description: >
+        The servers of the link or subscription, the one in use, and what the
+        subscription's panel reports (3x-ui: title, traffic, term, how often
+        to re-read it). A subscription is re-read on the router every
+        Profile-Update-Interval (12 h if unset, within 1–24 h); the same
+        server with the same settings restarts nothing.
+      parameters: [{ $ref: "#/components/parameters/kind" }]
+      responses:
+        "200":
+          description: source "" = nothing set yet
+          content: { application/json: { schema: { $ref: "#/components/schemas/Upstream" } } }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /api/v1/engines/{kind}/upstream/pick:
+    post:
+      tags: [engines]
+      operationId: engineUpstreamPick
+      summary: Switch to another server of the stored subscription
+      parameters: [{ $ref: "#/components/parameters/kind" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [server]
+              properties:
+                server: { type: string, description: "an UpstreamServer key (name@host:port)" }
+      responses:
+        "200":
+          description: applied
+          content: { application/json: { schema: { $ref: "#/components/schemas/Upstream" } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { description: "the server is a link, not a subscription", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+        "502": { $ref: "#/components/responses/Error" }
+
+  /api/v1/engines/{kind}/upstream/refresh:
+    post:
+      tags: [engines]
+      operationId: engineUpstreamRefresh
+      summary: Re-read the stored subscription now
+      description: A failure keeps the running config; its reason is in the stored Upstream's error.
+      parameters: [{ $ref: "#/components/parameters/kind" }]
+      responses:
+        "200":
+          description: re-read
+          content: { application/json: { schema: { $ref: "#/components/schemas/Upstream" } } }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { description: "nothing set yet", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
         "502": { $ref: "#/components/responses/Error" }
 
   /api/v1/engines/{kind}/strategies:
@@ -602,6 +662,42 @@ components:
             (TCP never answers: by IP), tls_timeout (TCP up, TLS silently
             dropped: by name), reset (reset during TLS: by name), cert (someone
             else's certificate), slow (no answer in time), error_N (curl exit N)
+
+    Upstream:
+      type: object
+      required: [source, servers, active]
+      properties:
+        source: { type: string, enum: ["", link, subscription] }
+        title: { type: string, description: "the subscription's Profile-Title" }
+        servers: { type: array, items: { $ref: "#/components/schemas/UpstreamServer" } }
+        active: { type: integer, description: index into servers }
+        usage: { $ref: "#/components/schemas/UpstreamUsage" }
+        fetched_at: { type: integer }
+        refresh_s: { type: integer, description: "Profile-Update-Interval, seconds" }
+        skipped: { type: integer, description: "vless:// links of the subscription that don't parse" }
+        notice: { type: string }
+        error: { type: string, description: "the last refresh failed: why" }
+
+    UpstreamServer:
+      type: object
+      required: [key, name, address, security, network]
+      properties:
+        key: { type: string, description: "name@host:port — stable across refreshes" }
+        name: { type: string }
+        address: { type: string }
+        security: { type: string }
+        network: { type: string }
+        flow: { type: string }
+
+    UpstreamUsage:
+      type: object
+      required: [upload, download, total, expire]
+      description: "3x-ui's subscription-userinfo: bytes; unix seconds; 0 = unlimited / never"
+      properties:
+        upload: { type: integer }
+        download: { type: integer }
+        total: { type: integer }
+        expire: { type: integer }
 
     ProbeSites:
       type: object

@@ -63,6 +63,9 @@ var Routes = []Route{
 	{"GET /api/v1/engines/{kind}", false, func(d Deps) http.HandlerFunc { return d.handleEngine }},
 	{"POST /api/v1/engines/{kind}/{action}", false, func(d Deps) http.HandlerFunc { return d.handleEngineAction }},
 	{"PUT /api/v1/engines/{kind}/config", false, func(d Deps) http.HandlerFunc { return d.handleEngineConfig }},
+	{"GET /api/v1/engines/{kind}/upstream", false, func(d Deps) http.HandlerFunc { return d.handleUpstream }},
+	{"POST /api/v1/engines/{kind}/upstream/pick", false, func(d Deps) http.HandlerFunc { return d.handleUpstreamPick }},
+	{"POST /api/v1/engines/{kind}/upstream/refresh", false, func(d Deps) http.HandlerFunc { return d.handleUpstreamRefresh }},
 	{"GET /api/v1/engines/{kind}/strategies", false, func(d Deps) http.HandlerFunc { return d.handleStrategies }},
 	{"PUT /api/v1/engines/{kind}/strategies", false, func(d Deps) http.HandlerFunc { return d.handleSetStrategies }},
 	{"GET /api/v1/engines/{kind}/probe-targets", false, func(d Deps) http.HandlerFunc { return d.handleProbeTargets }},
@@ -207,20 +210,64 @@ func (d Deps) handleEngineConfig(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad_body", "config must be a non-empty JSON object")
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 	defer cancel()
-	switch err := d.Ctl.SetConfig(ctx, k, cfg); {
+	up, err := d.Ctl.SetConfig(ctx, k, cfg)
+	writeUpstream(w, k, up, err)
+}
+
+// writeUpstream answers a config change with what the engine now points at.
+func writeUpstream(w http.ResponseWriter, k engine.Kind, up engine.Upstream, err error) {
+	switch {
 	case errors.Is(err, core.ErrEngineNotFound):
 		writeErr(w, http.StatusNotFound, "engine_not_found", "no such engine: "+string(k))
 	case errors.Is(err, core.ErrNotConfigurable):
 		writeErr(w, http.StatusNotFound, "not_configurable", "engine does not accept runtime config: "+string(k))
+	case errors.Is(err, core.ErrNotSubscription):
+		writeErr(w, http.StatusConflict, "not_subscription", "сервер задан ссылкой, а не подпиской")
 	case errors.Is(err, engine.ErrBadConfig):
 		writeErr(w, http.StatusBadRequest, "bad_config", strings.TrimPrefix(err.Error(), engine.ErrBadConfig.Error()+": "))
 	case err != nil:
 		writeErr(w, http.StatusBadGateway, "engine_error", err.Error())
 	default:
-		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+		if up.Servers == nil {
+			up.Servers = []engine.UpstreamServer{}
+		}
+		writeJSON(w, http.StatusOK, up)
 	}
+}
+
+// handleUpstream: what the engine's config points at — the servers of its
+// link or subscription, the one in use, the subscription's traffic and term.
+func (d Deps) handleUpstream(w http.ResponseWriter, r *http.Request) {
+	k := engine.Kind(r.PathValue("kind"))
+	up, err := d.Ctl.Upstream(k)
+	writeUpstream(w, k, up, err)
+}
+
+// handleUpstreamPick switches to another server of the stored subscription.
+func (d Deps) handleUpstreamPick(w http.ResponseWriter, r *http.Request) {
+	k := engine.Kind(r.PathValue("kind"))
+	var in struct {
+		Server string `json:"server"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<10)).Decode(&in); err != nil || in.Server == "" {
+		writeErr(w, http.StatusBadRequest, "bad_body", "want {\"server\":\"<key>\"}")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	defer cancel()
+	up, err := d.Ctl.PickServer(ctx, k, in.Server)
+	writeUpstream(w, k, up, err)
+}
+
+// handleUpstreamRefresh re-reads the stored subscription now.
+func (d Deps) handleUpstreamRefresh(w http.ResponseWriter, r *http.Request) {
+	k := engine.Kind(r.PathValue("kind"))
+	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
+	defer cancel()
+	up, err := d.Ctl.RefreshUpstream(ctx, k)
+	writeUpstream(w, k, up, err)
 }
 
 // StrategySet is GET/PUT /engines/{kind}/strategies.

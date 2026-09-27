@@ -5,6 +5,7 @@
   import { status, refresh, node } from '../status.svelte';
   import NfqwsRouting from '../NfqwsRouting.svelte';
   import XrayConfig from '../XrayConfig.svelte';
+  import XrayServers from '../XrayServers.svelte';
   import { ENGINE_LABEL, HEALTH_LABEL, ago, fmtDur, healthChip, healthDot, planeOf, probeState, probeText, reasonText } from '../ui';
 
   let { kind, go }: { kind: EngineKind; go: (tab: string) => void } = $props();
@@ -258,6 +259,7 @@
       {/if}
     </section>
   {:else}
+    {#if kind === 'xray'}<XrayServers />{/if}
     <section class="card">
       <div class="card-head">
         <h2>Домены через {kind === 'usque' ? 'WARP' : 'VLESS'}</h2>
