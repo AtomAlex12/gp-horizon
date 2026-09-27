@@ -135,6 +135,7 @@ input[type=text], input[type=password] { width: 100%; }
 .dot.ok { background: var(--ok); }
 .dot.warn { background: var(--warn); }
 .dot.deg { background: var(--degraded); }
+.dot.acc { background: var(--accent); }
 .dot.pulse { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 60%, transparent); animation: pulse 2s infinite; }
 @keyframes pulse { 70% { box-shadow: 0 0 0 6px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
 @media (prefers-reduced-motion: reduce) { .dot.pulse { animation: none; } }

@@ -3,7 +3,9 @@ package auth
 import (
 	"bufio"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -32,7 +34,8 @@ const (
 )
 
 // Guard checks the box account's password and holds browser sessions (in
-// memory: a restart of nuxk-core logs everyone out, by design).
+// memory: a restart of nuxk-core logs everyone out, by design — except the
+// restart of an update from the panel, see Handoff).
 type Guard struct {
 	User  string   // the one account that may log in (root)
 	Files []string // shadow first, then passwd — the first entry for User wins
@@ -40,8 +43,14 @@ type Guard struct {
 	now func() time.Time
 
 	mu       sync.Mutex
-	sessions map[string]session
+	sessions map[string]session // by key(id): the cookie itself isn't kept
 	fails    map[string]*failure
+}
+
+// key is what a session is kept under: the cookie's hash.
+func key(id string) string {
+	h := sha256.Sum256([]byte(id))
+	return hex.EncodeToString(h[:])
 }
 
 type session struct {
@@ -194,7 +203,7 @@ func (g *Guard) NewSession(user string) (string, error) {
 		}
 		delete(g.sessions, oldest)
 	}
-	g.sessions[id] = session{user: user, created: now, seen: now}
+	g.sessions[key(id)] = session{user: user, created: now, seen: now}
 	return id, nil
 }
 
@@ -205,19 +214,88 @@ func (g *Guard) Session(id string) (string, bool) {
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	s, ok := g.sessions[id]
+	k := key(id)
+	s, ok := g.sessions[k]
 	now := g.now()
 	if !ok || now.Sub(s.seen) > sessionIdle {
-		delete(g.sessions, id)
+		delete(g.sessions, k)
 		return "", false
 	}
 	s.seen = now
-	g.sessions[id] = s
+	g.sessions[k] = s
 	return s.user, true
 }
 
 func (g *Guard) EndSession(id string) {
 	g.mu.Lock()
-	delete(g.sessions, id)
+	delete(g.sessions, key(id))
 	g.mu.Unlock()
+}
+
+// handoffMax: a handoff older than this is not taken — it belongs to an
+// update that never restarted this agent.
+const handoffMax = 15 * time.Minute
+
+type handoff struct {
+	Key     string    `json:"key"`
+	User    string    `json:"user"`
+	Created time.Time `json:"created"`
+	Seen    time.Time `json:"seen"`
+}
+
+// Handoff writes the live sessions (their hashes, not the cookies) to path,
+// 0600: an update from the panel restarts nuxk-core, and the person who
+// pressed the button shouldn't land on the login form. The next agent takes
+// them with TakeHandoff.
+func (g *Guard) Handoff(path string) error {
+	g.mu.Lock()
+	var hs []handoff
+	now := g.now()
+	for k, s := range g.sessions {
+		if now.Sub(s.seen) <= sessionIdle {
+			hs = append(hs, handoff{Key: k, User: s.user, Created: s.created, Seen: s.seen})
+		}
+	}
+	g.mu.Unlock()
+	b, err := json.Marshal(hs)
+	if err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, b, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+// TakeHandoff loads the sessions an updating agent left at path, if it's
+// fresh, and removes the file either way. Returns how many were taken.
+func (g *Guard) TakeHandoff(path string) int {
+	st, err := os.Stat(path)
+	if err != nil {
+		return 0
+	}
+	defer os.Remove(path)
+	if g.now().Sub(st.ModTime()) > handoffMax {
+		return 0
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return 0
+	}
+	var hs []handoff
+	if json.Unmarshal(b, &hs) != nil {
+		return 0
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	n := 0
+	for _, h := range hs {
+		if len(h.Key) != 64 || h.User != g.User || g.now().Sub(h.Seen) > sessionIdle || len(g.sessions) >= maxSessions {
+			continue
+		}
+		g.sessions[h.Key] = session{user: h.User, created: h.Created, seen: h.Seen}
+		n++
+	}
+	return n
 }

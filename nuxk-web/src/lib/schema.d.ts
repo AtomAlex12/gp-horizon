@@ -413,6 +413,70 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * This version, the newest release, the last update from the panel
+         * @description The agent looks at the repository's releases on GitHub a couple of minutes after start and then once a day (settings.check). `run` is the last update started from the panel, as its script reported it — it outlives the agent's restart.
+         */
+        get: operations["update"];
+        put?: never;
+        /**
+         * Update this router to the release found (the router's own `nuxk update`)
+         * @description Answers at once; the update runs in the background: the release's files checked against its SHA256SUMS, whose signature this agent checks with the built-in release key; then the agent is restarted and asked whether it answers — if not, the previous version is put back. The agent is down for a few seconds on the way: follow `run` with GET. Only a version newer than this one, and only the one GET shows as `latest`.
+         */
+        post: operations["startUpdate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/update/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Look for a new release now
+         * @description At most once a minute goes to GitHub; more often answers with the last look.
+         */
+        post: operations["checkUpdate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/update/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Daily check on or off, and the channel
+         * @description Turning the check on or changing the channel looks right away.
+         */
+        put: operations["setUpdateSettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -698,6 +762,52 @@ export interface components {
             last_error?: string;
             checked_at?: number;
             applied_at?: number;
+        };
+        UpdateSettings: {
+            /** @description look for a new release once a day */
+            check: boolean;
+            /**
+             * @description beta: pre-releases too
+             * @enum {string}
+             */
+            channel: "stable" | "beta";
+        };
+        UpdateRelease: {
+            version: string;
+            name?: string;
+            /** @description the release's text (its CHANGELOG section), Markdown, ≤16 KiB */
+            notes?: string;
+            /** @description the release on GitHub */
+            url: string;
+            /** @description unix seconds */
+            published_at: number;
+            prerelease: boolean;
+        };
+        UpdateRun: {
+            /** @enum {string} */
+            state: "running" | "done" | "failed" | "rolled_back" | "interrupted";
+            from: string;
+            to: string;
+            message?: string;
+            started_at: number;
+            /** @description the script's last report */
+            at: number;
+            /** @description the last lines of the update's output */
+            log: string[];
+        };
+        UpdateStatus: {
+            current: string;
+            settings: components["schemas"]["UpdateSettings"];
+            latest: components["schemas"]["UpdateRelease"] | null;
+            /** @description latest is newer than current */
+            available: boolean;
+            /** @description unix seconds; absent = not yet */
+            checked_at?: number;
+            check_error?: string;
+            can_apply: boolean;
+            /** @description why the panel can't update this box */
+            cannot?: string;
+            run: components["schemas"]["UpdateRun"] | null;
         };
     };
     responses: {
@@ -1379,6 +1489,121 @@ export interface operations {
             };
             400: components["responses"]["Error"];
             404: components["responses"]["Error"];
+        };
+    };
+    update: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the update state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpdateStatus"];
+                };
+            };
+            401: components["responses"]["Error"];
+        };
+    };
+    startUpdate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @example 0.4.1 */
+                    version: string;
+                };
+            };
+        };
+        responses: {
+            /** @description started */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpdateStatus"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            /** @description update_busy: one is running; update_stale: not the version found, or not newer */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description update_unavailable: no `nuxk` command here (not installed by nuxk-lite) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    checkUpdate: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the update state after the look */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpdateStatus"];
+                };
+            };
+            401: components["responses"]["Error"];
+        };
+    };
+    setUpdateSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateSettings"];
+            };
+        };
+        responses: {
+            /** @description the update state with the new settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpdateStatus"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
         };
     };
 }

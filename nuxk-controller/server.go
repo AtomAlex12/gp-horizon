@@ -104,6 +104,11 @@ func secure(next http.Handler) http.Handler {
 func spa(root string) http.Handler {
 	fs := http.FileServer(http.Dir(root))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// the page is asked for again each time (a new version must reach
+		// the browser); the hashed files under /assets/ may be kept
+		if !strings.HasPrefix(r.URL.Path, "/assets/") {
+			w.Header().Set("Cache-Control", "no-cache")
+		}
 		clean := filepath.Clean("/" + r.URL.Path)
 		if st, err := os.Stat(filepath.Join(root, clean)); (err != nil || st.IsDir()) && !strings.Contains(filepath.Base(clean), ".") {
 			http.ServeFile(w, r, filepath.Join(root, "index.html"))
