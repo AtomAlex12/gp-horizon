@@ -20,6 +20,8 @@ type Settings struct {
 	// Plugins: what the controller needs to talk to a plugin (GP: the
 	// random password it set in place of GP's admin/admin).
 	Plugins map[string]PluginSecret `json:"plugins,omitempty"`
+	// VLESS: links and subscriptions kept here for the router (vless.go).
+	VLESS *VlessBook `json:"vless,omitempty"`
 }
 
 type PluginSecret struct {

@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"nuxk.dev/horizon/core/internal/engine"
 )
@@ -99,37 +100,55 @@ func (a *Adapter) Probe(ctx context.Context, _ []string) (engine.Probe, error) {
 	return p, nil
 }
 
-// SetConfig takes the server — exactly one of a vless:// link (vless_uri) or a 3x-ui
-// subscription URL (sub_url, its first VLESS server) — renders xray's config.json and hands
-// it to S52xray-nuxk, which tests it with xray itself, swaps it in and restarts; if xray
-// won't start with it, the previous config comes back. A link that can't work is
-// engine.ErrBadConfig.
-func (a *Adapter) SetConfig(ctx context.Context, cfg map[string]string) error {
-	uri, sub := strings.TrimSpace(cfg["vless_uri"]), strings.TrimSpace(cfg["sub_url"])
+// SetConfig takes the server — exactly one of a vless:// link (vless_uri) or
+// a 3x-ui subscription URL (sub_url; "pick" names one of its servers by key,
+// else the first) — renders xray's config.json and hands it to
+// S52xray-nuxk, which tests it with xray itself, swaps it in and restarts;
+// if xray won't start with it, the previous config comes back. The same
+// config again (a subscription re-read with nothing new) restarts nothing.
+// A link that can't work is engine.ErrBadConfig.
+func (a *Adapter) SetConfig(ctx context.Context, cfg map[string]string) (engine.Upstream, error) {
+	uri, sub, pick := strings.TrimSpace(cfg["vless_uri"]), strings.TrimSpace(cfg["sub_url"]), cfg["pick"]
 	var s Server
-	var err error
+	var up engine.Upstream
 	switch {
 	case uri != "" && sub != "":
-		return bad("нужно что-то одно: ссылка vless:// или подписка")
+		return up, bad("нужно что-то одно: ссылка vless:// или подписка")
 	case uri != "":
-		s, err = ParseVLESS(uri)
+		var err error
+		if s, err = ParseVLESS(uri); err != nil {
+			return up, err
+		}
+		up = engine.Upstream{Source: "link", Servers: []engine.UpstreamServer{s.Public()}}
 	case sub != "":
-		var all []Server
-		if all, err = Subscription(ctx, a.HTTP, sub); err == nil {
-			s = all[0]
+		sb, err := Subscription(ctx, a.HTTP, sub)
+		if err != nil {
+			return up, err
+		}
+		i := sb.Pick(pick)
+		if i < 0 {
+			if pick != "" {
+				up.Notice = "выбранного сервера больше нет в подписке — взят первый"
+			}
+			i = 0
+		}
+		s = sb.Servers[i]
+		up.Source, up.Title, up.Usage, up.RefreshS, up.Skipped, up.Active = "subscription", sb.Title, sb.Usage, sb.RefreshS, sb.Skipped, i
+		for _, x := range sb.Servers {
+			up.Servers = append(up.Servers, x.Public())
 		}
 	default:
-		return bad("нет ни ссылки vless://, ни подписки")
-	}
-	if err != nil {
-		return err
+		return up, bad("нет ни ссылки vless://, ни подписки")
 	}
 	conf, err := Render(s)
 	if err != nil {
-		return err
+		return up, err
 	}
-	_, err = a.x.ActionWithInput(ctx, "set-config", meta(s, endpointOf(ctx, s), a.Iface)+"---\n"+string(conf)+"\n")
-	return err
+	if _, err := a.x.ActionWithInput(ctx, "set-config", meta(s, endpointOf(ctx, s), a.Iface)+"---\n"+string(conf)+"\n"); err != nil {
+		return up, err
+	}
+	up.FetchedAt = time.Now().Unix()
+	return up, nil
 }
 
 func firstNonEmpty(ss ...string) string {

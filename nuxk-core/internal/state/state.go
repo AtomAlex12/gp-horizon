@@ -173,6 +173,9 @@ type Desired struct {
 	// Config last set via PUT /engines/{kind}/config. May hold secrets (a
 	// vless:// UUID) — the file is written 0600 and never served back.
 	Config map[string]string `json:"config,omitempty"`
+	// Upstream: what Config points at, with no secrets (served by
+	// GET /engines/{kind}/upstream).
+	Upstream *engine.Upstream `json:"upstream,omitempty"`
 	// Strategies last set via PUT /engines/{kind}/strategies (nfqws2).
 	Strategies []engine.Strategy `json:"strategies,omitempty"`
 	// ProbeTargets: the sites the probe opens, set via PUT

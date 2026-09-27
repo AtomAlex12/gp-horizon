@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net"
 	"net/netip"
 	"slices"
@@ -95,8 +96,10 @@ func (c *Controller) Kick() {
 func (c *Controller) Run(ctx context.Context) {
 	info := time.NewTicker(c.InfoEvery)
 	probe := time.NewTicker(c.ProbeEvery)
+	subs := time.NewTicker(time.Hour) // subscriptions: re-read when due
 	defer info.Stop()
 	defer probe.Stop()
+	defer subs.Stop()
 
 	c.tick(ctx, true)
 	for {
@@ -109,6 +112,8 @@ func (c *Controller) Run(ctx context.Context) {
 			c.tick(ctx, false)
 		case <-probe.C:
 			c.tick(ctx, true)
+		case now := <-subs.C:
+			c.refreshDue(ctx, now)
 		}
 	}
 }
@@ -172,24 +177,110 @@ func (c *Controller) Apply(ctx context.Context, k engine.Kind, r engine.Routing)
 }
 
 // SetConfig applies a Configurable engine's runtime config and, once the
-// engine accepted it, stores it for re-apply.
-func (c *Controller) SetConfig(ctx context.Context, k engine.Kind, cfg map[string]string) error {
+// engine accepted it, stores it for re-apply, with what it points at.
+func (c *Controller) SetConfig(ctx context.Context, k engine.Kind, cfg map[string]string) (engine.Upstream, error) {
 	e, ok := c.Reg.Get(k)
 	if !ok {
-		return ErrEngineNotFound
+		return engine.Upstream{}, ErrEngineNotFound
 	}
 	ce, ok := e.(engine.Configurable)
 	if !ok {
-		return ErrNotConfigurable
+		return engine.Upstream{}, ErrNotConfigurable
 	}
-	if err := ce.SetConfig(ctx, cfg); err != nil {
+	up, err := ce.SetConfig(ctx, cfg)
+	if err != nil {
 		c.setLastErr(k, err)
-		return err
+		return up, err
 	}
 	c.setLastErr(k, nil)
-	_, err := c.Store.UpdateDesired(k, func(d *state.Desired) { d.Config = cfg })
+	_, err = c.Store.UpdateDesired(k, func(d *state.Desired) { d.Config, d.Upstream = cfg, &up })
 	c.Kick()
-	return err
+	return up, err
+}
+
+var ErrNotSubscription = errors.New("the engine's server isn't from a subscription")
+
+// Upstream is what a Configurable engine's config points at (no secrets).
+func (c *Controller) Upstream(k engine.Kind) (engine.Upstream, error) {
+	e, ok := c.Reg.Get(k)
+	if !ok {
+		return engine.Upstream{}, ErrEngineNotFound
+	}
+	if _, ok := e.(engine.Configurable); !ok {
+		return engine.Upstream{}, ErrNotConfigurable
+	}
+	d, err := c.Store.LoadDesired(k)
+	if err != nil || d.Upstream == nil {
+		return engine.Upstream{Servers: []engine.UpstreamServer{}}, err
+	}
+	return *d.Upstream, nil
+}
+
+// PickServer switches to another server of the stored subscription.
+func (c *Controller) PickServer(ctx context.Context, k engine.Kind, key string) (engine.Upstream, error) {
+	d, err := c.Store.LoadDesired(k)
+	if err != nil {
+		return engine.Upstream{}, err
+	}
+	if d.Config["sub_url"] == "" {
+		return engine.Upstream{}, ErrNotSubscription
+	}
+	cfg := maps.Clone(d.Config)
+	cfg["pick"] = key
+	return c.SetConfig(ctx, k, cfg)
+}
+
+// RefreshUpstream re-reads the stored subscription (or re-applies the link):
+// the same server with the same settings restarts nothing. A failure keeps
+// the running config and is noted in the Upstream.
+func (c *Controller) RefreshUpstream(ctx context.Context, k engine.Kind) (engine.Upstream, error) {
+	d, err := c.Store.LoadDesired(k)
+	if err != nil {
+		return engine.Upstream{}, err
+	}
+	if len(d.Config) == 0 {
+		return engine.Upstream{}, ErrNotSubscription
+	}
+	up, err := c.SetConfig(ctx, k, d.Config)
+	if err != nil && d.Upstream != nil {
+		old := *d.Upstream
+		old.Error = err.Error()
+		_, _ = c.Store.UpdateDesired(k, func(d *state.Desired) { d.Upstream = &old })
+		return old, err
+	}
+	return up, err
+}
+
+// subscription refresh: as often as the panel asks (Profile-Update-Interval),
+// within [1 h, 24 h]; 12 h when it doesn't say. One HTTPS request each time.
+const (
+	subRefreshDefault = 12 * time.Hour
+	subRefreshMin     = time.Hour
+	subRefreshMax     = 24 * time.Hour
+)
+
+// refreshDue re-reads the subscriptions whose time has come.
+func (c *Controller) refreshDue(ctx context.Context, now time.Time) {
+	for _, k := range c.Reg.Kinds() {
+		d, err := c.Store.LoadDesired(k)
+		if err != nil || d.Upstream == nil || d.Upstream.Source != "subscription" || d.Config["sub_url"] == "" {
+			continue
+		}
+		every := subRefreshDefault
+		if d.Upstream.RefreshS > 0 {
+			every = min(max(time.Duration(d.Upstream.RefreshS)*time.Second, subRefreshMin), subRefreshMax)
+		}
+		if now.Sub(time.Unix(d.Upstream.FetchedAt, 0)) < every {
+			continue
+		}
+		rctx, cancel := context.WithTimeout(ctx, 90*time.Second)
+		if _, err := c.RefreshUpstream(rctx, k); err != nil {
+			slog.Warn("subscription refresh", "engine", k, "err", err)
+		} else {
+			slog.Info("subscription refreshed", "engine", k)
+		}
+		cancel()
+	}
 }
 
 // SetStrategies replaces the engine's nuxk strategies (nfqws2: per-domain
@@ -520,10 +611,11 @@ func (c *Controller) restore(ctx context.Context, k engine.Kind, st EngineState)
 	// Config is only re-sent when the engine reports no upstream — re-sending
 	// it always would restart a healthy tunnel on every nuxk-core start.
 	if ce, ok := e.(engine.Configurable); ok && len(d.Config) > 0 && st.Endpoint == "" && st.Detail["error"] == "" {
-		if err := ce.SetConfig(ctx, d.Config); err != nil {
+		if up, err := ce.SetConfig(ctx, d.Config); err != nil {
 			slog.Warn("restore config", "engine", k, "err", err)
 			c.setLastErr(k, err)
 		} else {
+			_, _ = c.Store.UpdateDesired(k, func(d *state.Desired) { d.Upstream = &up })
 			slog.Info("restored config", "engine", k)
 		}
 	}

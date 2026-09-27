@@ -126,5 +126,41 @@ var ErrBadConfig = errors.New("bad config")
 // Callers type-assert for it rather than it being part of Engine, so adapters that don't need
 // runtime config don't have to implement a no-op.
 type Configurable interface {
-	SetConfig(ctx context.Context, cfg map[string]string) error
+	// SetConfig applies cfg and says what it now points at — no secrets.
+	SetConfig(ctx context.Context, cfg map[string]string) (Upstream, error)
+}
+
+// Upstream is what a tunnel engine's config points at, with no secrets in
+// it (no user id, no subscription URL): the servers of a link or of a
+// subscription, which one is in use, and what the subscription reports.
+type Upstream struct {
+	Source    string           `json:"source"` // link | subscription; "" = none set
+	Title     string           `json:"title,omitempty"`
+	Servers   []UpstreamServer `json:"servers"`
+	Active    int              `json:"active"` // index into Servers
+	Usage     *UpstreamUsage   `json:"usage,omitempty"`
+	FetchedAt int64            `json:"fetched_at,omitempty"`
+	RefreshS  int64            `json:"refresh_s,omitempty"` // re-read every … s
+	Skipped   int              `json:"skipped,omitempty"`   // links of the subscription that don't parse
+	Notice    string           `json:"notice,omitempty"`    // e.g. the picked server is gone
+	Error     string           `json:"error,omitempty"`     // the last refresh failed: why
+}
+
+// UpstreamServer is one server, public parts only.
+type UpstreamServer struct {
+	Key      string `json:"key"` // name@host:port — stable across refreshes
+	Name     string `json:"name"`
+	Address  string `json:"address"` // host:port
+	Security string `json:"security"`
+	Network  string `json:"network"`
+	Flow     string `json:"flow,omitempty"`
+}
+
+// UpstreamUsage is a subscription's traffic and term, as its panel reports
+// it (3x-ui: the subscription-userinfo header). Bytes; unix seconds.
+type UpstreamUsage struct {
+	Upload   int64 `json:"upload"`
+	Download int64 `json:"download"`
+	Total    int64 `json:"total"`  // 0 = unlimited
+	Expire   int64 `json:"expire"` // 0 = never
 }

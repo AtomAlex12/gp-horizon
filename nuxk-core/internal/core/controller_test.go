@@ -30,6 +30,7 @@ type fakeEngine struct {
 	items    string     // Detail["items"]: the hostlist nfqws2 reports
 	targets  [][]string // the sites each Probe was asked to open
 	onInfo   func()     // runs inside Info, outside the lock
+	failNext bool       // fakeCfgEngine: the next SetConfig fails
 }
 
 func (f *fakeEngine) log(c string)      { f.mu.Lock(); f.calls = append(f.calls, c); f.mu.Unlock() }
@@ -96,13 +97,28 @@ func (f *fakeEngine) lastRouting() engine.Routing {
 
 type fakeCfgEngine struct{ *fakeEngine }
 
-func (f fakeCfgEngine) SetConfig(_ context.Context, m map[string]string) error {
+// SetConfig: a link is one server; a subscription is three (a, b, c), "pick"
+// chooses by key; "fail" in the config fails it.
+func (f fakeCfgEngine) SetConfig(_ context.Context, m map[string]string) (engine.Upstream, error) {
 	f.log("config")
 	f.mu.Lock()
+	defer f.mu.Unlock()
+	if m["fail"] != "" || f.failNext {
+		return engine.Upstream{}, errors.New("subscription down")
+	}
 	f.configs = append(f.configs, m)
 	f.endpoint = "203.0.113.9:443"
-	f.mu.Unlock()
-	return nil
+	if m["sub_url"] == "" {
+		return engine.Upstream{Source: "link", Servers: []engine.UpstreamServer{{Key: "x@1.1.1.1:443"}}, FetchedAt: time.Now().Unix()}, nil
+	}
+	up := engine.Upstream{Source: "subscription", Title: "home", RefreshS: 3 * 3600, FetchedAt: time.Now().Unix()}
+	for i, n := range []string{"a", "b", "c"} {
+		up.Servers = append(up.Servers, engine.UpstreamServer{Key: n + "@10.0.0.1:443", Name: n})
+		if m["pick"] == n+"@10.0.0.1:443" {
+			up.Active = i
+		}
+	}
+	return up, nil
 }
 
 func newTestController(t *testing.T, engines ...engine.Engine) (*Controller, *state.Store) {
@@ -260,14 +276,76 @@ func TestApplyKeepsStoredEndpoints(t *testing.T) {
 	}
 }
 
+func TestUpstreamSubscription(t *testing.T) {
+	x := fakeCfgEngine{&fakeEngine{kind: engine.KindXray, running: true}}
+	c, st := newTestController(t, x)
+	ctx := context.Background()
+
+	if up, err := c.Upstream(engine.KindXray); err != nil || up.Source != "" || up.Servers == nil {
+		t.Errorf("nothing set yet: %+v %v", up, err)
+	}
+	if _, err := c.SetConfig(ctx, engine.KindXray, map[string]string{"vless_uri": "vless://…"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.PickServer(ctx, engine.KindXray, "b@10.0.0.1:443"); !errors.Is(err, ErrNotSubscription) {
+		t.Errorf("a link has nothing to pick: %v", err)
+	}
+
+	if _, err := c.SetConfig(ctx, engine.KindXray, map[string]string{"sub_url": "https://panel/sub/x"}); err != nil {
+		t.Fatal(err)
+	}
+	up, err := c.PickServer(ctx, engine.KindXray, "b@10.0.0.1:443")
+	if err != nil || up.Active != 1 {
+		t.Fatalf("pick b: %+v %v", up, err)
+	}
+	d, _ := st.LoadDesired(engine.KindXray)
+	if d.Config["sub_url"] != "https://panel/sub/x" || d.Config["pick"] != "b@10.0.0.1:443" || d.Upstream == nil || d.Upstream.Active != 1 {
+		t.Errorf("stored: %+v %+v", d.Config, d.Upstream)
+	}
+	if up, _ := c.Upstream(engine.KindXray); up.Title != "home" || len(up.Servers) != 3 || up.Active != 1 {
+		t.Errorf("served: %+v", up)
+	}
+
+	// a refresh keeps the pick; a failed one keeps what runs and says why
+	if up, err := c.RefreshUpstream(ctx, engine.KindXray); err != nil || up.Active != 1 {
+		t.Errorf("refresh: %+v %v", up, err)
+	}
+	x.mu.Lock()
+	x.failNext = true
+	x.mu.Unlock()
+	if up, err := c.RefreshUpstream(ctx, engine.KindXray); err == nil || up.Error != "subscription down" || up.Active != 1 {
+		t.Errorf("failed refresh: %+v %v", up, err)
+	}
+	if d, _ := st.LoadDesired(engine.KindXray); d.Config["pick"] != "b@10.0.0.1:443" || d.Upstream.Error == "" {
+		t.Errorf("after a failed refresh: %+v %+v", d.Config, d.Upstream)
+	}
+	x.mu.Lock()
+	x.failNext = false
+	x.mu.Unlock()
+
+	// due: every Profile-Update-Interval (3 h here), not before
+	n := x.count("config")
+	c.refreshDue(ctx, time.Now().Add(time.Hour))
+	if x.count("config") != n {
+		t.Error("refreshed before it was due")
+	}
+	c.refreshDue(ctx, time.Now().Add(4*time.Hour))
+	if x.count("config") != n+1 {
+		t.Error("not refreshed when due")
+	}
+	if up, _ := c.Upstream(engine.KindXray); up.Error != "" {
+		t.Errorf("a good refresh clears the error: %+v", up)
+	}
+}
+
 func TestSetConfigErrors(t *testing.T) {
 	u := &fakeEngine{kind: engine.KindUsque}
 	c, st := newTestController(t, u)
 	ctx := context.Background()
-	if err := c.SetConfig(ctx, engine.KindXray, map[string]string{"a": "b"}); err != ErrEngineNotFound {
+	if _, err := c.SetConfig(ctx, engine.KindXray, map[string]string{"a": "b"}); err != ErrEngineNotFound {
 		t.Errorf("unknown engine err = %v", err)
 	}
-	if err := c.SetConfig(ctx, engine.KindUsque, map[string]string{"a": "b"}); err != ErrNotConfigurable {
+	if _, err := c.SetConfig(ctx, engine.KindUsque, map[string]string{"a": "b"}); err != ErrNotConfigurable {
 		t.Errorf("usque err = %v", err)
 	}
 	if d, _ := st.LoadDesired(engine.KindUsque); d.Config != nil {

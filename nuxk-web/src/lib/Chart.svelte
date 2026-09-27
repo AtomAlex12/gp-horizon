@@ -27,13 +27,16 @@
     min?: number;
   } = $props();
 
-  const W = 640,
-    H = 200,
+  // drawn at the card's real width (measured), not scaled: a wide window
+  // gets a wider plot with the same 10px labels and the same height
+  let cw = $state(640);
+  const W = $derived(Math.max(280, Math.round(cw || 640)));
+  const H = 200,
     pl = 52,
     pr = 10,
     pt = 10,
     pb = 22;
-  const PW = W - pl - pr;
+  const PW = $derived(W - pl - pr);
   const MAX_BARS = 120;
 
   const tEnd = $derived(ts.length ? ts[ts.length - 1] : 0);
@@ -166,7 +169,7 @@
   {#if empty}
     <div class="wait">Копим данные — график появится через несколько секунд.</div>
   {:else}
-    <div class="plot">
+    <div class="plot" bind:clientWidth={cw}>
       <!-- focusable so the crosshair also works from the keyboard (← →) -->
       <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
       <svg

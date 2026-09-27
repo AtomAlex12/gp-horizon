@@ -343,8 +343,8 @@
     display: flex;
     flex-direction: column;
     gap: 16px;
-    max-width: 1240px;
     width: 100%;
+    min-width: 0;
   }
   .gate {
     min-height: 100%;

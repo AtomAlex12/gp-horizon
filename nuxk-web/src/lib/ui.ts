@@ -110,6 +110,15 @@ export function probeText(e: Pick<EngineState, 'probe'>): string {
   return `проба${site} не прошла: ${reasonText(p.reason)}`;
 }
 
+/** "12,3 ГБ": bytes in the units people count traffic in. */
+export function fmtBytes(n: number): string {
+  const u = ['Б', 'КБ', 'МБ', 'ГБ', 'ТБ'];
+  let i = 0,
+    x = n || 0;
+  while (x >= 1024 && i < u.length - 1) (x /= 1024), i++;
+  return `${x.toLocaleString('ru-RU', { maximumFractionDigits: x < 10 && i ? 1 : 0 })} ${u[i]}`;
+}
+
 export function fmtDur(s: number): string {
   s = Math.max(0, Math.floor(s || 0));
   const h = Math.floor(s / 3600),

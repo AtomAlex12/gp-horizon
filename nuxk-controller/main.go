@@ -104,10 +104,12 @@ func serve() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	go ag.Run(ctx, 5*time.Second)
+	vl := NewVless(st, ag)
+	go vl.Run(ctx)
 
 	srv := &http.Server{
 		Addr:              env("LISTEN", ":4200"),
-		Handler:           NewServer(ag, st, NewSessions(), NewPluginHost(os.Getenv("SUPERVISOR_SOCK")), env("WEB_ROOT", ""), version),
+		Handler:           NewServer(ag, st, NewSessions(), NewPluginHost(os.Getenv("SUPERVISOR_SOCK")), vl, env("WEB_ROOT", ""), version),
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		// no WriteTimeout: /api/v1/events is a long-lived stream
