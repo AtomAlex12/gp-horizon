@@ -7,8 +7,6 @@
 *.tar.gz
 
 # go
-/nuxk-installer/payload/*
-!/nuxk-installer/payload/README.md
 /nuxk-core/nuxk-core
 /nuxk-core/*.test
 /nuxk-core/coverage.out

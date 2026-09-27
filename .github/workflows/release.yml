@@ -1,6 +1,7 @@
-# Tag vX.Y.Z[-pre.N] on main → release bundle (`make release`) attached to a
-# GitHub release. The tag must equal v$(cat VERSION); a "-" in it marks a
-# pre-release.
+# Tag vX.Y.Z[-pre.N] on main → a GitHub release with everything the
+# installers download (`make release`), and the controller image on
+# ghcr.io built from those same files. The tag must equal v$(cat VERSION);
+# a "-" in it marks a pre-release (and keeps the image's :latest where it was).
 name: release
 
 on:
@@ -9,6 +10,7 @@ on:
 
 permissions:
   contents: write
+  packages: write
 
 jobs:
   release:
@@ -26,8 +28,39 @@ jobs:
           v=$(tr -d ' \n\r' < VERSION)
           [ "$GITHUB_REF_NAME" = "v$v" ] || { echo "tag $GITHUB_REF_NAME != v$v"; exit 1; }
           echo "VERSION=$v" >> "$GITHUB_ENV"
+      - run: sudo apt-get install -y --no-install-recommends busybox
       - run: make check
+      - name: the lite installer under busybox ash (the router's shell)
+        run: SH="busybox sh" sh install/lite_test.sh
       - run: make release
+
+      # --- the controller image, from the release's own files --------------
+      - name: image context
+        run: |
+          d=dist/image
+          rm -rf "$d" && mkdir -p "$d/web"
+          cp "dist/nuxk-horizon-$VERSION"/nuxk-controller-linux-* "$d/"
+          tar -C "$d/web" -xzf "dist/nuxk-horizon-$VERSION/nuxk-web-full-$VERSION.tar.gz"
+          cp -r nuxk-controller/plugins "$d/plugins"
+          img="ghcr.io/$(echo "$GITHUB_REPOSITORY_OWNER" | tr 'A-Z' 'a-z')/nuxk-horizon-controller"
+          tags="$img:$VERSION"
+          case "$VERSION" in *-*) ;; *) tags="$tags,$img:latest" ;; esac
+          echo "IMAGE_TAGS=$tags" >> "$GITHUB_ENV"
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: dist/image
+          file: deploy/release/Dockerfile.controller
+          platforms: linux/arm64,linux/amd64
+          push: true
+          tags: ${{ env.IMAGE_TAGS }}
+
       - name: release notes from CHANGELOG
         # plain prefix match: "\\[" in a dynamic regex is a bracket in gawk
         run: awk -v v="$VERSION" 'index($0, "## [" v "]") == 1 {p=1; next} index($0, "## [") == 1 {p=0} p' CHANGELOG.md > notes.md

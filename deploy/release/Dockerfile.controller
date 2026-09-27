@@ -1,0 +1,27 @@
+# nuxk-controller from a release's prebuilt files — nothing is compiled here.
+# release.yml fills the context from `make release`:
+#   nuxk-controller-linux-<arch>   the binary (arm64, amd64)
+#   web/                           nuxk-web, full build
+#   plugins/                       plugin recipes (nuxk-controller/plugins)
+# People get it with install/nuxk-full.sh; deploy/pi builds the same image
+# from source for development.
+FROM debian:bookworm-slim
+ARG TARGETARCH
+# what plugins need at run time (GP: Python for its core, nftables/iptables,
+# dig for blockcheck2); setpriv (util-linux) drops a plugin's rights
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      ca-certificates curl python3 python3-venv iptables nftables ipset dnsutils procps iproute2 bsdextrautils \
+    && rm -rf /var/lib/apt/lists/*
+COPY nuxk-controller-linux-${TARGETARCH} /usr/bin/nuxk-controller
+COPY web/ /usr/share/nuxk-web/
+COPY plugins/ /usr/share/nuxk/plugins/
+# owned by nobody (the web/API process); a fresh named volume copies this
+RUN chmod 755 /usr/bin/nuxk-controller \
+    && mkdir -p /var/lib/nuxk-controller && chown 65534:65534 /var/lib/nuxk-controller && chmod 711 /var/lib/nuxk-controller
+ENV WEB_ROOT=/usr/share/nuxk-web DATA_DIR=/var/lib/nuxk-controller LISTEN=:4200
+LABEL org.opencontainers.image.source="https://github.com/AtomAlex12/nuxk-horizon" \
+      org.opencontainers.image.description="nuxk Horizon controller: the full web UI, history and plugins for nuxk on a Keenetic router" \
+      org.opencontainers.image.licenses="MIT"
+EXPOSE 4200
+ENTRYPOINT ["/usr/bin/nuxk-controller"]
+CMD ["supervise"]

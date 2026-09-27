@@ -1,9 +1,12 @@
 #!/bin/sh
-# nuxk Horizon — beta bootstrap for the Raspberry Pi. Safe to re-run: it
-# checks, fixes what's missing, updates the checkout and restarts the stack.
+# nuxk Horizon — the DEVELOPMENT stack on a Raspberry Pi, built from source
+# (the real-engine stand and the controller). People install with
+# install/nuxk-full.sh instead: prebuilt, nothing compiled on the Pi.
+# Safe to re-run: it checks, fixes what's missing, updates the checkout and
+# restarts the stack.
 #
-#   git clone git@github.com:AtomAlex12/nuxk-horizon.git ~/nuxk-horizon   # private repo:
-#   cd ~/nuxk-horizon && sh deploy/pi/bootstrap.sh                           # needs a key/PAT
+#   git clone https://github.com/AtomAlex12/nuxk-horizon.git ~/nuxk-horizon
+#   cd ~/nuxk-horizon && sh deploy/pi/bootstrap.sh
 #
 # Env: NUXK_REF (branch/tag, default main), NUXK_DIR (checkout, default: the
 # one this script lives in, else ~/nuxk-horizon), NUXK_REPO (clone URL).
@@ -70,8 +73,8 @@ if [ -n "$OLD" ]; then
     say "Останавливаю старый стенд deploy/proto ($OLD) — его тома сохраняются"
     docker ps -q --filter "label=com.docker.compose.project=proto" | xargs docker stop >/dev/null
 fi
-BUSY=$(docker ps --format '{{.Names}} {{.Ports}}' | grep -E ':(4242|4300)->' | grep -v '^nuxk-pi-' || true)
-[ -z "$BUSY" ] || die "порты 4242/4300 заняты другим контейнером: $BUSY"
+BUSY=$(docker ps --format '{{.Names}} {{.Ports}}' | grep -E ':(4242)->' | grep -v '^nuxk-pi-' || true)
+[ -z "$BUSY" ] || die "порт 4242 занят другим контейнером: $BUSY"
 
 # --- 5. build ---------------------------------------------------------------------------
 say "Сборка образов (первый раз 5–10 минут)"
@@ -103,7 +106,6 @@ say "Запуск стека"
 docker compose -f "$COMPOSE" up -d
 sleep 3
 IP=$(hostname -I 2>/dev/null | awk '{print $1}')
-CODE=$(docker compose -f "$COMPOSE" logs installer 2>/dev/null | sed -n 's/.*код доступа: *//p' | tail -n 1)
 HEALTH=$(curl -fsS -m 5 "http://127.0.0.1:4242/api/v1/healthz" 2>/dev/null || echo "не отвечает")
 
 cat <<EOF
@@ -111,8 +113,8 @@ cat <<EOF
   nuxk $VERSION на Raspberry Pi
   ───────────────────────────────────────────────
   Дашборд стенда:   http://$IP:4242/      (healthz: $HEALTH)
-  Установка на роутер: http://$IP:4300/
-  Код доступа:      ${CODE:-см. docker compose -f $COMPOSE logs installer}
+  Контроллер:       http://$IP:4200/      (профиль controller в deploy/pi/.env)
+  Роутер:           install/nuxk-lite.sh — установщик лайт, из этого checkout или релиза
 
   Логи:  docker compose -f $DIR/$COMPOSE logs -f
   Стоп:  docker compose -f $DIR/$COMPOSE down

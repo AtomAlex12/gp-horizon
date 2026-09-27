@@ -54,7 +54,7 @@ func main() {
 	)
 	flag.Parse()
 	if *showVer {
-		// One machine-readable line — nuxk-installer parses it to decide
+		// One machine-readable line — nuxk-lite.sh parses it to decide
 		// whether the router's copy needs an upgrade.
 		fmt.Printf("nuxk-core %s %s\n", version, commit)
 		return
