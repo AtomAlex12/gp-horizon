@@ -23,25 +23,27 @@
 | `nuxk-controller/` | контроллер на Pi (Go, stdlib): прокси, история `/ctl/v1/*`, хост плагинов (`supervise` → `serve` + плагины, `plugin.go`) |
 | `nuxk-controller/plugins/<name>/` | рецепты плагинов: `plugin.json` + `install.sh` (GP — подбор стратегий) |
 | `nuxk-web/` | Svelte 5 + Vite; типы API в `src/lib/schema.d.ts` генерируются |
-| `nuxk-installer/` | установка на роутер по SSH (Go, `golang.org/x/crypto` v0.44.0 — не обновлять выше без Go 1.26) |
+| `install/nuxk-lite.sh` | установщик на роутер (busybox sh): проверка, план, скачивание готовых файлов релиза со сверкой `SHA256SUMS`, остаётся на роутере командой `nuxk` (update / warp / vless / uninstall); версия и хеши xray — в нём |
+| `install/nuxk-full.sh` | установщик на Pi: контроллер из образа `ghcr.io/…/nuxk-horizon-controller`, потом `nuxk-lite.sh` на роутере по SSH |
 | `engines/nuxk-nfqws2/S51nfqws2-nuxk` | прослойка над штатным пакетом nfqws2-keenetic |
 | `engines/nuxk-usque/` | форк usque-keenetic (ipk для mips/mipsel/aarch64) |
-| `engines/nuxk-xray/S52xray-nuxk` | init-скрипт xray (VLESS): свой TUN `opkgtunN`, конфиг от агента, проверка и откат; xray — официальный релиз XTLS, версия и хеши в `nuxk-installer/xray.go` |
-| `deploy/pi/`, `deploy/proto/` | стек для Raspberry Pi: стенд, инсталлятор, контроллер |
-| `docs/BETA.md` | пошаговая установка и тест на роутере |
+| `engines/nuxk-xray/S52xray-nuxk` | init-скрипт xray (VLESS): свой TUN `opkgtunN`, конфиг от агента, проверка и откат; xray — официальный релиз XTLS, версия и хеши в `install/nuxk-lite.sh` |
+| `deploy/release/` | образ контроллера из готовых файлов релиза (собирает `release.yml`) |
+| `deploy/pi/`, `deploy/proto/` | стек **разработки** на Pi из исходников: стенд и контроллер |
+| `docs/BETA.md` | пошаговая установка и проверка (лайт, фул, этапы) |
 
 ## Команды
 
 ```sh
-make check                 # всё: версия, go test/vet/gofmt, svelte-check, check:api, прослойка
-make release               # полный релиз в dist/ (нужен интернет: usque из GitHub)
-make installer             # инсталлятор со встроенными файлами для роутера
+make check                 # всё: версия, go test/vet/gofmt, svelte-check, check:api, прослойки, установщик
+make release               # всё, что скачивают установщики, в dist/ (нужен интернет: usque из GitHub)
 
 cd nuxk-core && go run . -config testdata/nuxk.conf -debug   # агент с мок-движками, :4141
 cd nuxk-web  && npm install && npm run dev                   # веб :5173, /api → :4141
 cd nuxk-web  && npm run gen:api                              # типы из openapi.yaml
 cd nuxk-core && go test -race ./...
 sh engines/nuxk-nfqws2/shim_test.sh
+sh install/lite_test.sh                  # установщик на имитации роутера; SH="busybox sh" — как на роутере
 scripts/version.sh set X.Y.Z   # версия — только так (VERSION + nuxk-web/package.json)
 ```
 
@@ -64,6 +66,10 @@ root / nuxk-dev), на контроллере — admin из мастера. `AP
   экран «появится позже». Стенд всегда подписан как стенд.
 - Цвета графиков — токены `--s1/--s2/--s3` в `app.css` (проверены на различимость в
   обеих темах); новые серии — через валидатор палитры, не на глаз.
+- **Установщики ничего не собирают** — только готовые файлы релиза, каждый сверяется с
+  `SHA256SUMS`. Новый файл, нужный на роутере или Pi, → в `make release` (он попадёт в
+  `SHA256SUMS`) и в `install/nuxk-lite.sh` / `nuxk-full.sh`; `lite_test.sh` проверяет
+  установку на имитации роутера. Скрипты — POSIX sh для busybox ash.
 - Каждое изменение для пользователя — строка в `CHANGELOG.md` (раздел `[Unreleased]`).
 - Перед пушем — `make check`. PR — в `main`; после мержа ставится тег `vX.Y.Z`.
 - Не коммитить: `e0-report-*.txt` (схема сети), токены, пароли, `.env`.
@@ -107,7 +113,7 @@ root / nuxk-dev), на контроллере — admin из мастера. `AP
 |---|---|---|
 | Роутер квартира | 192.168.2.1 | Keenetic Ultra NC-1812, KeeneticOS 5.01, aarch64; SSH Entware — **порт 22**, root; RCI `127.0.0.1:79` без пароля изнутри |
 | Роутер дом | 192.168.1.1 | Entware; из сети квартиры не виден |
-| Raspberry Pi 5 | 192.168.2.10 | стенд :4242, инсталлятор :4300, контроллер :4200; `~/nuxk-horizon` |
+| Raspberry Pi 5 | 192.168.2.10 | контроллер :4200 и стенд :4242 — стек разработки `deploy/pi` (`~/nuxk-horizon`); `nuxk-full.sh` может перенести контроллер в `~/nuxk` с его данными |
 | Docker-хост | 192.168.1.100 | |
 | Proxmox | 192.168.1.27 | |
 | NAS Synology | 192.168.1.54 | Gitea :8418 |

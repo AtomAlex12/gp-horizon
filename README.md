@@ -1,133 +1,128 @@
 # nuxk Horizon
 
-Управляющая платформа для стека обхода блокировок на роутерах **Keenetic + Entware**
-(РФ, 2026). Демон-контроллер владеет состоянием и дёргает три движка; веб — отдельный
-сервис; режим под каждый домен подбирается автоматически.
+Обход блокировок на роутерах **Keenetic + Entware**: у каждого сайта свой путь —
+**DPI** (nfqws2), **WARP** (Cloudflare) или **ваш VLESS-сервер** (xray), — и одна
+понятная панель, в которой видно, что работает и почему сайт не открывается.
 
-```
- Pi: nuxk-controller                    роутер: nuxk-core (агент)
- ├ полный веб (консоль)                 ├ движки nfqws2 / usque / xray
- ├ история, графики, логи               ├ плоскость: списки DPI/WARP/VLESS
- ├ подбор стратегий (дальше)            │  → маршрутизация Keenetic по доменам
- └ клиент агента ── REST + токен ─────► ├ /api/v1 — контракт OpenAPI
-                   ◄── события SSE ──── └ /api/v1/events (лёгкий веб — запасной)
-```
+- **Три пути, три списка.** Домены раскладываются по спискам DPI / WARP / VLESS, а
+  маршрутизацию делает сам Keenetic (его маршрутизация по доменам). nuxk трогает только
+  свои объекты `nuxk-*` и по умолчанию работает в режиме плана: показывает, что сделал бы.
+- **Проба по вашим сайтам.** Роутер регулярно открывает ваши сайты и говорит, где
+  обрывается: блокировка по имени (нужна стратегия nfqws2) или по IP (нужен туннель).
+- **Подбор стратегий nfqws2** (полная версия) — прогоны на Raspberry Pi и применение
+  найденной стратегии на роутере кнопкой, с копией конфига и откатом.
+- **Вход** — на роутере `root` и пароль Entware; на Pi — свой пароль администратора.
 
-Контракт между ними — [`nuxk-core/api/openapi.yaml`](nuxk-core/api/openapi.yaml):
-в CI проверяется, что спецификация совпадает с маршрутами агента, а типы для
-веба генерируются из неё (`nuxk-web/src/lib/schema.d.ts`). Роутер работает и без
-Pi: списки и намерения хранятся на нём.
+## Установка
 
-## Раскладка
-
-| Каталог | Что | Подход |
+| | **Лайт** | **Фул** |
 |---|---|---|
-| `nuxk-core/` | агент на роутере (Go, stdlib, 1 бинарь/арх) | своё |
-| `nuxk-controller/` | контроллер на Pi: веб, история, прокси к агенту | своё |
-| `nuxk-web/` | UI (Svelte 5 + Vite) — сборки `full` \| `lite` | своё |
-| `nuxk-plane/` | плоскость решений | форк HydraRoute, адаптация |
-| `engines/nuxk-nfqws2/` | обёртка nfqws2 | форк nfqws2-keenetic |
-| `engines/nuxk-usque/` | обёртка usque | наш форк (`feature/web-ui`) |
-| `engines/nuxk-xray/` | обёртка xray | своя тонкая |
-| `nuxk-installer/` | установка на роутер по SSH (веб-форма) | своё |
-| `packaging/` | opkg-репо + Docker-образ | своё |
+| Где | только роутер | роутер + Raspberry Pi 4/5 (или любой 64-битный Linux с Docker) |
+| Панель | лёгкая, на роутере (`:4141`) | полная, на Pi (`:4200`): история графиков, подбор стратегий, плагины |
+| Ставится | одной командой на роутере | одной командой на Pi — она же ставит лайт на роутер |
 
-**Ядра движков** (`nfqws2`, `usque`, `xray-core`) — вендорим из upstream-релизов,
-пинним версию. Не форкаем: гонка с ТСПУ, отставать нельзя.
+Оба установщика ничего не собирают: берут готовые файлы из
+[релиза на GitHub](https://github.com/AtomAlex12/nuxk-horizon/releases/latest) и сверяют
+каждый с его `SHA256SUMS`; xray — из официального релиза XTLS с закреплённым хешем.
 
-## Быстрый старт (без роутера)
+### Перед установкой — роутер
+
+1. В веб-интерфейсе Keenetic, «Управление → Параметры системы → Изменить набор
+   компонентов»: **«Поддержка открытых пакетов OPKG»** и **«Модули ядра подсистемы
+   Netfilter»** (без них nfqws2 не запустится).
+2. [Entware](https://help.keenetic.com/hc/ru/articles/360021214160) — на USB или во
+   внутреннюю память; вход по SSH именно в Entware (порт 22 или 222).
+3. Синхронизация времени (NTP) — без неё не работает HTTPS.
+
+### Лайт — на роутере
+
+В SSH-сессии Entware:
 
 ```sh
-# контроллер + мок-движки usque и xray
-cd nuxk-core
-go test ./...
-go run . -config testdata/nuxk.conf -debug        # :4141
-
-# веб (в другом терминале)
-cd nuxk-web
-npm install
-npm run dev                                        # :5173, /api проксируется на :4141
+opkg update && opkg install curl ca-certificates
+curl -fsSLo /opt/tmp/nuxk-lite.sh https://github.com/AtomAlex12/nuxk-horizon/releases/latest/download/nuxk-lite.sh
+sh /opt/tmp/nuxk-lite.sh
 ```
 
-Открыть `http://localhost:5173` — карточки движков usque и xray, кнопки start/stop/restart;
-на вкладке xray — задание сервера (ссылка `vless://` или подписка 3x-ui).
-`echo down > nuxk-core/testdata/mock.state` — уронить туннель usque,
-`echo down > nuxk-core/testdata/mock.xray.state` — xray.
+Установщик проверит роутер, покажет план и спросит про WARP и VLESS (оба — по желанию:
+они создают интерфейс в Keenetic и сохраняют его конфигурацию). В конце — адрес панели:
+`http://<роутер>:4141`, вход `root` и пароль Entware.
 
-## Бета: Raspberry Pi + роутер
+Дальше на роутере работает команда `nuxk`:
 
-Пошагово — [`docs/BETA.md`](docs/BETA.md). Коротко:
+| | |
+|---|---|
+| `nuxk` | состояние nuxk и движков |
+| `nuxk update` | обновиться до последнего релиза |
+| `nuxk warp` · `nuxk vless` | добавить WARP или VLESS |
+| `nuxk uninstall` | удалить nuxk (настройки Keenetic остаются) |
 
-1. Роутер: компоненты «OPKG» и «Модули ядра подсистемы Netfilter», Entware, NTP.
-2. Pi: `git clone … && sh deploy/pi/bootstrap.sh` — стенд на :4242, инсталлятор на :4300.
-3. Форма инсталлятора: адрес роутера, SSH Entware, «Проверить роутер» →
-   «Установить выбранное». Ставится только недостающее; в конце — адрес панели и токен.
-4. Контроллер на Pi (:4200): токен роутера в `deploy/pi/.env`, профиль `controller`.
+### Фул — на Raspberry Pi
 
-Инсталлятор есть и отдельным файлом (`make installer` или релиз) для Linux,
-Windows и macOS — для роутера в другой сети.
-
-## Тестовый стенд (Raspberry Pi 5)
-
-Первый тест — `deploy/proto`: настоящие usque и nfqws2 в одном контейнере против
-DPI провайдера, без роутера. Включается поэтапно.
+Нужен Docker ([get.docker.com](https://get.docker.com)). На Pi:
 
 ```sh
-# на Pi, один раз: модули ядра для nfqws2 (этап C)
-sudo modprobe nfnetlink_queue xt_multiport xt_connbytes xt_NFQUEUE xt_CONNMARK xt_connmark nf_conntrack
-
-git clone <repo> && cd nuxk-horizon
-make proto                                   # сборка образа (версия из VERSION)
-docker compose -f deploy/proto/docker-compose.yml run --rm \
-  --entrypoint /opt/etc/init.d/S51usque-docker nuxk register   # один раз: регистрация WARP
-docker compose -f deploy/proto/docker-compose.yml up -d
+curl -fsSLo nuxk-full.sh https://github.com/AtomAlex12/nuxk-horizon/releases/latest/download/nuxk-full.sh
+sh nuxk-full.sh
 ```
 
-Дашборд — `http://<pi>:4242`. Этапы — переменные в `deploy/proto/docker-compose.yml`:
+Скрипт запустит контроллер из готового образа (`ghcr.io`) и предложит сразу поставить
+nuxk на роутер — по SSH, пароль вы вводите самому ssh. Потом откройте
+`http://<pi>:4200`: мастер попросит пароль администратора и подключит роутер.
+Обновление — тот же запуск; `sh nuxk-full.sh router | status | uninstall`.
 
-| Этап | Что включить | Что проверить |
-|---|---|---|
-| A | `NUXK_ENABLE_USQUE=1` (по умолчанию) | карточка usque «ok», проба `warp=on`; «Стоп» → через ≤10с ядро само не поднимает (намерение «остановлен»); `docker compose restart` → состояние восстановилось |
-| B | `NUXK_ENABLE_DNS_GLUE=1` | DNS контейнера уходит в WARP: `docker compose exec nuxk /opt/etc/nuxk/routing-glue.sh show` |
-| C | `NUXK_ENABLE_NFQWS2=1` | проба nfqws2 открывает заблокированный домен; в `endpoints.list` сам появился IP WARP |
+Подробно, с проверками и откатом на каждом шаге, — [`docs/BETA.md`](docs/BETA.md).
 
-Состояние ядра (`nuxk-state`) и списки nfqws2 (`nfqws2-lists`) лежат в томах и
-переживают `up --build`. Сброс: `docker compose -f deploy/proto/docker-compose.yml down -v`
-(удалит и регистрацию WARP).
+## Как это устроено
 
-Версия сборки видна в шапке дашборда и в `GET /api/v1/version` (с коммитом).
+```
+ Pi: nuxk-controller (фул)              роутер: nuxk-core — агент
+ ├ полный веб, история графиков         ├ движки nfqws2 / usque (WARP) / xray (VLESS)
+ ├ плагины (подбор стратегий — GP)      ├ списки DPI / WARP / VLESS
+ └ клиент агента ── REST + ключ ──────► │  → маршрутизация Keenetic по доменам (RCI)
+                   ◄── события SSE ──── └ /api/v1 (OpenAPI) + лёгкий веб
+```
 
-## Версии и релизы
+Контракт между ними — [`nuxk-core/api/openapi.yaml`](nuxk-core/api/openapi.yaml): в CI
+проверяется, что спецификация совпадает с маршрутами агента, а типы для веба
+генерируются из неё. Роутер работает и без Pi: списки и намерения хранятся на нём.
 
-- Единственный источник версии — файл [`VERSION`](VERSION) (SemVer). Сейчас
-  `0.x`: API и формат `state/` ещё могут меняться. `-alpha.N` — стенд,
-  `-beta.N` — роутер, `-rc.N` — кандидат.
-- `scripts/version.sh set X.Y.Z` — поднять версию (VERSION + `nuxk-web/package.json`),
-  затем раздел в [`CHANGELOG.md`](CHANGELOG.md).
-- `make check` — всё, что гоняет CI; `make release` — бандл в `dist/`:
-  ядро под mips/mipsel/aarch64/x86_64, веб full/lite, `SHA256SUMS`.
-- Тег `vX.Y.Z` на `main` → GitHub Actions собирает релиз и прикладывает бандл.
+| Каталог | Что |
+|---|---|
+| `nuxk-core/` | агент на роутере (Go, только stdlib, один бинарник на архитектуру) |
+| `nuxk-controller/` | контроллер на Pi: полный веб, история, прокси к агенту, хост плагинов |
+| `nuxk-web/` | веб (Svelte 5 + Vite) — сборки `full` и `lite` |
+| `engines/` | адаптеры движков: nfqws2 (над штатным nfqws2-keenetic), usque (форк usque-keenetic), xray (свой init-скрипт) |
+| `install/` | установщики: `nuxk-lite.sh` (роутер), `nuxk-full.sh` (Pi) |
+| `deploy/` | Docker: образ контроллера для релиза, стенд разработки на Pi, мок-стек |
 
-## Статус — `0.3.0`
+Ядра движков (`nfqws2`, `usque`, `xray-core`) берутся из их релизов с закреплённой
+версией, не форкаются.
 
-- **Агент на роутере** — `nuxk-core`: движки с желаемым состоянием (автоперезапуск,
-  повторное применение), плоскость «три списка» поверх маршрутизации Keenetic по
-  доменам (только объекты `nuxk-*`, по умолчанию только план), метрики из `/proc`,
-  лог в памяти и SSE.
-- **Контроллер на Pi** — `nuxk-controller`: полный веб, час истории графиков, прокси
-  к агенту; мастер первичной настройки (пароль admin → подключение роутера); плагины
-  в том же контейнере.
-- **Подбор стратегий nfqws2** — плагин GP на Pi: прогоны, результаты, применение
-  стратегии на роутере кнопкой с копией конфига и откатом. Только в полной версии.
-- **Три пути для доменов** — DPI (nfqws2, проба по вашим сайтам с причиной отказа),
-  WARP (usque) и VLESS (xray: ссылка `vless://` или подписка 3x-ui, свой TUN в Keenetic).
-- **Вход** — на роутере `root` и пароль Entware, на контроллере `admin`; токен
-  `API_TOKEN` только для программ.
-- **Инсталлятор** — по SSH, ставит только недостающее; WARP и VLESS по желанию.
-- **Дальше** — список соединений (conntrack), пресеты antifilter / itdoginfo,
-  решения по доменам.
+## Разработка
 
-Полная презентация — артефакт «nuxk Horizon».
+```sh
+cd nuxk-core && go run . -config testdata/nuxk.conf -debug   # агент с мок-движками, :4141
+cd nuxk-web  && npm install && npm run dev                   # веб :5173, /api → :4141
+make check                                                   # всё, что гоняет CI
+```
+
+`http://localhost:5173` — карточки движков, запуск и остановка, сервер xray (ссылка
+`vless://` или подписка 3x-ui). `echo down > nuxk-core/testdata/mock.state` роняет
+туннель usque, `mock.xray.state` — xray.
+
+- **Стенд на Pi** из исходников (настоящие usque и nfqws2 в контейнере + контроллер):
+  `sh deploy/pi/bootstrap.sh`, этапы — в `deploy/proto/docker-compose.yml`.
+- **Установщики** проверяются на имитации роутера: `sh install/lite_test.sh`
+  (`SH="busybox sh"` — как на роутере).
+
+### Версии и релизы
+
+- Версия — только в [`VERSION`](VERSION) (SemVer); `scripts/version.sh set X.Y.Z`
+  поднимает её и в `nuxk-web/package.json`; изменения — в [`CHANGELOG.md`](CHANGELOG.md).
+- Тег `vX.Y.Z` на `main` → GitHub Actions: `make check`, `make release` (всё, что
+  скачивают установщики, и `SHA256SUMS`) и образ контроллера на `ghcr.io` под arm64 и
+  amd64. Тег с `-` — предварительный релиз.
 
 ## Лицензия
 

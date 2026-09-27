@@ -4,7 +4,5 @@
 **/node_modules
 **/dist
 **/dist-lite
-nuxk-installer/payload/*
-!nuxk-installer/payload/README.md
 nuxk-core/testdata/state
 nuxk-core/testdata/mock*

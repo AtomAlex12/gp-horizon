@@ -154,8 +154,8 @@
         {#if setup.reconnect}<button type="button" class="ghost" onclick={cancel}>Отмена</button>{/if}
       </div>
       <p class="hint">
-        nuxk ещё не стоит на роутере? Сначала поставьте его инсталлятором на этом Pi — порт
-        <span class="mono">4300</span>.
+        nuxk ещё не стоит на роутере? Поставьте его отсюда: <span class="mono">sh nuxk-full.sh router</span> на этом
+        Pi — или установщиком лайт прямо на роутере.
       </p>
     </form>
   {:else if setup.step === 'done'}

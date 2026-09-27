@@ -211,7 +211,7 @@ func pair(ctx context.Context, base, user, password string) (string, *pairErr) {
 		return ok.Token, nil
 	case resp.StatusCode == http.StatusNotFound:
 		return "", &pairErr{http.StatusBadGateway, "agent_too_old",
-			"на роутере старая версия nuxk-core без входа по паролю — обновите её инсталлятором"}
+			"на роутере старая версия nuxk-core без входа по паролю — обновите её: на роутере «nuxk update» или здесь «sh nuxk-full.sh router»"}
 	}
 	json.Unmarshal(raw, &fail)
 	msg := fail.Error.Message

@@ -1,0 +1,204 @@
+#!/bin/sh
+# Tests nuxk-lite.sh end to end on a fake router: a temp root (NUXK_ROOT),
+# fake opkg / ndmc / ip / lsmod, a release served as file:// and a fake XTLS
+# archive. Needs curl, sha256sum, tar and python3 (to make the zip).
+#   sh install/lite_test.sh
+set -eu
+
+HERE=$(cd "$(dirname "$0")" && pwd)
+TOP=$(cd "$HERE/.." && pwd)
+LITE="$HERE/nuxk-lite.sh"
+ROOT=$(mktemp -d)
+trap 'rm -rf "$ROOT"' EXIT
+PY=""
+for p in python3 python; do "$p" -c 1 >/dev/null 2>&1 && PY=$(command -v "$p") && break; done
+[ -n "$PY" ] || { echo "need python3"; exit 1; }
+REAL_CURL=$(command -v curl)
+# file:// URLs for curl; a Windows-native curl (Git Bash) wants D:/… paths
+furl() { if command -v cygpath >/dev/null 2>&1; then echo "file:///$(cygpath -m "$1")"; else echo "file://$1"; fi; }
+
+export NUXK_ROOT="$ROOT/router"
+BIN="$ROOT/bin"
+REL="$ROOT/release"
+XTLS="$ROOT/xtls"
+mkdir -p "$NUXK_ROOT/opt/tmp" "$NUXK_ROOT/opt/etc/nfqws2/lists" "$BIN" "$REL" "$XTLS/v26.3.27"
+printf 'youtube.com\n# mine\nrutracker.org\n' >"$NUXK_ROOT/opt/etc/nfqws2/lists/user.list"
+
+# --- a release, as `make release` lays it out -------------------------------------------
+release() { # release VERSION
+    v=$1
+    rm -rf "${REL:?}"/*
+    printf '#!/bin/sh\n[ "$1" = -version ] && echo "nuxk-core %s abc123"\ntrue\n' "$v" >"$REL/nuxk-core-x86_64"
+    # the init: restart marks it running, status says so (like the real one)
+    cat >"$REL/S99nuxk-core" <<'EOF'
+#!/bin/sh
+M="$NUXK_ROOT/opt/var/run/nuxk.running"
+case "$1" in
+restart | start) mkdir -p "$(dirname "$M")"; touch "$M"; echo "Started nuxk-core" ;;
+stop) rm -f "$M" ;;
+status) [ -f "$M" ] && echo "nuxk-core is running" || echo "nuxk-core is stopped" ;;
+esac
+EOF
+    cp "$TOP/engines/nuxk-nfqws2/S51nfqws2-nuxk" "$TOP/engines/nuxk-xray/S52xray-nuxk" "$REL/"
+    sed "s/^VERSION=\"@VERSION@\"/VERSION=\"$v\"/" "$LITE" >"$REL/nuxk-lite.sh"
+    mkdir -p "$ROOT/web/assets" && echo "<!doctype html><title>nuxk $v</title>" >"$ROOT/web/index.html" && echo 1 >"$ROOT/web/assets/app.js"
+    tar -C "$ROOT/web" -czf "$REL/nuxk-web-lite-$v.tar.gz" .
+    echo "fake ipk" >"$REL/usque-keenetic-x86_64.ipk"
+    printf 'version %s\ncommit abc123\n' "$v" >"$REL/BUILD"
+    (cd "$REL" && sha256sum -- * >SHA256SUMS)
+}
+
+# --- XTLS: a zip with a script for xray ---------------------------------------------------
+printf '#!/bin/sh\n[ "$1" = version ] && echo "Xray 26.3.27 (Xray, Penetrates Everything.) test"\ntrue\n' >"$ROOT/xray"
+"$PY" -c "import zipfile,sys; z=zipfile.ZipFile(sys.argv[1],'w'); z.write(sys.argv[2],'xray'); z.writestr('geoip.dat', b'0'*1000); z.close()" \
+    "$XTLS/v26.3.27/Xray-linux-64.zip" "$ROOT/xray"
+export XRAY_TEST_SUM
+XRAY_TEST_SUM=$(sha256sum "$XTLS/v26.3.27/Xray-linux-64.zip" | cut -d' ' -f1)
+export XRAY_BASE_URL=$(furl "$XTLS")
+
+# --- the router's tools --------------------------------------------------------------------
+STATE="$ROOT/opkg.installed"
+echo "curl - 8.9.1-1" >"$STATE"
+cat >"$BIN/opkg" <<EOF
+#!/bin/sh
+echo "opkg \$*" >>"$ROOT/opkg.log"
+case "\$1" in
+print-architecture) echo "arch all 1"; echo "arch noarch 1"; echo "arch x64-3.2 10" ;;
+list-installed) [ -n "\${2:-}" ] && grep "^\$2 " "$STATE" || cat "$STATE" ;;
+update) echo "Downloading ..." ;;
+install) shift; for p in "\$@"; do case "\$p" in --*) continue ;; esac; echo "Installing \$p"
+  case "\$p" in
+  *.ipk)
+    [ "\$(cat "\$p")" = "fake ipk" ] || exit 1
+    echo "usque-keenetic - 0.4.0" >>"$STATE"
+    mkdir -p "$NUXK_ROOT/opt/etc/usque" "$NUXK_ROOT/opt/etc/init.d"; echo 'IFACE="opkgtun0"' >"$NUXK_ROOT/opt/etc/usque/usque.conf"
+    printf '#!/bin/sh\n[ "\$1" = info ] && { echo "service.running 1"; echo "tunnel.state connected"; }\ntrue\n' >"$NUXK_ROOT/opt/etc/init.d/S51usque"
+    chmod +x "$NUXK_ROOT/opt/etc/init.d/S51usque"; continue ;;
+  nfqws2-keenetic)
+    mkdir -p "$NUXK_ROOT/opt/etc/init.d"; printf '#!/bin/sh\necho stock \$1\n' >"$NUXK_ROOT/opt/etc/init.d/S51nfqws2"; chmod +x "$NUXK_ROOT/opt/etc/init.d/S51nfqws2" ;;
+  esac
+  echo "\$p - 1.0-test" >>"$STATE"; done ;;
+esac
+EOF
+cat >"$BIN/ndmc" <<EOF
+#!/bin/sh
+echo "\$2" >>"$ROOT/ndmc.log"
+D="$ROOT/ndm"
+case "\$2" in
+"show version") echo '   release: 5.01'; echo '     model: Keenetic Test' ;;
+"show interface "*) f="\$D/\${2#show interface }"; [ -f "\$f" ] || exit 1; echo "  description: \$(cat "\$f")" ;;
+"interface "*" description "*) r=\${2#interface }; mkdir -p "\$D"; echo "\${r#* description }" >"\$D/\${r%% *}" ;;
+"no interface "*) rm -f "\$D/\${2#no interface }" ;;
+"interface "*) i=\${2#interface }; mkdir -p "\$D"; [ -f "\$D/\$i" ] || echo - >"\$D/\$i" ;;
+"system configuration save") echo saved >>"$ROOT/ndm.saved" ;;
+esac
+EOF
+printf '#!/bin/sh\necho "5: br0    inet 192.168.9.1/24 brd 192.168.9.255 scope global br0"\n' >"$BIN/ip"
+printf '#!/bin/sh\nfor m in nfnetlink_queue xt_NFQUEUE xt_connbytes xt_multiport; do echo "$m 1 0"; done\n' >"$BIN/lsmod"
+# curl: the real one for file://; the agent's healthz and the router's RCI answer here
+cat >"$BIN/curl" <<EOF
+#!/bin/sh
+case "\$*" in
+*/api/v1/healthz*) echo '{"status":"ok"}'; exit 0 ;;
+*:79/rci/*) echo "\$*" >>"$ROOT/rci.log"; echo '{}'; exit 0 ;;
+esac
+exec "$REAL_CURL" "\$@"
+EOF
+printf '#!/bin/sh\nexec "%s" -c "import zipfile,sys; sys.stdout.buffer.write(zipfile.ZipFile(sys.argv[2]).read(sys.argv[3]))" "$@"\n' "$PY" >"$BIN/unzip"
+chmod +x "$BIN"/*
+export PATH="$BIN:$PATH"
+export NUXK_BASE_URL=$(furl "$REL")
+export NO_COLOR=1
+
+fail=0
+check() { # check DESC ACTUAL EXPECTED
+    if [ "$2" = "$3" ]; then echo "ok   $1"; else echo "FAIL $1: got '$2', want '$3'"; fail=1; fi
+}
+has() { grep -c -- "$2" "$1" 2>/dev/null || true; } # has FILE TEXT → count
+f() { echo "$NUXK_ROOT$1"; }
+SH="${SH:-sh}" # the shell under test: SH="busybox sh" is the router's
+lite() { $SH "$LITE" "$@" >"$ROOT/out" 2>&1; }
+
+release 0.3.0
+
+# 1. a file that isn't the release's: refused before anything is written
+cp "$REL/nuxk-core-x86_64" "$ROOT/good"
+echo "evil" >>"$REL/nuxk-core-x86_64"
+lite --yes && check "tampered: fails" "exit 0" "exit 1"
+check "tampered: says why" "$(has "$ROOT/out" 'не совпал с SHA256SUMS')" "1"
+check "tampered: nothing installed" "$(ls "$(f /opt/usr/bin)" 2>/dev/null | wc -l | tr -d ' ')" "0"
+check "tampered: not even packages" "$(grep -c '^opkg install\|^opkg update' "$ROOT/opkg.log" 2>/dev/null || true)" "0"
+cp "$ROOT/good" "$REL/nuxk-core-x86_64"
+
+# 2. a fresh router, defaults: deps, nfqws2, agent, config — no WARP, no VLESS
+lite --yes || { cat "$ROOT/out"; exit 1; }
+[ -n "${SHOW:-}" ] && cat "$ROOT/out" # SHOW=1: what a person sees
+check "installed agent" "$("$(f /opt/usr/bin/nuxk-core)" -version)" "nuxk-core 0.3.0 abc123"
+check "deps installed" "$(has "$ROOT/opkg.log" 'install ca-certificates ipset')" "1"
+check "nfqws2 feed" "$(has "$(f /opt/etc/opkg/nfqws2-keenetic.conf)" 'nfqws2-keenetic https://nfqws.github.io')" "1"
+check "web unpacked" "$(has "$(f /opt/share/www/nuxk/index.html)" 'nuxk 0.3.0')" "1"
+check "adapter" "$(has "$(f /opt/etc/nuxk/engines/S51nfqws2-nuxk)" 'nuxk adapter shim over the STOCK')" "1"
+check "nuxk command" "$(has "$(f /opt/bin/nuxk)" 'VERSION="0.3.0"')" "1"
+C=$(f /opt/etc/nuxk/nuxk.conf)
+check "conf: LAN address" "$(has "$C" 'LISTEN="192.168.9.1:4141"')" "1"
+check "conf: nfqws2 wired" "$(has "$C" 'ENGINE_NFQWS2="/opt/etc/nuxk/engines/S51nfqws2-nuxk"')" "1"
+check "conf: no WARP" "$(has "$C" 'ENGINE_USQUE=""')" "1"
+check "conf: plan only" "$(has "$C" '^PLANE_APPLY="0"')" "1"
+TOKEN=$(sed -n 's/^API_TOKEN="\(.*\)"/\1/p' "$C")
+check "conf: a 128-bit token" "${#TOKEN}" "32"
+check "plane: DPI from user.list" "$(has "$(f /opt/etc/nuxk/plane.json)" '"youtube.com", "rutracker.org"')" "1"
+check "plane: comments left out" "$(has "$(f /opt/etc/nuxk/plane.json)" 'mine')" "0"
+check "started" "$(has "$ROOT/out" 'nuxk-core отвечает')" "1"
+check "the panel's address" "$(has "$ROOT/out" 'Панель   http://192.168.9.1:4141')" "1"
+check "no temp left" "$(ls "$(f /opt/tmp)" | wc -l | tr -d ' ')" "0"
+
+# 3. again: nothing to do — but a router set up before this installer gets
+# the nuxk command
+rm -f "$(f /opt/bin/nuxk)"
+lite --yes
+check "rerun: nothing to install" "$(has "$ROOT/out" 'всё уже стоит')" "1"
+check "rerun: the command comes back" "$(has "$(f /opt/bin/nuxk)" 'VERSION="0.3.0"')" "1"
+
+# 4. WARP and VLESS by name; usque sits on OpkgTun0, someone's own VPN on OpkgTun1
+mkdir -p "$ROOT/ndm" && echo usque >"$ROOT/ndm/OpkgTun0" && echo my-vpn >"$ROOT/ndm/OpkgTun1"
+$SH "$(f /opt/bin/nuxk)" warp --yes >"$ROOT/out" 2>&1 || { cat "$ROOT/out"; exit 1; }
+check "warp: wired" "$(has "$C" 'ENGINE_USQUE="/opt/etc/init.d/S51usque"')/$(has "$C" 'PLANE_IFACE_WARP="OpkgTun0"')" "1/1"
+check "warp: hosts desynced" "$(has "$(f /opt/etc/nfqws2/lists/user.list)" 'cloudflareclient.com')" "1"
+$SH "$(f /opt/bin/nuxk)" vless --yes >"$ROOT/out" 2>&1 || { cat "$ROOT/out"; exit 1; }
+check "vless: xray" "$(has "$(f /opt/sbin/xray)" 'Penetrates')" "1"
+check "vless: no geoip on the router" "$(ls "$(f /opt/sbin)")" "xray"
+check "vless: init" "$(has "$(f /opt/etc/init.d/S52xray-nuxk)" 'S52xray-nuxk')" "1"
+check "vless: a free OpkgTun, ours" "$(cat "$ROOT/ndm/OpkgTun2" 2>/dev/null)" "nuxk-vless"
+check "vless: someone else's untouched" "$(cat "$ROOT/ndm/OpkgTun1")" "my-vpn"
+check "vless: router config saved" "$(has "$ROOT/ndm.saved" saved)" "1"
+check "vless: wired" "$(has "$C" 'ENGINE_XRAY="/opt/etc/init.d/S52xray-nuxk"')/$(has "$C" 'PLANE_IFACE_VLESS="OpkgTun2"')" "1/1"
+check "token kept" "$(has "$C" "API_TOKEN=\"$TOKEN\"")" "1"
+
+# 5. an archive that isn't XTLS's
+XRAY_TEST_SUM=0000 $SH "$(f /opt/bin/nuxk)" vless --yes >"$ROOT/out" 2>&1 || true
+check "vless: another archive refused" "$(has "$ROOT/out" 'хеш архива xray не совпал')" "1"
+
+# 6. a newer release: the agent moves, the old one is kept, the config isn't touched
+release 0.3.1
+NUXK_VERSION=0.3.1 $SH "$(f /opt/bin/nuxk)" update --yes >"$ROOT/out" 2>&1 || { cat "$ROOT/out"; exit 1; }
+check "update: new agent" "$("$(f /opt/usr/bin/nuxk-core)" -version)" "nuxk-core 0.3.1 abc123"
+check "update: the old one kept" "$("$(f /opt/usr/bin/nuxk-core.prev)" -version)" "nuxk-core 0.3.0 abc123"
+check "update: new web" "$(has "$(f /opt/share/www/nuxk/index.html)" 'nuxk 0.3.1')" "1"
+check "update: new command" "$(has "$(f /opt/bin/nuxk)" 'VERSION="0.3.1"')" "1"
+check "update: config as it was" "$(has "$C" "API_TOKEN=\"$TOKEN\"")/$(has "$C" 'PLANE_IFACE_VLESS="OpkgTun2"')" "1/1"
+
+# 7. status
+$SH "$(f /opt/bin/nuxk)" >"$ROOT/out" 2>&1
+check "status: running" "$(has "$ROOT/out" '0.3.1 · работает')" "1"
+
+# 8. uninstall: agent gone, routing objects dropped, config and lists aside
+$SH "$(f /opt/bin/nuxk)" uninstall --yes >"$ROOT/out" 2>&1 || { cat "$ROOT/out"; exit 1; }
+check "uninstall: agent gone" "$(ls "$(f /opt/usr/bin)" | wc -l | tr -d ' ')" "0"
+check "uninstall: command gone" "$([ -e "$(f /opt/bin/nuxk)" ] && echo left || echo gone)" "gone"
+check "uninstall: config aside" "$(has "$(f /opt/etc/nuxk.removed/nuxk.conf)" 'API_TOKEN')" "1"
+check "uninstall: nuxk routes dropped" "$(has "$ROOT/rci.log" '"group":"nuxk-vless","interface":"OpkgTun2","no":true')" "1"
+check "uninstall: xray kept by default" "$([ -x "$(f /opt/sbin/xray)" ] && echo kept || echo gone)" "kept"
+check "uninstall: nfqws2's list stays" "$(has "$(f /opt/etc/nfqws2/lists/user.list)" 'youtube.com')" "1"
+
+[ "$fail" = 0 ] && echo "all lite installer tests passed"
+exit "$fail"

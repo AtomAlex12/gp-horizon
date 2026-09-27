@@ -1,10 +1,13 @@
 # nuxk Horizon — top-level build. Component Makefiles/npm scripts do the work;
 # this ties them to the single VERSION file and produces release bundles.
 #
-#   make check      version + gofmt + vet + tests + web typecheck (what CI runs)
-#   make release    dist/nuxk-horizon-<ver>/: core per arch, web full/lite, SHA256SUMS
-#   make installer  nuxk-installer for linux-arm64/amd64, windows, macOS (router files embedded)
+#   make check      version + gofmt + vet + tests + web typecheck + installers (what CI runs)
+#   make release    dist/nuxk-horizon-<ver>/: everything the installers download —
+#                   nuxk-core per arch, web full/lite, router init + engine adapters,
+#                   usque ipk per arch, nuxk-controller, nuxk-lite.sh / nuxk-full.sh,
+#                   SHA256SUMS; the controller image is built from it by release.yml
 #   make proto      build the real-engine prototype image (deploy/proto, arm64 Pi)
+#   make pi         the development stack on a Pi, from source (deploy/pi)
 #   make dev        run the mock stack in Docker (deploy/dev)
 #   make version    print the version;  scripts/version.sh set X.Y.Z to bump
 
@@ -12,7 +15,7 @@ VERSION := $(shell tr -d ' \n\r' < VERSION)
 COMMIT  := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)$(shell git diff --quiet 2>/dev/null || echo -dirty)
 OUT     := dist/nuxk-horizon-$(VERSION)
 
-.PHONY: version version-check check core-check web-check installer-check controller-check installer-payload installer release proto pi dev clean
+.PHONY: version version-check check core-check web-check install-check controller-check release proto pi dev clean
 
 version:
 	@echo $(VERSION)
@@ -26,46 +29,34 @@ core-check:
 web-check:
 	cd nuxk-web && npm install --no-audit --no-fund && npm run check:api && npm run check
 
-installer-check:
-	cd nuxk-installer && gofmt -l . | (! grep .) && go vet ./... && go test ./...
+# the router side: engine adapters and the lite installer, on a fake router
+install-check:
 	sh engines/nuxk-nfqws2/shim_test.sh
 	sh engines/nuxk-xray/shim_test.sh
+	sh install/lite_test.sh
 
 controller-check:
 	cd nuxk-controller && gofmt -l . | (! grep .) && go vet ./... && go test ./...
 
-check: version-check core-check web-check installer-check controller-check
+check: version-check core-check web-check install-check controller-check
 
-# Router files the installer embeds and pushes over SSH.
-PAYLOAD := nuxk-installer/payload
-installer-payload:
+release: version-check
 	$(MAKE) -C nuxk-core cross VERSION=$(VERSION) COMMIT=$(COMMIT)
-	cd nuxk-web && npm install --no-audit --no-fund && npm run build:lite
-	find $(PAYLOAD) -mindepth 1 ! -name README.md -exec rm -rf {} +
-	cp nuxk-core/dist/nuxk-core-mips nuxk-core/dist/nuxk-core-mipsel nuxk-core/dist/nuxk-core-aarch64 nuxk-core/dist/nuxk-core-x86_64 $(PAYLOAD)/
-	cp nuxk-core/fs/opt/etc/init.d/S99nuxk-core engines/nuxk-nfqws2/S51nfqws2-nuxk engines/nuxk-xray/S52xray-nuxk $(PAYLOAD)/
-	cp -r nuxk-web/dist-lite $(PAYLOAD)/web
-	echo $(VERSION) > $(PAYLOAD)/VERSION
+	rm -rf $(OUT) && mkdir -p $(OUT)
+	cp nuxk-core/dist/nuxk-core-* $(OUT)/
+	# router files next to the agent: its init script and the engine adapters
+	cp nuxk-core/fs/opt/etc/init.d/S99nuxk-core engines/nuxk-nfqws2/S51nfqws2-nuxk engines/nuxk-xray/S52xray-nuxk $(OUT)/
+	# the installers, stamped with this release (they download from it)
+	for s in nuxk-lite nuxk-full; do \
+	  sed 's/^VERSION="@VERSION@"/VERSION="$(VERSION)"/' install/$$s.sh > $(OUT)/$$s.sh || exit 1; \
+	  grep -q '^VERSION="$(VERSION)"' $(OUT)/$$s.sh || { echo "$$s.sh: version not stamped"; exit 1; }; \
+	done
 	# WARP: the usque-keenetic fork's ipk per router arch (downloads usque
 	# from its GitHub release)
 	$(MAKE) -C engines/nuxk-usque pkg-mips pkg-mipsel pkg-aarch64
 	for a in mips mipsel aarch64; do \
-	  cp engines/nuxk-usque/out/tmp/usque-keenetic_$$(cat engines/nuxk-usque/VERSION)_$$a-3.*.ipk $(PAYLOAD)/usque-keenetic-$$a.ipk || exit 1; \
+	  cp engines/nuxk-usque/out/tmp/usque-keenetic_$$(cat engines/nuxk-usque/VERSION)_$$a-3.*.ipk $(OUT)/usque-keenetic-$$a.ipk || exit 1; \
 	done
-
-INST_LDFLAGS := -s -w
-installer: installer-payload
-	mkdir -p dist
-	cd nuxk-installer && for t in linux/arm64 linux/amd64 windows/amd64 darwin/arm64; do \
-	  os=$${t%/*}; arch=$${t#*/}; ext=$$( [ $$os = windows ] && echo .exe ); \
-	  CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -ldflags "$(INST_LDFLAGS)" -o ../dist/nuxk-installer-$$os-$$arch$$ext . || exit 1; \
-	done
-	@ls -lh dist/nuxk-installer-*
-
-release: version-check installer
-	rm -rf $(OUT) && mkdir -p $(OUT)
-	cp nuxk-core/dist/nuxk-core-* $(OUT)/
-	cp dist/nuxk-installer-* $(OUT)/
 	cd nuxk-controller && for arch in arm64 amd64; do \
 	  CGO_ENABLED=0 GOOS=linux GOARCH=$$arch go build -ldflags "-s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT)" -o ../$(OUT)/nuxk-controller-linux-$$arch . || exit 1; \
 	done
@@ -74,14 +65,15 @@ release: version-check installer
 	tar -C nuxk-web/dist-lite -czf $(OUT)/nuxk-web-lite-$(VERSION).tar.gz .
 	cp CHANGELOG.md $(OUT)/
 	printf 'version %s\ncommit %s\n' '$(VERSION)' '$(COMMIT)' > $(OUT)/BUILD
-	cd $(OUT) && sha256sum nuxk-core-* nuxk-installer-* nuxk-controller-* *.tar.gz BUILD > SHA256SUMS
+	cd $(OUT) && sha256sum -- * > ../SHA256SUMS.tmp && mv ../SHA256SUMS.tmp SHA256SUMS
 	tar -C dist -czf dist/nuxk-horizon-$(VERSION).tar.gz nuxk-horizon-$(VERSION)
 	@ls -lh $(OUT) dist/nuxk-horizon-$(VERSION).tar.gz
 
 proto:
 	NUXK_COMMIT=$(COMMIT) docker compose -f deploy/proto/docker-compose.yml build
 
-# Raspberry Pi beta stack: prototype + installer (see deploy/pi/README.md)
+# development stack on a Pi, built from source: the real-engine stand and the
+# controller (people install with install/nuxk-full.sh instead)
 pi:
 	NUXK_COMMIT=$(COMMIT) docker compose -f deploy/pi/docker-compose.yml up -d --build
 
@@ -90,5 +82,4 @@ dev:
 
 clean:
 	rm -rf dist
-	find $(PAYLOAD) -mindepth 1 ! -name README.md -exec rm -rf {} +
 	$(MAKE) -C nuxk-core clean
