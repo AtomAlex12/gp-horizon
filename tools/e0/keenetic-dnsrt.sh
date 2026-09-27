@@ -3,7 +3,7 @@
 # ("маршрутизация по доменам": object-group fqdn + dns-proxy route), which nuxk
 # plans to drive instead of running its own resolver. Runs ON the router.
 #
-#   from the Pi:  sh tools/e0/run.sh 192.168.2.1 222 keenetic-dnsrt.sh
+#   from the Pi:  sh tools/e0/run.sh 192.168.1.1 222 keenetic-dnsrt.sh
 #
 # Prints structure, not secrets: group names and sizes, route lines, ipset
 # headers, the DNSRT iptables rules, fwmark → table mapping. One group is
