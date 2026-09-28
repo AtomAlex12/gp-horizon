@@ -101,6 +101,7 @@ type Options struct {
 	Command string // the router's `nuxk`; missing = no updates from the panel
 	Dir     string // the run's status and log (the state dir)
 	API     string // GitHub API base, https://api.github.com
+	BaseURL string // UPDATE_BASE_URL: a mirror of the releases' files; "" = GitHub
 	Every   time.Duration
 	// Handoff runs just before the update starts: the logins go to the next
 	// agent (auth.Guard.Handoff). Its failure only costs a login.
@@ -365,9 +366,12 @@ func (u *Updater) startLocked(version string) error {
 		}
 	}
 	cmd := exec.Command("sh", u.o.Command, "update", "--yes")
-	cmd.Env = append(os.Environ(),
+	cmd.Env = append(cleanEnv(os.Environ()),
 		"NUXK_VERSION="+version, "NUXK_STATUS="+u.statusPath(),
 		"NUXK_FROM="+u.o.Current, "NUXK_STARTED="+started, "NO_COLOR=1")
+	if u.o.BaseURL != "" {
+		cmd.Env = append(cmd.Env, "NUXK_BASE_URL="+u.o.BaseURL)
+	}
 	cmd.Stdout, cmd.Stderr = logf, logf
 	detach(cmd)
 	if err := cmd.Start(); err != nil {
@@ -383,6 +387,21 @@ func (u *Updater) startLocked(version string) error {
 }
 
 func (u *Updater) statusPath() string { return filepath.Join(u.o.Dir, statusFile) }
+
+// cleanEnv: the agent's environment without the installer's variables. An
+// agent (re)started by nuxk-lite.sh may have inherited them — a mirror's URL,
+// «already self-updated» — and the next update would follow them: the stale
+// script, the mirror long gone. NUXK_ROOT (a test root) is kept.
+func cleanEnv(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "NUXK_") && !strings.HasPrefix(kv, "NUXK_ROOT=") {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
+}
 
 // readRun: the last run from its status file; a "running" one whose script
 // is gone was cut short (a reboot, a power cut).

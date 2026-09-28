@@ -393,6 +393,11 @@ dns_detach() {
     return 0
 }
 
+# AGENT_ENV — this run's own variables, kept away from the agent it starts: a
+# daemon started from here would carry them into its next update from the
+# panel (a mirror's URL long gone, «already self-updated»)
+AGENT_ENV="-u NUXK_BASE_URL -u NUXK_VERSION -u NUXK_REPO -u NUXK_SELF_UPDATED -u NUXK_OLD_TMP -u NUXK_STATUS -u NUXK_FROM -u NUXK_STARTED"
+
 # rollback — $P_PREV back in place, the agent restarted and asked whether it
 # answers. The engines run on their own meanwhile: only the panel blinks.
 rollback() {
@@ -404,7 +409,8 @@ rollback() {
         [ -f "$R$P_PREV/${f%%:*}" ] && cp -f "$R$P_PREV/${f%%:*}" "$R${f#*:}" && chmod 755 "$R${f#*:}"
     done
     [ -d "$R$P_PREV/web" ] && rm -rf "$R$P_WEB" && cp -R "$R$P_PREV/web" "$R$P_WEB"
-    "$R$P_INIT" restart >/dev/null 2>&1
+    # shellcheck disable=SC2086
+    env $AGENT_ENV "$R$P_INIT" restart >/dev/null 2>&1
     healthy
 }
 
@@ -625,7 +631,7 @@ do_start() {
     tok=$(conf_get API_TOKEN)
     [ -n "$tok" ] || wire API_TOKEN "$(token)"
     report running "Перезапускаю агент и проверяю, что он отвечает"
-    if run "'$R$P_INIT' restart" && healthy; then
+    if run "env $AGENT_ENV '$R$P_INIT' restart" && healthy; then
         ok "nuxk-core отвечает на http://$host:${port:-4141}"
         return 0
     fi
