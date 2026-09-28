@@ -317,3 +317,34 @@ func (b *Backend) ensureV6Deny(ctx context.Context, groups []string) error {
 	}
 	return nil
 }
+
+// --- DNS ----------------------------------------------------------------------
+
+// NameServer adds (on) or takes back one server of the firmware's DNS proxy
+// through RCI's command parser — only nuxk's own forwarder on the loopback,
+// never anyone else's. It lives in the running config: never saved, a reboot
+// drops it and the agent adds it again.
+func (b *Backend) NameServer(ctx context.Context, addr string, on bool) error {
+	if !strings.HasPrefix(addr, "127.0.0.1:") || strings.ContainsAny(addr, " \t\n;") {
+		return fmt.Errorf("refusing name-server %q: only nuxk's own, on 127.0.0.1", addr)
+	}
+	cmd := "ip name-server " + addr
+	if !on {
+		cmd = "no " + cmd
+	}
+	return b.post(ctx, map[string]any{"parse": cmd})
+}
+
+// DNSHook adds nuxk's DNS forwarder to the DNS proxy (dns.Hook). Attach first
+// takes back an old entry — after the agent's restart it's still there — so
+// adding is never refused as a duplicate.
+type DNSHook struct{ B *Backend }
+
+func (h DNSHook) Attach(ctx context.Context, addr string) error {
+	_ = h.B.NameServer(ctx, addr, false)
+	return h.B.NameServer(ctx, addr, true)
+}
+
+func (h DNSHook) Detach(ctx context.Context, addr string) error {
+	return h.B.NameServer(ctx, addr, false)
+}

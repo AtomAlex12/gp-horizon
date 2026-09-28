@@ -39,6 +39,10 @@ export type UpdateStatus = S['UpdateStatus'];
 export type UpdateRun = S['UpdateRun'];
 export type UpdateRelease = S['UpdateRelease'];
 export type UpdateSettings = S['UpdateSettings'];
+export type DNSStatus = S['DNSStatus'];
+export type DNSSettings = S['DNSSettings'];
+export type DNSCheck = S['DNSCheck'];
+export type DNSCheckItem = S['DNSCheckItem'];
 
 // nuxk-controller's own API (not part of the agent contract).
 export interface AgentState {
@@ -139,6 +143,10 @@ export const api = {
   checkUpdate: () => req<UpdateStatus>('POST', v1('/update/check')),
   startUpdate: (version: string) => req<UpdateStatus>('POST', v1('/update'), { version }),
   setUpdateSettings: (s: UpdateSettings) => req<UpdateStatus>('PUT', v1('/update/settings'), s),
+
+  dns: () => req<DNSStatus>('GET', v1('/dns')),
+  setDns: (s: Partial<DNSSettings>) => req<DNSStatus>('PUT', v1('/dns/settings'), s),
+  checkDns: (domains: string[] = []) => req<DNSCheck>('POST', v1('/dns/check'), { domains }),
 
   // controller only (404 when the UI is served by the agent itself)
   agent: () => req<AgentState>('GET', '/ctl/v1/agent'),

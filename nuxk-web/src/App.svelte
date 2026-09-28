@@ -8,6 +8,7 @@
   import Lists from './lib/views/Lists.svelte';
   import Logs from './lib/views/Logs.svelte';
   import System from './lib/views/System.svelte';
+  import Dns from './lib/views/Dns.svelte';
   import Soon from './lib/views/Soon.svelte';
   import Login from './lib/views/Login.svelte';
   import Setup from './lib/views/Setup.svelte';
@@ -55,7 +56,6 @@
   const SOON: Record<string, string> = {
     devices: 'Устройства LAN и что у каждого не открывается — появится вместе со списком соединений.',
     decisions: 'Автоматический выбор пути для домена — десинк, туннель или напрямую — с объяснением, почему.',
-    dns: 'DNS на роутере обслуживает сам Keenetic (списки работают через его маршрутизацию по доменам). Экран настроек DNS — позже.',
   };
 
   // #lists etc. — a reload keeps the page
@@ -230,6 +230,8 @@
           <GpGate {go}><Strategies /></GpGate>
         {:else if tab === 'system'}
           <System />
+        {:else if tab === 'dns'}
+          <Dns />
         {:else if tab === 'nfqws2' || tab === 'usque' || tab === 'xray'}
           <EngineView kind={tab as EngineKind} {go} />
         {:else if SOON[tab]}

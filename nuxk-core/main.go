@@ -27,6 +27,7 @@ import (
 	"nuxk.dev/horizon/core/internal/auth"
 	"nuxk.dev/horizon/core/internal/config"
 	"nuxk.dev/horizon/core/internal/core"
+	"nuxk.dev/horizon/core/internal/dns"
 	"nuxk.dev/horizon/core/internal/engine"
 	"nuxk.dev/horizon/core/internal/engine/nfqws2"
 	"nuxk.dev/horizon/core/internal/engine/usque"
@@ -224,13 +225,36 @@ func main() {
 	}, st)
 	go upd.Run(ctx)
 
+	// Protected DNS: a forwarder the router's DNS proxy asks once it's turned
+	// on in the panel; DoH through VLESS, then WARP, then straight.
+	dopt := dns.Options{
+		Listen: cfg.DNSListen, RouterDNS: cfg.DNSRouter,
+		Paths: func() []dns.Path { return dnsPaths(hub.Get(), cfg) },
+	}
+	if pm != nil {
+		dopt.Hook = keenetic.DNSHook{B: keenetic.New(cfg.Plane.RCI)}
+		dopt.Domains = func() []string {
+			des, err := pm.Desired()
+			if err != nil {
+				return nil
+			}
+			var doms []string
+			for _, l := range des.Lists {
+				doms = append(doms, l.Domains...)
+			}
+			return doms
+		}
+	}
+	dnsSvc := dns.New(dopt, st)
+	go dnsSvc.Run(ctx)
+
 	srv := &http.Server{
 		Addr: cfg.Listen,
 		Handler: api.NewRouter(api.Deps{
 			Version: version, Commit: commit, Engines: reg, Hub: hub, Ctl: ctl, Plane: pm,
 			WebRoot: cfg.WebRoot, Token: cfg.APIToken, Auth: guard, Logs: logs,
 			Node:   node.New(cfg.NodeRole, cfg.Plane.RCI, version, commit),
-			Update: upd,
+			Update: upd, DNS: dnsSvc,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -259,4 +283,32 @@ func main() {
 		slog.Warn("graceful shutdown failed", "err", err)
 	}
 	slog.Info("nuxk-core stopped")
+}
+
+// dnsPaths: the tunnels DNS can go through right now — VLESS first, then WARP
+// — each only while its engine runs and its interface exists.
+func dnsPaths(snap core.Snapshot, cfg config.Config) []dns.Path {
+	var ps []dns.Path
+	for _, w := range []struct {
+		kind  engine.Kind
+		name  string
+		iface string
+	}{
+		{engine.KindXray, "vless", strings.ToLower(cfg.Plane.IfaceVless)},
+		{engine.KindUsque, "warp", strings.ToLower(cfg.Plane.IfaceWarp)},
+	} {
+		for _, e := range snap.Engines {
+			if e.Kind != w.kind || !e.Running || e.Health == engine.HealthDown {
+				continue
+			}
+			iface := w.iface
+			if e.Iface != "" {
+				iface = e.Iface
+			}
+			if dns.IfaceUp(iface) {
+				ps = append(ps, dns.Path{Name: w.name, Iface: iface})
+			}
+		}
+	}
+	return ps
 }

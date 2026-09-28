@@ -382,11 +382,23 @@ keep_prev() {
 
 prev_ver() { "$R$P_PREV/nuxk-core" -version 2>/dev/null | awk '{ print $2 }'; }
 
+# dns_detach — nuxk's DNS forwarder out of the router's DNS proxy (it lives in
+# the running config only). When nuxk goes, and before an older agent comes
+# back that may not know it; one that does adds it again within seconds.
+dns_detach() {
+    a=$(conf_get DNS_LISTEN)
+    a=${a:-127.0.0.1:53053}
+    case "$a" in 127.0.0.1:*) ;; *) return 0 ;; esac
+    curl -fsS -m 5 -X POST http://127.0.0.1:79/rci/ -d "{\"parse\":\"no ip name-server $a\"}" >/dev/null 2>&1
+    return 0
+}
+
 # rollback — $P_PREV back in place, the agent restarted and asked whether it
 # answers. The engines run on their own meanwhile: only the panel blinks.
 rollback() {
     [ -x "$R$P_PREV/nuxk-core" ] || return 1
     "$R$P_INIT" stop >/dev/null 2>&1
+    dns_detach
     cp -f "$R$P_PREV/nuxk-core" "$R$P_BIN" && chmod 755 "$R$P_BIN" || return 1
     for f in "S99nuxk-core:$P_INIT" "S51nfqws2-nuxk:$P_SHIM" "S52xray-nuxk:$P_XRAY_INIT"; do
         [ -f "$R$P_PREV/${f%%:*}" ] && cp -f "$R$P_PREV/${f%%:*}" "$R${f#*:}" && chmod 755 "$R${f#*:}"
@@ -823,6 +835,7 @@ mode_uninstall() {
         [ -n "$ifc" ] && curl -fsS -m 5 -X POST http://127.0.0.1:79/rci/ -d "{\"dns-proxy\":{\"route\":{\"group\":\"$grp\",\"interface\":\"$ifc\",\"no\":true}}}" >/dev/null 2>&1
         curl -fsS -m 5 -X POST http://127.0.0.1:79/rci/ -d "{\"object-group\":{\"fqdn\":{\"$grp\":{\"no\":true}}}}" >/dev/null 2>&1
     done
+    dns_detach
     if have ip6tables; then
         ip6tables -w -D FORWARD -j NUXK_V6_DENY 2>/dev/null
         ip6tables -w -F NUXK_V6_DENY 2>/dev/null

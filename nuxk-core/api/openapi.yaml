@@ -36,6 +36,7 @@ tags:
   - { name: engines, description: nfqws2 / usque / xray }
   - { name: plane, description: "routing plane: the DPI / WARP / VLESS lists" }
   - { name: update, description: "new releases; the router updated from the panel" }
+  - { name: dns, description: "protected DNS: DoH through the tunnels; substitution check" }
 
 paths:
   /api/v1/healthz:
@@ -538,6 +539,76 @@ paths:
         "400": { $ref: "#/components/responses/Error" }
         "401": { $ref: "#/components/responses/Error" }
 
+  /api/v1/dns:
+    get:
+      tags: [dns]
+      operationId: dns
+      summary: Protected DNS — on or off, which way the questions go, how each way does
+      description: >
+        A forwarder on the router (DNS_LISTEN, 127.0.0.1:53053) that the
+        router's DNS proxy asks once it's turned on: each query goes out as
+        DNS-over-HTTPS through VLESS, then WARP, then straight — the
+        provider can neither see nor substitute the answer. Messages pass
+        through untouched; the DNS proxy (and its domain routing) stays.
+      responses:
+        "200":
+          description: the state
+          content: { application/json: { schema: { $ref: "#/components/schemas/DNSStatus" } } }
+        "401": { $ref: "#/components/responses/Error" }
+
+  /api/v1/dns/settings:
+    put:
+      tags: [dns]
+      operationId: setDNSSettings
+      summary: Turn protected DNS on or off; the way out; the resolvers
+      description: >
+        Turning on changes the router's DNS settings: the forwarder must
+        answer through some way out first, then it's added to the DNS proxy
+        ("ip name-server 127.0.0.1:53053", running config only, never saved)
+        and the router must still answer — otherwise it's taken back and
+        nothing changed. Turning off takes it back. An empty `via` or
+        `resolvers` keeps what's set.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/DNSSettings" } } }
+      responses:
+        "200":
+          description: the state with the new settings
+          content: { application/json: { schema: { $ref: "#/components/schemas/DNSStatus" } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "409":
+          description: "dns_unavailable: not a Keenetic (or the routing plane is off) — nothing to attach to"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "502":
+          description: "dns_failed: no way out answered, the router refused, or it stopped answering (taken back)"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /api/v1/dns/check:
+    post:
+      tags: [dns]
+      operationId: checkDNS
+      summary: Is DNS substituted — the router's answer and a plain resolver's against DoH through the tunnel
+      description: >
+        For a few registry-blocked canaries and the person's list domains
+        (or the ones given, up to 20): the router's answer (what devices
+        get), 8.8.8.8 asked plainly over the provider's network, and DoH
+        through the tunnel as the reference. «spoofed» only on clear signs —
+        «no such site» where it exists, a private address, one address for
+        unrelated sites; other addresses alone are «differs» (CDNs).
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                domains: { type: array, items: { type: string }, maxItems: 20 }
+      responses:
+        "200":
+          description: the answers and verdicts
+          content: { application/json: { schema: { $ref: "#/components/schemas/DNSCheck" } } }
+        "401": { $ref: "#/components/responses/Error" }
+
 components:
   securitySchemes:
     bearer: { type: http, scheme: bearer }
@@ -948,3 +1019,76 @@ components:
         cannot: { type: string, description: "why the panel can't update this box" }
         run:
           oneOf: [{ $ref: "#/components/schemas/UpdateRun" }, { type: "null" }]
+
+    DNSSettings:
+      type: object
+      required: [enabled, via, resolvers]
+      properties:
+        enabled: { type: boolean, description: the router's DNS proxy asks nuxk }
+        via: { type: string, enum: [auto, vless, warp, direct], description: "auto: VLESS, then WARP, then straight; a tunnel falls back to straight while it's down" }
+        resolvers: { type: array, items: { type: string }, description: "catalog ids, in order of preference" }
+
+    DNSResolver:
+      type: object
+      required: [id, name, url]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        url: { type: string }
+
+    DNSPathStat:
+      type: object
+      required: [name, up, ok, failed]
+      properties:
+        name: { type: string, enum: [vless, warp, direct] }
+        iface: { type: string }
+        up: { type: boolean, description: "usable now (a tunnel: its engine runs and its interface exists)" }
+        ok: { type: integer }
+        failed: { type: integer }
+        last_ok: { type: integer }
+        rtt_ms: { type: number }
+        last_error: { type: string }
+
+    DNSStatus:
+      type: object
+      required: [settings, listen, running, attached, suspended, can_attach, queries, failed, consulted, paths, catalog]
+      properties:
+        settings: { $ref: "#/components/schemas/DNSSettings" }
+        listen: { type: string }
+        running: { type: boolean, description: the forwarder listens }
+        attached: { type: boolean, description: "added to the router's DNS proxy" }
+        suspended: { type: boolean, description: "taken back for a while: no way out answered three checks running (30 s apart)" }
+        can_attach: { type: boolean }
+        cannot: { type: string }
+        queries: { type: integer }
+        failed: { type: integer }
+        last_query: { type: integer, description: "the DNS proxy last asked, unix seconds" }
+        consulted: { type: boolean, description: "the DNS proxy passed nuxk's own test question on" }
+        last_path: { type: string }
+        resolver: { type: string, description: the resolver that answered last }
+        paths: { type: array, items: { $ref: "#/components/schemas/DNSPathStat" } }
+        error: { type: string }
+        catalog: { type: array, items: { $ref: "#/components/schemas/DNSResolver" } }
+
+    DNSCheckItem:
+      type: object
+      required: [domain, truth, router, router_verdict, plain, plain_verdict]
+      properties:
+        domain: { type: string }
+        truth: { type: array, items: { type: string }, description: "DoH through the tunnel: the reference" }
+        router: { type: array, items: { type: string } }
+        router_verdict: { type: string, enum: [ok, spoofed, differs, error] }
+        router_note: { type: string }
+        plain: { type: array, items: { type: string }, description: "8.8.8.8 asked plainly, over the provider's network" }
+        plain_verdict: { type: string, enum: [ok, spoofed, differs, error] }
+        plain_note: { type: string }
+
+    DNSCheck:
+      type: object
+      required: [at, path, items, router_spoofed, plain_spoofed]
+      properties:
+        at: { type: integer }
+        path: { type: string, description: "how the reference came: vless | warp | direct" }
+        items: { type: array, items: { $ref: "#/components/schemas/DNSCheckItem" } }
+        router_spoofed: { type: integer, description: domains the router answered with a stub }
+        plain_spoofed: { type: integer, description: "domains plain DNS answered with a stub: the provider intercepts" }
