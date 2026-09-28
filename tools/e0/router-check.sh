@@ -3,8 +3,8 @@
 # ipset steering, soft DNS mode). Runs ON the router under busybox ash.
 # Changes nothing: only `show`, listings, /proc reads and help output.
 #
-#   from the Pi:  sh tools/e0/run.sh 192.168.2.1        (wraps ssh + saves report)
-#   by hand:      ssh -p 222 root@192.168.2.1 'sh -s' < tools/e0/router-check.sh
+#   from the Pi:  sh tools/e0/run.sh 192.168.1.1        (wraps ssh + saves report)
+#   by hand:      ssh -p 222 root@192.168.1.1 'sh -s' < tools/e0/router-check.sh
 #
 # Output: human-readable sections, then a SUMMARY block of "key value" lines.
 # Deliberately never prints the full running-config (it holds credentials):

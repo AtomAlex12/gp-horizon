@@ -2,13 +2,13 @@
 # Run the E0 read-only router survey from the Pi and save the report.
 #
 #   sh tools/e0/run.sh [router-ip] [ssh-port] [script]
-#     defaults: 192.168.2.1 222 router-check.sh (E0); keenetic-dnsrt.sh = E0c
+#     defaults: 192.168.1.1 222 router-check.sh (E0); keenetic-dnsrt.sh = E0c
 #
 # Asks for the Entware root password (or uses your SSH key). The report lands
 # in ./e0-report-<router>-<date>.txt — it contains the router's LAN layout,
 # so keep it out of git (e0-report-*.txt is ignored).
 set -eu
-HOST="${1:-192.168.2.1}"
+HOST="${1:-192.168.1.1}"
 PORT="${2:-222}"
 SCRIPT="${3:-router-check.sh}"
 HERE=$(cd "$(dirname "$0")" && pwd)
