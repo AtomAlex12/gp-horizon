@@ -39,3 +39,7 @@ node_modules/
 
 # E0 router survey reports (LAN layout — local only)
 e0-report-*.txt
+
+# personal notes for Claude Code: this machine only (LAN layout, whose router)
+CLAUDE.local.md
+/.claude/
