@@ -16,6 +16,7 @@ import (
 
 	"nuxk.dev/horizon/core/internal/auth"
 	"nuxk.dev/horizon/core/internal/core"
+	"nuxk.dev/horizon/core/internal/dns"
 	"nuxk.dev/horizon/core/internal/engine"
 	"nuxk.dev/horizon/core/internal/logbuf"
 	"nuxk.dev/horizon/core/internal/node"
@@ -36,6 +37,7 @@ type Deps struct {
 	Node    *node.Node       // /info, /metrics
 	Logs    *logbuf.Ring     // /logs, log events on /events
 	Update  *update.Updater  // /update: new releases, the router updated from the panel; nil = off
+	DNS     *dns.Service     // /dns: protected DNS through the tunnels; nil = off
 }
 
 // Route is one API endpoint. Routes is the single list the mux is built from
@@ -80,6 +82,9 @@ var Routes = []Route{
 	{"POST /api/v1/update", false, func(d Deps) http.HandlerFunc { return d.handleUpdateStart }},
 	{"POST /api/v1/update/check", false, func(d Deps) http.HandlerFunc { return d.handleUpdateCheck }},
 	{"PUT /api/v1/update/settings", false, func(d Deps) http.HandlerFunc { return d.handleUpdateSettings }},
+	{"GET /api/v1/dns", false, func(d Deps) http.HandlerFunc { return d.handleDNS }},
+	{"PUT /api/v1/dns/settings", false, func(d Deps) http.HandlerFunc { return d.handleDNSSettings }},
+	{"POST /api/v1/dns/check", false, func(d Deps) http.HandlerFunc { return d.handleDNSCheck }},
 }
 
 // maxBody bounds every request body (the largest is a full set of lists).

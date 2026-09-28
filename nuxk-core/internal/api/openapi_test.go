@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"nuxk.dev/horizon/core/internal/core"
+	"nuxk.dev/horizon/core/internal/dns"
 	"nuxk.dev/horizon/core/internal/engine"
 	"nuxk.dev/horizon/core/internal/logbuf"
 	"nuxk.dev/horizon/core/internal/node"
@@ -90,6 +91,12 @@ func TestOpenAPISchemasCoverJSONFields(t *testing.T) {
 		"UpdateRelease":  update.Release{},
 		"UpdateRun":      update.Run{},
 		"UpdateStatus":   update.Status{},
+		"DNSSettings":    dns.Settings{},
+		"DNSResolver":    dns.Resolver{},
+		"DNSPathStat":    dns.PathStat{},
+		"DNSStatus":      dns.Status{},
+		"DNSCheckItem":   dns.CheckItem{},
+		"DNSCheck":       dns.Check{},
 	} {
 		block := schemaBlock(t, spec, schema)
 		typ := reflect.TypeOf(v)

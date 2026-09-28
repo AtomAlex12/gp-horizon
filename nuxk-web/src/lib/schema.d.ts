@@ -477,6 +477,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/dns": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Protected DNS — on or off, which way the questions go, how each way does
+         * @description A forwarder on the router (DNS_LISTEN, 127.0.0.1:53053) that the router's DNS proxy asks once it's turned on: each query goes out as DNS-over-HTTPS through VLESS, then WARP, then straight — the provider can neither see nor substitute the answer. Messages pass through untouched; the DNS proxy (and its domain routing) stays.
+         */
+        get: operations["dns"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/dns/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Turn protected DNS on or off; the way out; the resolvers
+         * @description Turning on changes the router's DNS settings: the forwarder must answer through some way out first, then it's added to the DNS proxy ("ip name-server 127.0.0.1:53053", running config only, never saved) and the router must still answer — otherwise it's taken back and nothing changed. Turning off takes it back. An empty `via` or `resolvers` keeps what's set.
+         */
+        put: operations["setDNSSettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/dns/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Is DNS substituted — the router's answer and a plain resolver's against DoH through the tunnel
+         * @description For a few registry-blocked canaries and the person's list domains (or the ones given, up to 20): the router's answer (what devices get), 8.8.8.8 asked plainly over the provider's network, and DoH through the tunnel as the reference. «spoofed» only on clear signs — «no such site» where it exists, a private address, one address for unrelated sites; other addresses alone are «differs» (CDNs).
+         */
+        post: operations["checkDNS"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -808,6 +868,82 @@ export interface components {
             /** @description why the panel can't update this box */
             cannot?: string;
             run: components["schemas"]["UpdateRun"] | null;
+        };
+        DNSSettings: {
+            /** @description the router's DNS proxy asks nuxk */
+            enabled: boolean;
+            /**
+             * @description auto: VLESS, then WARP, then straight; a tunnel falls back to straight while it's down
+             * @enum {string}
+             */
+            via: "auto" | "vless" | "warp" | "direct";
+            /** @description catalog ids, in order of preference */
+            resolvers: string[];
+        };
+        DNSResolver: {
+            id: string;
+            name: string;
+            url: string;
+        };
+        DNSPathStat: {
+            /** @enum {string} */
+            name: "vless" | "warp" | "direct";
+            iface?: string;
+            /** @description usable now (a tunnel: its engine runs and its interface exists) */
+            up: boolean;
+            ok: number;
+            failed: number;
+            last_ok?: number;
+            rtt_ms?: number;
+            last_error?: string;
+        };
+        DNSStatus: {
+            settings: components["schemas"]["DNSSettings"];
+            listen: string;
+            /** @description the forwarder listens */
+            running: boolean;
+            /** @description added to the router's DNS proxy */
+            attached: boolean;
+            /** @description taken back for a while: no way out answered three checks running (30 s apart) */
+            suspended: boolean;
+            can_attach: boolean;
+            cannot?: string;
+            queries: number;
+            failed: number;
+            /** @description the DNS proxy last asked, unix seconds */
+            last_query?: number;
+            /** @description the DNS proxy passed nuxk's own test question on */
+            consulted: boolean;
+            last_path?: string;
+            /** @description the resolver that answered last */
+            resolver?: string;
+            paths: components["schemas"]["DNSPathStat"][];
+            error?: string;
+            catalog: components["schemas"]["DNSResolver"][];
+        };
+        DNSCheckItem: {
+            domain: string;
+            /** @description DoH through the tunnel: the reference */
+            truth: string[];
+            router: string[];
+            /** @enum {string} */
+            router_verdict: "ok" | "spoofed" | "differs" | "error";
+            router_note?: string;
+            /** @description 8.8.8.8 asked plainly, over the provider's network */
+            plain: string[];
+            /** @enum {string} */
+            plain_verdict: "ok" | "spoofed" | "differs" | "error";
+            plain_note?: string;
+        };
+        DNSCheck: {
+            at: number;
+            /** @description how the reference came: vless | warp | direct */
+            path: string;
+            items: components["schemas"]["DNSCheckItem"][];
+            /** @description domains the router answered with a stub */
+            router_spoofed: number;
+            /** @description domains plain DNS answered with a stub: the provider intercepts */
+            plain_spoofed: number;
         };
     };
     responses: {
@@ -1603,6 +1739,98 @@ export interface operations {
                 };
             };
             400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+        };
+    };
+    dns: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DNSStatus"];
+                };
+            };
+            401: components["responses"]["Error"];
+        };
+    };
+    setDNSSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DNSSettings"];
+            };
+        };
+        responses: {
+            /** @description the state with the new settings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DNSStatus"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            /** @description dns_unavailable: not a Keenetic (or the routing plane is off) — nothing to attach to */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description dns_failed: no way out answered, the router refused, or it stopped answering (taken back) */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    checkDNS: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    domains?: string[];
+                };
+            };
+        };
+        responses: {
+            /** @description the answers and verdicts */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DNSCheck"];
+                };
+            };
             401: components["responses"]["Error"];
         };
     };

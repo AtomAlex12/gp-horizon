@@ -37,6 +37,11 @@ type Config struct {
 	UpdateRepo    string // UPDATE_REPO, owner/name
 	UpdateAPI     string // UPDATE_API, GitHub's API (a mirror); default api.github.com
 	UpdateCommand string // UPDATE_COMMAND, default /opt/bin/nuxk
+
+	// Protected DNS (internal/dns): the forwarder the router's DNS proxy asks
+	// when it's on, and the DNS proxy itself (for its checks).
+	DNSListen string // DNS_LISTEN, default 127.0.0.1:53053
+	DNSRouter string // DNS_ROUTER, default 127.0.0.1:53
 }
 
 // PlaneConfig drives the routing plane (internal/plane). Off unless PLANE is
@@ -77,6 +82,8 @@ func Defaults() Config {
 			IfaceWarp: "OpkgTun0", IfaceVless: "OpkgTun1",
 		},
 		UpdateCommand: "/opt/bin/nuxk",
+		DNSListen:     "127.0.0.1:53053",
+		DNSRouter:     "127.0.0.1:53",
 	}
 }
 
@@ -152,6 +159,10 @@ func Load(path string) (Config, error) {
 			cfg.UpdateAPI = v
 		case "UPDATE_COMMAND":
 			cfg.UpdateCommand = v
+		case "DNS_LISTEN":
+			cfg.DNSListen = v
+		case "DNS_ROUTER":
+			cfg.DNSRouter = v
 		}
 	}
 	return cfg, sc.Err()

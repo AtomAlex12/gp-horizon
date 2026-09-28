@@ -251,6 +251,7 @@ check "rollback: old agent" "$(agent)" "0.3.0"
 check "rollback: old web" "$(has "$(f /opt/share/www/nuxk/index.html)" 'nuxk 0.3.0')" "1"
 check "rollback: the command stays new" "$(has "$(f /opt/bin/nuxk)" 'VERSION="0.3.1"')" "1"
 check "rollback: old xray adapter" "$(has "$(f /opt/etc/init.d/S52xray-nuxk)" '# release 0.3.0')" "1"
+check "rollback: nuxk DNS out of the DNS proxy first" "$(has "$ROOT/rci.log" '"parse":"no ip name-server 127.0.0.1:53053"')" "1"
 release 0.3.1
 nuxk update --yes || { cat "$ROOT/out"; exit 1; }
 check "and forward again" "$(agent)" "0.3.1"
@@ -279,12 +280,14 @@ $SH "$(f /opt/bin/nuxk)" >"$ROOT/out" 2>&1
 check "status: running" "$(has "$ROOT/out" '0.3.1 · работает')" "1"
 
 # 13. uninstall: agent gone, routing objects dropped, config and lists aside
+: >"$ROOT/rci.log"
 $SH "$(f /opt/bin/nuxk)" uninstall --yes >"$ROOT/out" 2>&1 || { cat "$ROOT/out"; exit 1; }
 check "uninstall: agent gone" "$(ls "$(f /opt/usr/bin)" | wc -l | tr -d ' ')" "0"
 check "uninstall: the kept version gone" "$([ -e "$(f /opt/var/lib/nuxk/prev)" ] && echo left || echo gone)" "gone"
 check "uninstall: command gone" "$([ -e "$(f /opt/bin/nuxk)" ] && echo left || echo gone)" "gone"
 check "uninstall: config aside" "$(has "$(f /opt/etc/nuxk.removed/nuxk.conf)" 'API_TOKEN')" "1"
 check "uninstall: nuxk routes dropped" "$(has "$ROOT/rci.log" '"group":"nuxk-vless","interface":"OpkgTun2","no":true')" "1"
+check "uninstall: nuxk DNS taken out of the DNS proxy" "$(has "$ROOT/rci.log" '"parse":"no ip name-server 127.0.0.1:53053"')" "1"
 check "uninstall: xray kept by default" "$([ -x "$(f /opt/sbin/xray)" ] && echo kept || echo gone)" "kept"
 check "uninstall: nfqws2's list stays" "$(has "$(f /opt/etc/nfqws2/lists/user.list)" 'youtube.com')" "1"
 

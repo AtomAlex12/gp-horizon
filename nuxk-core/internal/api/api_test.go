@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"nuxk.dev/horizon/core/internal/core"
+	"nuxk.dev/horizon/core/internal/dns"
 	"nuxk.dev/horizon/core/internal/engine"
 	"nuxk.dev/horizon/core/internal/engine/nfqws2"
 	"nuxk.dev/horizon/core/internal/engine/usque"
@@ -228,5 +229,34 @@ func TestWebPageNotCached(t *testing.T) {
 		if got := w.Header().Get("Cache-Control"); got != want || w.Code != http.StatusOK {
 			t.Errorf("%s: %d Cache-Control %q, want %q", path, w.Code, got, want)
 		}
+	}
+}
+
+func TestDNSAPI(t *testing.T) {
+	st, err := state.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := engine.NewRegistry()
+	hub := core.NewHub("t")
+	svc := dns.New(dns.Options{Listen: "127.0.0.1:0"}, st) // no Keenetic: nothing to attach to
+	h := NewRouter(Deps{Version: "t", Engines: reg, Hub: hub, Ctl: core.NewController(reg, st, hub, "t"), DNS: svc})
+	w := do(h, "GET", "/api/v1/dns", "", "127.0.0.1:1", "")
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"can_attach":false`) || !strings.Contains(w.Body.String(), `"via":"auto"`) {
+		t.Fatalf("GET: %d %s", w.Code, w.Body)
+	}
+	if w := do(h, "PUT", "/api/v1/dns/settings", `{"enabled":true}`, "127.0.0.1:1", ""); w.Code != http.StatusConflict {
+		t.Fatalf("enable without Keenetic: %d %s", w.Code, w.Body)
+	}
+	if w := do(h, "PUT", "/api/v1/dns/settings", `{"via":"tor"}`, "127.0.0.1:1", ""); w.Code != http.StatusBadRequest {
+		t.Fatalf("bad via: %d", w.Code)
+	}
+	w = do(h, "PUT", "/api/v1/dns/settings", `{"via":"warp","resolvers":["quad9","cloudflare"]}`, "127.0.0.1:1", "")
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"resolvers":["quad9","cloudflare"]`) {
+		t.Fatalf("settings: %d %s", w.Code, w.Body)
+	}
+	off := NewRouter(Deps{Version: "t", Engines: reg, Hub: hub, Ctl: core.NewController(reg, st, hub, "t")})
+	if w := do(off, "GET", "/api/v1/dns", "", "127.0.0.1:1", ""); w.Code != http.StatusNotFound {
+		t.Fatalf("off: %d", w.Code)
 	}
 }

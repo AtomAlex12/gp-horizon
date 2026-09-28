@@ -20,7 +20,7 @@
 
 | Каталог | Что |
 |---|---|
-| `nuxk-core/` | агент (Go 1.24, **только stdlib**). `internal/api` — маршруты, `core` — контроллер движков, `plane` — списки → Keenetic, `engine` — адаптеры init-скриптов, `node` — метрики `/proc`, `logbuf` — лог, `release` — проверка подписи релиза (`-verify`, ключ в `allowed_signers`), `update` — новые релизы и обновление из панели (запускает `nuxk update`) |
+| `nuxk-core/` | агент (Go 1.24, **только stdlib**). `internal/api` — маршруты, `core` — контроллер движков, `plane` — списки → Keenetic, `engine` — адаптеры init-скриптов, `node` — метрики `/proc`, `logbuf` — лог, `release` — проверка подписи релиза (`-verify`, ключ в `allowed_signers`), `update` — новые релизы и обновление из панели (запускает `nuxk update`), `dns` — защищённый DNS (DoH через туннели) и проверка подмены |
 | `nuxk-core/api/openapi.yaml` | **контракт** агента — источник правды для API |
 | `nuxk-controller/` | контроллер на Pi (Go, stdlib): прокси, история `/ctl/v1/*`, хост плагинов (`supervise` → `serve` + плагины, `plugin.go`) |
 | `nuxk-controller/plugins/<name>/` | рецепты плагинов: `plugin.json` + `install.sh` (GP — подбор стратегий) |
@@ -115,6 +115,11 @@ root / nuxk-dev), на контроллере — admin из мастера. `AP
 - nuxk трогает **только объекты `nuxk-*`** (группы `nuxk-warp`, `nuxk-vless`, цепочка
   `NUXK_V6_DENY`) и свои интерфейсы (OpkgTun с описанием `nuxk-vless`). Плоскость по
   умолчанию в режиме плана (`PLANE_APPLY=0`).
+- DNS роутера nuxk меняет в одном месте и только по кнопке в «DNS»: свой сервер
+  `ip name-server 127.0.0.1:53053` в DNS-прокси Keenetic (текущая конфигурация, без
+  сохранения; `keenetic.NameServer` принимает только `127.0.0.1:*`). Апстримы, DoH/DoT и
+  профили владельца не трогаются; `opkg dns-override` не используется никогда — он выключил
+  бы маршрутизацию по доменам.
 - Список nfqws2 `user.list` nuxk переписывает только при `manage_desync` (есть список DPI).
 - Никогда не выводить целиком `show running-config` (там учётные данные) и не писать
   пароль Entware в файлы и команды.
