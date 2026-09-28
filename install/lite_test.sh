@@ -58,6 +58,7 @@ status) [ -f "$M" ] && echo "nuxk-core is running" || echo "nuxk-core is stopped
 esac
 EOF
     cp "$TOP/engines/nuxk-nfqws2/S51nfqws2-nuxk" "$TOP/engines/nuxk-xray/S52xray-nuxk" "$REL/"
+    echo "# release $v" >>"$REL/S52xray-nuxk" # which release's adapter is on the router
     sed "s/^VERSION=\"@VERSION@\"/VERSION=\"$v\"/" "$LITE" >"$REL/nuxk-lite.sh"
     mkdir -p "$ROOT/web/assets" && echo "<!doctype html><title>nuxk $v</title>" >"$ROOT/web/index.html" && echo 1 >"$ROOT/web/assets/app.js"
     tar -C "$ROOT/web" -czf "$REL/nuxk-web-lite-$v.tar.gz" .
@@ -220,6 +221,10 @@ check "update: config as it was" "$(has "$C" "API_TOKEN=\"$TOKEN\"")/$(has "$C" 
 check "update: the panel sees it done" "$(sed -n 's/^state //p' "$RUN")/$(sed -n 's/^from //p' "$RUN")/$(sed -n 's/^to //p' "$RUN")/$(sed -n 's/^started //p' "$RUN")" "done/0.3.0/0.3.1/1700000000"
 check "update: no temp left" "$(ls "$(f /opt/tmp)" | wc -l | tr -d ' ')" "0"
 check "update: router config not saved again" "$(has "$ROOT/ndm.saved" saved)" "1"
+# the xray adapter moves with the agent that drives it (xray itself didn't change)
+check "update: new xray adapter" "$(has "$(f /opt/etc/init.d/S52xray-nuxk)" '# release 0.3.1')" "1"
+check "update: the old xray adapter kept" "$(has "$(f /opt/var/lib/nuxk/prev/S52xray-nuxk)" '# release 0.3.0')" "1"
+check "update: xray itself not downloaded again" "$(has "$ROOT/out" 'Xray-linux')" "0"
 
 # 7. releases the agent refuses: SHA256SUMS changed after signing, no
 # signature at all — nothing on the router changes
@@ -245,6 +250,7 @@ NUXK_BASE_URL=file:///nonexistent nuxk rollback --yes || { cat "$ROOT/out"; exit
 check "rollback: old agent" "$(agent)" "0.3.0"
 check "rollback: old web" "$(has "$(f /opt/share/www/nuxk/index.html)" 'nuxk 0.3.0')" "1"
 check "rollback: the command stays new" "$(has "$(f /opt/bin/nuxk)" 'VERSION="0.3.1"')" "1"
+check "rollback: old xray adapter" "$(has "$(f /opt/etc/init.d/S52xray-nuxk)" '# release 0.3.0')" "1"
 release 0.3.1
 nuxk update --yes || { cat "$ROOT/out"; exit 1; }
 check "and forward again" "$(agent)" "0.3.1"
@@ -258,12 +264,21 @@ check "broken: old web back" "$(has "$(f /opt/share/www/nuxk/index.html)" 'nuxk 
 check "broken: says so" "$(has "$ROOT/out" 'Вернул прежнюю версию 0.3.1')" "1"
 check "broken: the panel sees it rolled back" "$(sed -n 's/^state //p' "$RUN")/$(sed -n 's/^to //p' "$RUN")" "rolled_back/0.3.2"
 check "broken: agent running" "$([ -f "$(f /opt/var/run/nuxk.running)" ] && echo yes)" "yes"
+check "broken: xray adapter back" "$(has "$(f /opt/etc/init.d/S52xray-nuxk)" '# release 0.3.1')" "1"
 
-# 11. status
+# 11. the downloaded script run over an older nuxk (no `update`, as from a
+# router set up before `nuxk` existed): the same safety net
+release 0.3.3 broken
+lite --yes && check "reinstall broken: fails" "exit 0" "exit 1"
+check "reinstall broken: rolled back" "$(agent)" "0.3.1"
+check "reinstall broken: says so" "$(has "$ROOT/out" 'Вернул прежнюю версию 0.3.1')" "1"
+check "reinstall broken: xray adapter back" "$(has "$(f /opt/etc/init.d/S52xray-nuxk)" '# release 0.3.1')" "1"
+
+# 12. status
 $SH "$(f /opt/bin/nuxk)" >"$ROOT/out" 2>&1
 check "status: running" "$(has "$ROOT/out" '0.3.1 · работает')" "1"
 
-# 12. uninstall: agent gone, routing objects dropped, config and lists aside
+# 13. uninstall: agent gone, routing objects dropped, config and lists aside
 $SH "$(f /opt/bin/nuxk)" uninstall --yes >"$ROOT/out" 2>&1 || { cat "$ROOT/out"; exit 1; }
 check "uninstall: agent gone" "$(ls "$(f /opt/usr/bin)" | wc -l | tr -d ' ')" "0"
 check "uninstall: the kept version gone" "$([ -e "$(f /opt/var/lib/nuxk/prev)" ] && echo left || echo gone)" "gone"
