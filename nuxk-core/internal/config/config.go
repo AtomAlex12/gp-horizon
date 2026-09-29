@@ -6,6 +6,7 @@ package config
 
 import (
 	"bufio"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -41,8 +42,8 @@ type Config struct {
 
 	// Protected DNS (internal/dns): the forwarder the router's DNS proxy asks
 	// when it's on, and the DNS proxy itself (for its checks).
-	DNSListen string // DNS_LISTEN, default 127.0.0.1:53053
-	DNSRouter string // DNS_ROUTER, default 127.0.0.1:53
+	DNSListen string // DNS_LISTEN; "" = DNSAddr()
+	DNSRouter string // DNS_ROUTER; "" = DNSRouterAddr()
 }
 
 // PlaneConfig drives the routing plane (internal/plane). Off unless PLANE is
@@ -83,8 +84,6 @@ func Defaults() Config {
 			IfaceWarp: "OpkgTun0", IfaceVless: "OpkgTun1",
 		},
 		UpdateCommand: "/opt/bin/nuxk",
-		DNSListen:     "127.0.0.1:53053",
-		DNSRouter:     "127.0.0.1:53",
 	}
 }
 
@@ -179,4 +178,40 @@ func seconds(v string) time.Duration {
 		return 0
 	}
 	return time.Duration(n) * time.Second
+}
+
+// lanHost: the agent's own address in the home network (LISTEN's host), or ""
+// when it listens on loopback or everywhere.
+func (c Config) lanHost() string {
+	host, _, err := net.SplitHostPort(c.Listen)
+	ip := net.ParseIP(host)
+	if err != nil || ip == nil || ip.To4() == nil || ip.IsLoopback() || ip.IsUnspecified() {
+		return ""
+	}
+	return host
+}
+
+// DNSAddr: where the DNS forwarder listens — DNS_LISTEN, or the router's LAN
+// address on port 53053. Not loopback: KeeneticOS refuses a loopback DNS
+// server ("invalid IP address: 127.0.0.1").
+func (c Config) DNSAddr() string {
+	if c.DNSListen != "" {
+		return c.DNSListen
+	}
+	if h := c.lanHost(); h != "" {
+		return net.JoinHostPort(h, "53053")
+	}
+	return "127.0.0.1:53053"
+}
+
+// DNSRouterAddr: the router's DNS proxy as devices ask it — DNS_ROUTER, or
+// the LAN address on port 53.
+func (c Config) DNSRouterAddr() string {
+	if c.DNSRouter != "" {
+		return c.DNSRouter
+	}
+	if h := c.lanHost(); h != "" {
+		return net.JoinHostPort(h, "53")
+	}
+	return "127.0.0.1:53"
 }

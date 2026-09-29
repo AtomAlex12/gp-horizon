@@ -486,7 +486,7 @@ export interface paths {
         };
         /**
          * Protected DNS — on or off, which way the questions go, how each way does
-         * @description A forwarder on the router (DNS_LISTEN, 127.0.0.1:53053) that the router's DNS proxy asks once it's turned on: each query goes out as DNS-over-HTTPS through VLESS, then WARP, then straight — the provider can neither see nor substitute the answer. Messages pass through untouched; the DNS proxy (and its domain routing) stays.
+         * @description A forwarder on the router (DNS_LISTEN; by default its LAN address, port 53053 — KeeneticOS refuses loopback DNS servers) that the router's DNS proxy asks once it's turned on: each query goes out as DNS-over-HTTPS through VLESS, then WARP, then straight — the provider can neither see nor substitute the answer. Messages pass through untouched; the DNS proxy (and its domain routing) stays.
          */
         get: operations["dns"];
         put?: never;
@@ -507,7 +507,7 @@ export interface paths {
         get?: never;
         /**
          * Turn protected DNS on or off; the way out; the resolvers
-         * @description Turning on changes the router's DNS settings: the forwarder must answer through some way out first, then it's added to the DNS proxy ("ip name-server 127.0.0.1:53053", running config only, never saved) and the router must still answer — otherwise it's taken back and nothing changed. Turning off takes it back. An empty `via` or `resolvers` keeps what's set.
+         * @description Turning on changes the router's DNS settings: the forwarder must answer through some way out first, then it's added to the DNS proxy ("ip name-server <LAN address>:53053", running config only, never saved) and the router must still answer — otherwise it's taken back and nothing changed. Turning off takes it back. An empty `via` or `resolvers` keeps what's set.
          */
         put: operations["setDNSSettings"];
         post?: never;

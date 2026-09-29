@@ -446,3 +446,16 @@ func udpServer(t *testing.T, answer func([]byte) []byte) string {
 	}()
 	return pc.LocalAddr().String()
 }
+
+// On the LAN address the forwarder answers the router only, not devices.
+func TestAllowed(t *testing.T) {
+	s := New(Options{Listen: "192.168.2.1:53053"}, nil)
+	for ip, want := range map[string]bool{"192.168.2.1": true, "127.0.0.1": true, "192.168.2.37": false, "10.0.0.5": false} {
+		if s.Allowed(net.ParseIP(ip)) != want {
+			t.Errorf("%s: %v", ip, !want)
+		}
+	}
+	if !New(Options{Listen: "0.0.0.0:53053"}, nil).Allowed(net.ParseIP("192.168.2.37")) {
+		t.Error("listening everywhere is the person's choice: everyone may ask")
+	}
+}
