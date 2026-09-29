@@ -229,7 +229,7 @@ func main() {
 	// Protected DNS: a forwarder the router's DNS proxy asks once it's turned
 	// on in the panel; DoH through VLESS, then WARP, then straight.
 	dopt := dns.Options{
-		Listen: cfg.DNSListen, RouterDNS: cfg.DNSRouter,
+		Listen: cfg.DNSAddr(), RouterDNS: cfg.DNSRouterAddr(),
 		Paths: func() []dns.Path { return dnsPaths(hub.Get(), cfg) },
 	}
 	if pm != nil {

@@ -17,9 +17,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os/exec"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -39,6 +41,8 @@ type Backend struct {
 	URL  string // RCI base, default http://127.0.0.1:79
 	HTTP *http.Client
 	Run  Runner
+	// Addrs lists this box's addresses (net.InterfaceAddrs; tests replace it)
+	Addrs func() ([]net.Addr, error)
 }
 
 func New(url string) *Backend {
@@ -321,14 +325,18 @@ func (b *Backend) ensureV6Deny(ctx context.Context, groups []string) error {
 // --- DNS ----------------------------------------------------------------------
 
 // NameServer adds (on) or takes back one server of the firmware's DNS proxy
-// through RCI's command parser — only nuxk's own forwarder on the loopback,
-// never anyone else's. It lives in the running config: never saved, a reboot
-// drops it and the agent adds it again.
+// through RCI's command parser — only nuxk's own forwarder, on an address of
+// this very router (KeeneticOS refuses loopback ones: the LAN address, in
+// practice), never anyone else's. It lives in the running config: never
+// saved, a reboot drops it and the agent adds it again.
 func (b *Backend) NameServer(ctx context.Context, addr string, on bool) error {
-	if !strings.HasPrefix(addr, "127.0.0.1:") || strings.ContainsAny(addr, " \t\n;") {
-		return fmt.Errorf("refusing name-server %q: only nuxk's own, on 127.0.0.1", addr)
+	host, port, err := net.SplitHostPort(addr)
+	ip := net.ParseIP(host)
+	n, perr := strconv.Atoi(port)
+	if err != nil || ip == nil || ip.To4() == nil || perr != nil || n <= 0 || n > 65535 || !b.local(ip) {
+		return fmt.Errorf("refusing name-server %q: only nuxk's own, on this router's address", addr)
 	}
-	cmd := "ip name-server " + addr
+	cmd := "ip name-server " + net.JoinHostPort(ip.String(), strconv.Itoa(n))
 	if !on {
 		cmd = "no " + cmd
 	}
@@ -347,4 +355,25 @@ func (h DNSHook) Attach(ctx context.Context, addr string) error {
 
 func (h DNSHook) Detach(ctx context.Context, addr string) error {
 	return h.B.NameServer(ctx, addr, false)
+}
+
+// local: ip is loopback or one of this box's own addresses.
+func (b *Backend) local(ip net.IP) bool {
+	if ip.IsLoopback() {
+		return true
+	}
+	addrs := b.Addrs
+	if addrs == nil {
+		addrs = net.InterfaceAddrs
+	}
+	as, err := addrs()
+	if err != nil {
+		return false
+	}
+	for _, a := range as {
+		if n, ok := a.(*net.IPNet); ok && n.IP.Equal(ip) {
+			return true
+		}
+	}
+	return false
 }
