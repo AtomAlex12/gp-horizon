@@ -216,6 +216,7 @@ func main() {
 
 	upd := update.New(update.Options{
 		Current: version, Repo: cfg.UpdateRepo, API: cfg.UpdateAPI, Command: cfg.UpdateCommand, Dir: cfg.StateDir,
+		BaseURL: cfg.UpdateBaseURL,
 		Handoff: func() error {
 			if guard == nil {
 				return nil

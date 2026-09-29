@@ -130,6 +130,7 @@ func TestCheckErrors(t *testing.T) {
 const fakeNuxk = `#!/bin/sh
 [ "$1 $2" = "update --yes" ] || exit 9
 echo "▸ nuxk-core $NUXK_VERSION"
+echo "base=${NUXK_BASE_URL:-} self=${NUXK_SELF_UPDATED:-} old=${NUXK_OLD_TMP:-}"
 { echo "state done"; echo "from $NUXK_FROM"; echo "to $NUXK_VERSION"; echo "pid $$"; echo "started $NUXK_STARTED"; echo "at $(date +%s)"; echo "message nuxk Horizon $NUXK_VERSION работает"; } >"$NUXK_STATUS.tmp" && mv "$NUXK_STATUS.tmp" "$NUXK_STATUS"
 `
 
@@ -142,6 +143,10 @@ func TestStart(t *testing.T) {
 		t.Fatal(err)
 	}
 	u := newUpdater(t, github(t, 200, releases).URL, cmd)
+	// what the installer left in the agent's environment doesn't reach the update
+	t.Setenv("NUXK_BASE_URL", "http://mirror-long-gone:8099")
+	t.Setenv("NUXK_SELF_UPDATED", "1")
+	t.Setenv("NUXK_OLD_TMP", "/opt/tmp/nuxk-setup.x")
 	if _, err := u.Start("0.4.1"); !errors.Is(err, ErrUnknownVersion) {
 		t.Fatalf("before a check: %v", err)
 	}
@@ -159,8 +164,11 @@ func TestStart(t *testing.T) {
 		st = u.Status()
 	}
 	r := st.Run
-	if r.State != "done" || r.Message != "nuxk Horizon 0.4.1 работает" || r.StartedAt == 0 || len(r.Log) != 1 || r.Log[0] != "▸ nuxk-core 0.4.1" {
+	if r.State != "done" || r.Message != "nuxk Horizon 0.4.1 работает" || r.StartedAt == 0 || len(r.Log) != 2 || r.Log[0] != "▸ nuxk-core 0.4.1" {
 		t.Fatalf("run: %+v", r)
+	}
+	if r.Log[1] != "base= self= old=" {
+		t.Fatalf("the installer's variables leaked into the update: %q", r.Log[1])
 	}
 }
 
@@ -206,5 +214,31 @@ func TestFirstLookAfterAnUpdate(t *testing.T) {
 	u.alive = func(int) bool { return true }
 	if d := u.firstLook(); d != 5*time.Second {
 		t.Fatalf("after an update: %v", d)
+	}
+}
+
+// A mirror set in nuxk.conf (UPDATE_BASE_URL) is the one the update follows.
+func TestStartMirror(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("no sh")
+	}
+	cmd := filepath.Join(t.TempDir(), "nuxk")
+	if err := os.WriteFile(cmd, []byte(fakeNuxk), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	u := New(Options{Current: "0.4.0", Repo: "me/nuxk", API: github(t, 200, releases).URL, Command: cmd, Dir: t.TempDir(),
+		BaseURL: "http://192.0.2.10:8099"}, memStore{})
+	u.Check(context.Background())
+	st, err := u.Start("0.4.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for st.Run.State != "done" && time.Now().Before(deadline) {
+		time.Sleep(50 * time.Millisecond)
+		st = u.Status()
+	}
+	if len(st.Run.Log) != 2 || st.Run.Log[1] != "base=http://192.0.2.10:8099 self= old=" {
+		t.Fatalf("log %q", st.Run.Log)
 	}
 }

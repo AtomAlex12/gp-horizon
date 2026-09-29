@@ -52,7 +52,7 @@ EOF
 #!/bin/sh
 M="$NUXK_ROOT/opt/var/run/nuxk.running"
 case "$1" in
-restart | start) mkdir -p "$(dirname "$M")"; touch "$M"; echo "Started nuxk-core" ;;
+restart | start) mkdir -p "$(dirname "$M")"; touch "$M"; env | grep '^NUXK_' | grep -v -e '^NUXK_ROOT=' -e '^NUXK_TEST_WAIT=' | sort >"$M.env"; echo "Started nuxk-core" ;;
 stop) rm -f "$M" ;;
 status) [ -f "$M" ] && echo "nuxk-core is running" || echo "nuxk-core is stopped" ;;
 esac
@@ -218,6 +218,7 @@ check "update: the old web kept" "$(has "$(f /opt/var/lib/nuxk/prev/web/index.ht
 check "update: new web" "$(has "$(f /opt/share/www/nuxk/index.html)" 'nuxk 0.3.1')" "1"
 check "update: new command" "$(has "$(f /opt/bin/nuxk)" 'VERSION="0.3.1"')" "1"
 check "update: config as it was" "$(has "$C" "API_TOKEN=\"$TOKEN\"")/$(has "$C" 'PLANE_IFACE_VLESS="OpkgTun2"')" "1/1"
+check "update: the agent started without the installer's variables" "$(cat "$(f /opt/var/run/nuxk.running.env)")" ""
 check "update: the panel sees it done" "$(sed -n 's/^state //p' "$RUN")/$(sed -n 's/^from //p' "$RUN")/$(sed -n 's/^to //p' "$RUN")/$(sed -n 's/^started //p' "$RUN")" "done/0.3.0/0.3.1/1700000000"
 check "update: no temp left" "$(ls "$(f /opt/tmp)" | wc -l | tr -d ' ')" "0"
 check "update: router config not saved again" "$(has "$ROOT/ndm.saved" saved)" "1"

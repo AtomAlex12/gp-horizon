@@ -37,6 +37,7 @@ type Config struct {
 	UpdateRepo    string // UPDATE_REPO, owner/name
 	UpdateAPI     string // UPDATE_API, GitHub's API (a mirror); default api.github.com
 	UpdateCommand string // UPDATE_COMMAND, default /opt/bin/nuxk
+	UpdateBaseURL string // UPDATE_BASE_URL: a mirror of the releases' files; "" = GitHub
 
 	// Protected DNS (internal/dns): the forwarder the router's DNS proxy asks
 	// when it's on, and the DNS proxy itself (for its checks).
@@ -159,6 +160,8 @@ func Load(path string) (Config, error) {
 			cfg.UpdateAPI = v
 		case "UPDATE_COMMAND":
 			cfg.UpdateCommand = v
+		case "UPDATE_BASE_URL":
+			cfg.UpdateBaseURL = v
 		case "DNS_LISTEN":
 			cfg.DNSListen = v
 		case "DNS_ROUTER":
