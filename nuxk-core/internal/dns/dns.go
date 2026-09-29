@@ -5,14 +5,15 @@
 // to time. Keenetic's domain routing takes the address the DNS answered — a
 // substituted one sends a stub into the tunnel.
 //
-// So nuxk-core runs a small forwarder on the router (127.0.0.1:53053): a query
+// So nuxk-core runs a small forwarder on the router (its LAN address, port
+// 53053 — KeeneticOS refuses a loopback DNS server): a query
 // from Keenetic's DNS proxy goes out as DNS-over-HTTPS through a tunnel —
 // VLESS, WARP — or, with no tunnel up, straight. The provider sees neither the
 // question nor the answer and has nothing to block. The messages pass through
 // untouched: no cache, no parsing beyond the header, the DNS proxy does the rest.
 //
 // The DNS proxy itself stays (domain routing lives in it): the forwarder is
-// added to it as one more server ("ip name-server 127.0.0.1:53053", running
+// added to it as one more server ("ip name-server 192.168.1.1:53053", running
 // config only). Turning it on is the person's choice in the panel; it is
 // checked on the way and taken back if the router's DNS stops answering.
 package dns
@@ -87,7 +88,7 @@ type Store interface {
 }
 
 type Options struct {
-	Listen    string                       // the forwarder, 127.0.0.1:53053
+	Listen    string                       // the forwarder: the LAN address, port 53053
 	RouterDNS string                       // what devices ask: the DNS proxy, 127.0.0.1:53
 	PlainDNS  string                       // asked plainly by the check (PlainDNS)
 	Paths     func() []Path                // tunnels up right now, in order of preference
@@ -258,6 +259,25 @@ func (s *Service) stop() {
 	}
 }
 
+// Allowed: only the router itself asks — its DNS proxy, from the address the
+// forwarder listens on (or loopback). The forwarder sits on the LAN address
+// (KeeneticOS refuses a loopback server), and devices on the network are not
+// to use it directly: they ask the DNS proxy, where domain routing lives.
+func (s *Service) Allowed(ip net.IP) bool {
+	if ip == nil {
+		return false
+	}
+	if ip.IsLoopback() {
+		return true
+	}
+	host, _, err := net.SplitHostPort(s.o.Listen)
+	if err != nil {
+		return false
+	}
+	own := net.ParseIP(host)
+	return own != nil && (own.IsUnspecified() || own.Equal(ip))
+}
+
 func (s *Service) serveUDP(c *net.UDPConn) {
 	buf := make([]byte, 4096)
 	for {
@@ -266,6 +286,9 @@ func (s *Service) serveUDP(c *net.UDPConn) {
 			if errors.Is(err, net.ErrClosed) {
 				return
 			}
+			continue
+		}
+		if !s.Allowed(from.IP) {
 			continue
 		}
 		q := append([]byte{}, buf[:n]...)
@@ -295,6 +318,10 @@ func (s *Service) serveTCP(l net.Listener) {
 			if errors.Is(err, net.ErrClosed) {
 				return
 			}
+			continue
+		}
+		if ta, ok := c.RemoteAddr().(*net.TCPAddr); !ok || !s.Allowed(ta.IP) {
+			c.Close()
 			continue
 		}
 		go func() {

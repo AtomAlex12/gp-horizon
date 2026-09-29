@@ -386,9 +386,15 @@ prev_ver() { "$R$P_PREV/nuxk-core" -version 2>/dev/null | awk '{ print $2 }'; }
 # the running config only). When nuxk goes, and before an older agent comes
 # back that may not know it; one that does adds it again within seconds.
 dns_detach() {
+    # where the agent put it: DNS_LISTEN, else LISTEN's address on port 53053
     a=$(conf_get DNS_LISTEN)
-    a=${a:-127.0.0.1:53053}
-    case "$a" in 127.0.0.1:*) ;; *) return 0 ;; esac
+    if [ -z "$a" ]; then
+        h=$(conf_get LISTEN)
+        h=${h%:*}
+        case "$h" in "" | 0.0.0.0 | 127.* | *[!0-9.]*) h=127.0.0.1 ;; esac
+        a="$h:53053"
+    fi
+    case "$a" in *[!0-9.:]* | *:*:*) return 0 ;; esac # an IPv4:port, nothing else
     curl -fsS -m 5 -X POST http://127.0.0.1:79/rci/ -d "{\"parse\":\"no ip name-server $a\"}" >/dev/null 2>&1
     return 0
 }

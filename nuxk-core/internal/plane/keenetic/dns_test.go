@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -32,19 +33,25 @@ func TestNameServer(t *testing.T) {
 		_, _ = w.Write([]byte(`{"parse":{"status":[{"status":"message","code":"0","message":"ok"}]}}`))
 	}))
 	defer srv.Close()
-	h := DNSHook{B: New(srv.URL)}
+	b := New(srv.URL)
+	// this router's own LAN address, as on the real one
+	b.Addrs = func() ([]net.Addr, error) {
+		return []net.Addr{&net.IPNet{IP: net.ParseIP("192.168.2.1"), Mask: net.CIDRMask(24, 32)}}, nil
+	}
+	h := DNSHook{B: b}
 	ctx := context.Background()
-	if err := h.Attach(ctx, "127.0.0.1:53053"); err != nil {
+	if err := h.Attach(ctx, "192.168.2.1:53053"); err != nil {
 		t.Fatalf("attach over a missing entry: %v", err)
 	}
-	if err := h.Detach(ctx, "127.0.0.1:53053"); err != nil {
+	if err := h.Detach(ctx, "192.168.2.1:53053"); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"no ip name-server 127.0.0.1:53053", "ip name-server 127.0.0.1:53053", "no ip name-server 127.0.0.1:53053"}
+	want := []string{"no ip name-server 192.168.2.1:53053", "ip name-server 192.168.2.1:53053", "no ip name-server 192.168.2.1:53053"}
 	if strings.Join(cmds, "|") != strings.Join(want, "|") {
 		t.Fatalf("commands %q", cmds)
 	}
-	for _, bad := range []string{"8.8.8.8", "192.168.1.1:53", "127.0.0.1:53; system configuration save"} {
+	// someone else's server, no port, not an address at all, a command smuggled in
+	for _, bad := range []string{"8.8.8.8:53", "192.168.2.1", "192.0.2.1:53053", "router:53", "192.168.2.1:53; system configuration save", "192.168.2.1:99999"} {
 		if err := h.B.NameServer(ctx, bad, true); err == nil {
 			t.Errorf("%q accepted", bad)
 		}
