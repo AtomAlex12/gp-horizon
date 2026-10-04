@@ -101,7 +101,12 @@ start() {
     # the version once per start, not a fork of xray on every info
     "$XRAY_BIN" version 2>/dev/null | sed -n '1s/^Xray \([^ ]*\).*/\1/p' >"$DIR/.version"
     write_tun
-    nohup "$XRAY_BIN" run -config "$DIR/tun.json" -config "$CONF" >>"$LOG" 2>&1 </dev/null &
+    # no nohup in Entware's BusyBox: HUP ignored by hand — kept across exec,
+    # so xray outlives the SSH session that started it; $! is xray itself
+    (
+        trap '' HUP
+        exec "$XRAY_BIN" run -config "$DIR/tun.json" -config "$CONF"
+    ) >>"$LOG" 2>&1 </dev/null &
     echo $! >"$PIDFILE"
     # up = the TUN device exists; KeeneticOS picks OpkgTunN up with it
     i=0

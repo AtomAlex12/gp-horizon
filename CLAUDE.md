@@ -47,6 +47,7 @@ cd nuxk-web  && npm run gen:api                              # типы из ope
 cd nuxk-core && go test -race ./...
 sh engines/nuxk-nfqws2/shim_test.sh
 sh install/lite_test.sh                  # установщик на имитации роутера; SH="busybox sh" — как на роутере
+docker run --rm -v "$PWD":/src -w /src debian:bookworm-slim sh install/router_test.sh  # то же с BusyBox Entware
 scripts/version.sh set X.Y.Z   # версия — только так (VERSION + nuxk-web/package.json)
 ```
 
@@ -59,6 +60,9 @@ root / nuxk-dev), на контроллере — admin из мастера. `AP
 
 ## Правила разработки
 
+- **Скрипты для роутера — только то, что есть в «свежем» Entware:** его BusyBox без `nohup`,
+  `setsid`, `timeout`, `realpath`, с `od` без `-A`/`-t`; плюс `curl` и то, что ставит
+  установщик. Проверяет `install/router_test.sh` (в CI).
 - **API меняется только вместе с контрактом.** Новый/изменённый эндпоинт агента →
   запись в `api.Routes` (`internal/api/api.go`) + `api/openapi.yaml` + `npm run gen:api`.
   CI проверяет: `TestOpenAPIMatchesRoutes`, `TestOpenAPISchemasCoverJSONFields`, `check:api`.
