@@ -10,6 +10,8 @@
 //	LISTEN       :4200
 //	WEB_ROOT     full nuxk-web build
 //	DATA_DIR     /var/lib/nuxk-controller
+//	UPDATE_DIR   /var/lib/nuxk-update — ~/nuxk/update on the Pi: the panel's
+//	             update requests for nuxk-full.sh (see selfupdate.go)
 //	AGENT_URL    optional: the router's agent, with AGENT_TOKEN (its API_TOKEN)
 //	AGENT_TOKEN  — skips wizard step 2 when nothing is stored yet
 //
@@ -31,6 +33,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -75,7 +78,8 @@ func main() {
 }
 
 func serve() {
-	st, err := OpenStore(env("DATA_DIR", "/var/lib/nuxk-controller"))
+	data := env("DATA_DIR", "/var/lib/nuxk-controller")
+	st, err := OpenStore(data)
 	if err != nil {
 		slog.Error("settings", "err", err)
 		os.Exit(1)
@@ -106,10 +110,16 @@ func serve() {
 	go ag.Run(ctx, 5*time.Second)
 	vl := NewVless(st, ag)
 	go vl.Run(ctx)
+	ses := NewSessions()
+	if n := ses.TakeHandoff(filepath.Join(data, handoffFile)); n > 0 {
+		slog.Info("logins kept across the update", "sessions", n)
+	}
+	su := NewSelfUpdater(env("UPDATE_DIR", "/var/lib/nuxk-update"), data, version, ag, ses)
+	su.Resume()
 
 	srv := &http.Server{
 		Addr:              env("LISTEN", ":4200"),
-		Handler:           NewServer(ag, st, NewSessions(), NewPluginHost(os.Getenv("SUPERVISOR_SOCK")), vl, env("WEB_ROOT", ""), version),
+		Handler:           NewServer(ag, st, ses, NewPluginHost(os.Getenv("SUPERVISOR_SOCK")), vl, su, env("WEB_ROOT", ""), version),
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		// no WriteTimeout: /api/v1/events is a long-lived stream

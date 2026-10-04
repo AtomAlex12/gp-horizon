@@ -4,7 +4,7 @@
 // The update restarts the agent: for a few seconds its API is gone. While a
 // run is going, the store asks every 2 s and takes a failed request for that
 // restart, not for an error.
-import { api, type UpdateSettings, type UpdateStatus } from './api';
+import { api, type SelfUpdate, type UpdateSettings, type UpdateStatus } from './api';
 import { node } from './status.svelte';
 
 export const upd = $state<{
@@ -17,6 +17,67 @@ export const upd = $state<{
 }>({ s: null, err: '', busy: '', restarting: false, startedHere: false, reloading: false });
 
 export const running = () => upd.s?.run?.state === 'running';
+
+// The Pi's controller (served through it only): its version, its update by
+// the Pi's helper, «Обновить всё». Its update replaces the page's own
+// server: while it goes, a failed request is that restart; when the new one
+// answers, the page loads anew.
+export const ctl = $state<{
+  s: SelfUpdate | null;
+  err: string;
+  busy: '' | 'all' | 'ctl';
+  restarting: boolean;
+  startedHere: boolean;
+  reloading: boolean;
+}>({ s: null, err: '', busy: '', restarting: false, startedHere: false, reloading: false });
+
+export const ctlGoing = () => ctl.s?.all?.state === 'running' || ctl.s?.run?.state === 'running';
+
+let ctlTimer: ReturnType<typeof setTimeout> | null = null;
+let ctlSeen = '';
+
+export async function loadCtl() {
+  if (node.via !== 'controller') {
+    // not known yet who serves the page: ask again shortly; the agent has no controller
+    if (!node.via) setTimeout(loadCtl, 3000);
+    return;
+  }
+  try {
+    const s = await api.ctlUpdate();
+    ctl.restarting = false;
+    ctl.err = '';
+    // a new controller answers: its page too
+    if (ctlSeen && s.current !== ctlSeen && !ctl.reloading) {
+      ctl.reloading = true;
+      setTimeout(() => location.reload(), 2500);
+    }
+    ctlSeen = s.current;
+    ctl.s = s;
+    if (ctl.startedHere && !ctlGoing()) ctl.startedHere = false;
+  } catch (e) {
+    if (ctlGoing() || ctl.startedHere) ctl.restarting = true;
+    else ctl.err = e instanceof Error ? e.message : String(e);
+  }
+  if (ctlTimer) clearTimeout(ctlTimer);
+  ctlTimer = setTimeout(loadCtl, ctlGoing() || ctl.startedHere ? 2000 : 30 * 60_000);
+}
+
+async function ctlAct(what: typeof ctl.busy, fn: () => Promise<SelfUpdate>) {
+  ctl.busy = what;
+  ctl.err = '';
+  try {
+    ctl.s = await fn();
+    ctl.startedHere = true;
+  } catch (e) {
+    ctl.err = e instanceof Error ? e.message : String(e);
+  } finally {
+    ctl.busy = '';
+    void loadCtl();
+    void load();
+  }
+}
+export const updateAll = (version: string) => ctlAct('all', () => api.updateAll(version));
+export const updateController = (version: string) => ctlAct('ctl', () => api.ctlUpdateStart(version));
 
 let timer: ReturnType<typeof setTimeout> | null = null;
 let started = false;
@@ -42,11 +103,19 @@ export async function load() {
   schedule();
 }
 
+// while «Обновить всё» updates the router, its card follows too
+$effect.root(() => {
+  $effect(() => {
+    if (ctl.s?.all?.state === 'running' && ctl.s.all.step === 'router') upd.startedHere = true;
+  });
+});
+
 /** start once, from the app: the first look, then every 30 min */
 export function watchUpdates() {
   if (started) return;
   started = true;
   void load();
+  void loadCtl();
 }
 
 async function act(what: typeof upd.busy, fn: () => Promise<UpdateStatus>): Promise<boolean> {

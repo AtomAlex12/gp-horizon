@@ -477,6 +477,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/components": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** WARP, VLESS, SmartDNS, nfqws2 — which are on the router, which the panel can add */
+        get: operations["components"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/components/{id}/install": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Add a component to the router — its own `nuxk <component> --yes`, in the background
+         * @description The same as from SSH (`nuxk nfqws2|warp|vless|dns`): the files of this release, checked against its SHA256SUMS; WARP and VLESS create a Keenetic interface and save the router's configuration (each component's `confirm` says what it does). The agent restarts on the way: the panel follows the run in GET /components. One run at a time, updates included.
+         */
+        post: operations["installComponent"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/dns": {
         parameters: {
             query?: never;
@@ -900,6 +937,8 @@ export interface components {
         UpdateRun: {
             /** @enum {string} */
             state: "running" | "done" | "failed" | "rolled_back" | "interrupted";
+            /** @description a component install: its id */
+            task?: string;
             from: string;
             to: string;
             message?: string;
@@ -908,6 +947,24 @@ export interface components {
             at: number;
             /** @description the last lines of the update's output */
             log: string[];
+        };
+        Component: {
+            /** @enum {string} */
+            id: "nfqws2" | "warp" | "vless" | "smartdns";
+            name: string;
+            /** @description what it's for */
+            about: string;
+            /** @description what installing does to the router — for the confirmation */
+            confirm: string;
+            installed: boolean;
+            version?: string;
+            can_install: boolean;
+            /** @description why it can't be added (when it can't) */
+            cannot?: string;
+        };
+        Components: {
+            items: components["schemas"]["Component"][];
+            run: components["schemas"]["UpdateRun"] | null;
         };
         UpdateStatus: {
             current: string;
@@ -1878,6 +1935,78 @@ export interface operations {
             };
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
+        };
+    };
+    components: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the components and the last install started from the panel */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Components"];
+                };
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    installComponent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: "nfqws2" | "warp" | "vless" | "smartdns";
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description started; the run is in `run` */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Components"];
+                };
+            };
+            401: components["responses"]["Error"];
+            /** @description unknown_component */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description component_installed: it's there already; update_busy: an update or an install is going */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+            /** @description component_unavailable: no `nuxk` command here, not a router, or not for this box (the reason in the message) */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     dns: {

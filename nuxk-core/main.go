@@ -214,7 +214,8 @@ func main() {
 		}
 	}
 
-	upd := update.New(update.Options{
+	var dnsSvc *dns.Service // below; the components ask it about SmartDNS
+	uo := update.Options{
 		Current: version, Repo: cfg.UpdateRepo, API: cfg.UpdateAPI, Command: cfg.UpdateCommand, Dir: cfg.StateDir,
 		BaseURL: cfg.UpdateBaseURL,
 		Handoff: func() error {
@@ -223,7 +224,12 @@ func main() {
 			}
 			return guard.Handoff(handoff)
 		},
-	}, st)
+	}
+	// components from the panel: a router's, where `nuxk` put them
+	if pm != nil {
+		uo.Have = func(id string) update.Presence { return presence(id, hub.Get(), dnsSvc) }
+	}
+	upd := update.New(uo, st)
 	go upd.Run(ctx)
 
 	// Protected DNS: a forwarder the router's DNS proxy asks once it's turned
@@ -253,7 +259,7 @@ func main() {
 			return doms
 		}
 	}
-	dnsSvc := dns.New(dopt, st)
+	dnsSvc = dns.New(dopt, st)
 	go dnsSvc.Run(ctx)
 
 	srv := &http.Server{
@@ -291,6 +297,29 @@ func main() {
 		slog.Warn("graceful shutdown failed", "err", err)
 	}
 	slog.Info("nuxk-core stopped")
+}
+
+// presence: is a component on the router — an engine the config wires up
+// (and its version as the engine reports it), SmartDNS as DNS knows it.
+func presence(id string, snap core.Snapshot, d *dns.Service) update.Presence {
+	kinds := map[string]engine.Kind{"nfqws2": engine.KindNfqws2, "warp": engine.KindUsque, "vless": engine.KindXray}
+	if k, ok := kinds[id]; ok {
+		if i, ok := snapEngine(snap, k); ok {
+			return update.Presence{Installed: true, Version: snap.Engines[i].Version}
+		}
+		return update.Presence{}
+	}
+	if id == "smartdns" {
+		var sd *dns.SmartDNSState
+		if d != nil {
+			sd = d.Status().SmartDNS
+		}
+		if sd == nil {
+			return update.Presence{Cannot: "SmartDNS отключён в nuxk.conf (SMARTDNS_INIT=off)"}
+		}
+		return update.Presence{Installed: sd.Installed, Version: sd.Version}
+	}
+	return update.Presence{}
 }
 
 // warpIface: WARP's interface as the kernel names it (opkgtun0) — usque's

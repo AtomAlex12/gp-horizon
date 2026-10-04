@@ -19,7 +19,7 @@
   import Strategies from './lib/views/Strategies.svelte';
   import { planeOf, healthDot, roleLabel, last } from './lib/ui';
   import { history as hist } from './lib/status.svelte';
-  import { upd, running as updating, watchUpdates } from './lib/update.svelte';
+  import { upd, ctl, newer, running as updating, watchUpdates } from './lib/update.svelte';
 
   startPolling();
 
@@ -116,7 +116,10 @@
   $effect(() => {
     if (!gated && status.data) watchUpdates();
   });
-  const newVersion = $derived(upd.s?.available && upd.s.latest ? upd.s.latest.version : '');
+  // the router behind the newest release, or (through the Pi) the controller
+  const newVersion = $derived(
+    upd.s?.latest && (upd.s.available || (ctl.s && newer(upd.s.latest.version, ctl.s.current))) ? upd.s.latest.version : '',
+  );
 </script>
 
 {#snippet brandMark()}

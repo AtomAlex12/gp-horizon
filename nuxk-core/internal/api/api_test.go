@@ -272,3 +272,28 @@ func TestDNSAPI(t *testing.T) {
 		t.Fatalf("off: %d", w.Code)
 	}
 }
+
+func TestComponentsAPI(t *testing.T) {
+	st, err := state.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg := engine.NewRegistry()
+	hub := core.NewHub("t")
+	upd := update.New(update.Options{Current: "0.5.0", Dir: t.TempDir(), // no `nuxk` command here
+		Have: func(id string) update.Presence { return update.Presence{Installed: id == "nfqws2"} }}, st)
+	h := NewRouter(Deps{Version: "t", Engines: reg, Hub: hub, Ctl: core.NewController(reg, st, hub, "t"), Update: upd})
+	w := do(h, "GET", "/api/v1/components", "", "127.0.0.1:1", "")
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"id":"warp"`) || !strings.Contains(w.Body.String(), `"can_install":false`) {
+		t.Fatalf("GET: %d %s", w.Code, w.Body)
+	}
+	for path, code := range map[string]int{
+		"/api/v1/components/tor/install":    http.StatusNotFound,
+		"/api/v1/components/nfqws2/install": http.StatusConflict,
+		"/api/v1/components/warp/install":   http.StatusServiceUnavailable,
+	} {
+		if w := do(h, "POST", path, "", "127.0.0.1:1", ""); w.Code != code {
+			t.Errorf("%s: %d %s", path, w.Code, w.Body)
+		}
+	}
+}

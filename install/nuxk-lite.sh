@@ -12,7 +12,7 @@
 #   nuxk rollback     the version before the last update, back
 #   nuxk warp         add WARP (usque)       nuxk vless   add VLESS (xray)
 #   nuxk dns          add SmartDNS (beta): the panel's «DNS» can use it instead
-#                     of nuxk's own DNS forwarder
+#                     of nuxk's own DNS; nuxk nfqws2 — add nfqws2-keenetic
 #   nuxk uninstall    remove nuxk; the router's own settings stay
 #
 # Everything comes prebuilt from the GitHub release and is checked against
@@ -22,8 +22,8 @@
 #
 # Options: --yes (defaults without questions), --with-warp, --with-vless.
 # Env: NUXK_VERSION, NUXK_REPO, NUXK_BASE_URL (a mirror of the release),
-#      NO_COLOR; NUXK_ROOT prefixes every path (tests). The panel's update
-#      sets NUXK_STATUS (progress for it), NUXK_FROM, NUXK_STARTED.
+#      NO_COLOR; NUXK_ROOT prefixes every path (tests). The panel sets
+#      NUXK_STATUS (progress for it), NUXK_FROM, NUXK_STARTED, NUXK_TASK.
 
 VERSION="@VERSION@" # stamped by the release; unstamped = the latest release
 REPO="${NUXK_REPO:-AtomAlex12/nuxk-horizon}"
@@ -131,6 +131,7 @@ report() {
         echo "to ${NUXK_VERSION:-$VERSION}"
         echo "pid $$"
         echo "started ${NUXK_STARTED:-}"
+        [ -n "${NUXK_TASK:-}" ] && echo "task $NUXK_TASK"
         echo "at $(date +%s)"
         echo "message $(echo "$2" | tr '\n' ' ')"
     } >"$NUXK_STATUS.tmp" 2>/dev/null && mv -f "$NUXK_STATUS.tmp" "$NUXK_STATUS"
@@ -447,7 +448,7 @@ dns_detach() {
 # AGENT_ENV — this run's own variables, kept away from the agent it starts: a
 # daemon started from here would carry them into its next update from the
 # panel (a mirror's URL long gone, «already self-updated»)
-AGENT_ENV="-u NUXK_BASE_URL -u NUXK_VERSION -u NUXK_REPO -u NUXK_SELF_UPDATED -u NUXK_OLD_TMP -u NUXK_STATUS -u NUXK_FROM -u NUXK_STARTED"
+AGENT_ENV="-u NUXK_BASE_URL -u NUXK_VERSION -u NUXK_REPO -u NUXK_SELF_UPDATED -u NUXK_OLD_TMP -u NUXK_STATUS -u NUXK_FROM -u NUXK_STARTED -u NUXK_TASK"
 
 # rollback — $P_PREV back in place, the agent restarted and asked whether it
 # answers. The engines run on their own meanwhile: only the panel blinks.
@@ -758,7 +759,7 @@ finish() {
     [ "$(conf_get PLANE_APPLY)" = 1 ] || note "Маршрутизация списков выключена (режим плана), пока в $P_CONF не поставить PLANE_APPLY=\"1\"."
     note "Есть Raspberry Pi? Полная версия (история, подбор стратегий): nuxk-full.sh — см. README."
     printf '\n'
-    report done "nuxk Horizon $VERSION работает"
+    report done "${DONE_MSG:-nuxk Horizon $VERSION работает}"
 }
 
 mode_install() {
@@ -879,32 +880,55 @@ mode_rollback() {
     ok "nuxk-core $pv отвечает; обновиться снова — nuxk update"
 }
 
-mode_add() { # add warp|vless|dns
+mode_add() { # add nfqws2|warp|vless|dns
     survey
     [ -n "$CORE_VER" ] || die "сначала поставьте nuxk: запустите без аргументов"
     STEPS=2
     case "$1" in
+    nfqws2)
+        if [ -n "$NFQ_VER" ] && [ "$(conf_get ENGINE_NFQWS2)" = "$P_SHIM" ]; then already "nfqws2-keenetic $NFQ_VER уже стоит"; return; fi
+        if [ -z "$NFQ_VER" ]; then
+            confirm "Поставить nfqws2-keenetic (обход DPI)? Подключит его репозиторий и поставит пакет; штатный nfqws2 сразу начнёт обрабатывать трафик по своему конфигу." || die "отменено"
+            report running "Ставлю nfqws2-keenetic"
+            do_nfqws2
+        fi
+        [ -x "$R$P_NFQ_INIT" ] || die "nfqws2-keenetic не установился: нет $P_NFQ_INIT"
+        wire "ENGINE_NFQWS2" "$P_SHIM"
+        DONE_MSG="nfqws2 установлен"
+        ;;
     warp)
-        [ "$USQUE_READY" = 1 ] && { ok "WARP уже стоит"; return; }
+        [ "$USQUE_READY" = 1 ] && { already "WARP уже стоит"; return; }
         in_release "usque-keenetic-$ARCH.ipk" || die "в релизе нет usque для $ARCH"
         confirm "Поставить WARP? Регистрирует устройство в Cloudflare WARP (вы принимаете их условия), создаёт интерфейс OpkgTun и сохраняет конфигурацию роутера." || die "отменено"
+        report running "Ставлю WARP (usque)"
         do_usque
+        DONE_MSG="WARP установлен"
         ;;
     vless)
         [ -n "$(xray_asset "$ARCH")" ] || die "нет сборки xray для $ARCH"
         [ -z "$FREE_KB" ] || [ "$FREE_KB" -ge "$XRAY_FREE_KB" ] || die "для xray мало места: свободно $((FREE_KB / 1024)) МБ, нужно около $((XRAY_FREE_KB / 1024)) МБ"
         confirm "Поставить VLESS (xray $XRAY_VERSION)? Создаст в Keenetic интерфейс $(xray_iface) и сохранит конфигурацию роутера." || die "отменено"
+        report running "Ставлю VLESS (xray $XRAY_VERSION)"
         do_xray
+        DONE_MSG="VLESS установлен — задайте сервер на странице «xray (VLESS)»"
         ;;
     dns)
         smartdns_ok || die "для $ARCH нет сборки SmartDNS"
-        [ "$SMARTDNS_VER" = "$SMARTDNS_VERSION" ] && { ok "SmartDNS $SMARTDNS_VERSION уже стоит — включается в панели, «DNS»"; return; }
+        [ "$SMARTDNS_VER" = "$SMARTDNS_VERSION" ] && { already "SmartDNS $SMARTDNS_VERSION уже стоит — включается в панели, «DNS»"; return; }
         confirm "Поставить SmartDNS $SMARTDNS_VERSION (бета)? Скачает его с GitHub автора со сверкой хеша в /opt. Сам не запустится: его выбирают в панели, «DNS», вместо встроенного DNS nuxk." || die "отменено"
+        report running "Ставлю SmartDNS $SMARTDNS_VERSION"
         do_smartdns
+        DONE_MSG="SmartDNS установлен — включается в «DNS» → «Настройки»"
         ;;
     esac
     do_start
     finish
+}
+
+# already MESSAGE — nothing to add: said here and to the panel
+already() {
+    ok "$1"
+    report done "$1"
 }
 
 mode_status() {
@@ -1005,12 +1029,12 @@ for a in "$@"; do
     --yes | -y) YES=1 ;;
     --with-warp) WITH_WARP=1 ;;
     --with-vless) WITH_VLESS=1 ;;
-    install | update | rollback | warp | vless | dns | status | uninstall) MODE=$a ;;
+    install | update | rollback | nfqws2 | warp | vless | dns | status | uninstall) MODE=$a ;;
     -h | --help)
         sed -n '2,27p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'
         exit 0
         ;;
-    *) die "не понимаю «$a»: nuxk [install|update|rollback|warp|vless|dns|status|uninstall] [--yes]" ;;
+    *) die "не понимаю «$a»: nuxk [install|update|rollback|nfqws2|warp|vless|dns|status|uninstall] [--yes]" ;;
     esac
 done
 # the downloaded script installs; the installed command shows the state
@@ -1054,6 +1078,6 @@ banner "$VERSION"
 case "$MODE" in
 install) mode_install ;;
 update) mode_update ;;
-warp | vless | dns) mode_add "$MODE" ;;
+nfqws2 | warp | vless | dns) mode_add "$MODE" ;;
 uninstall) mode_uninstall ;;
 esac

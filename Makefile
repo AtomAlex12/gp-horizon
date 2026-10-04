@@ -36,6 +36,7 @@ install-check:
 	sh engines/nuxk-xray/shim_test.sh
 	sh engines/nuxk-smartdns/shim_test.sh
 	sh install/lite_test.sh
+	sh install/full_test.sh
 
 controller-check:
 	cd nuxk-controller && gofmt -l . | (! grep .) && go vet ./... && go test ./...

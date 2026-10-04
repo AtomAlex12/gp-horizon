@@ -48,6 +48,7 @@ cd nuxk-core && go test -race ./...
 sh engines/nuxk-nfqws2/shim_test.sh
 sh install/lite_test.sh                  # установщик на имитации роутера; SH="busybox sh" — как на роутере
 docker run --rm -v "$PWD":/src -w /src debian:bookworm-slim sh install/router_test.sh  # то же с BusyBox Entware
+sh install/full_test.sh                  # nuxk-full.sh на имитации Pi: канал, запрос панели, откат
 scripts/version.sh set X.Y.Z   # версия — только так (VERSION + nuxk-web/package.json)
 ```
 
