@@ -39,6 +39,29 @@ export type UpdateStatus = S['UpdateStatus'];
 export type UpdateRun = S['UpdateRun'];
 export type UpdateRelease = S['UpdateRelease'];
 export type UpdateSettings = S['UpdateSettings'];
+export type Components = S['Components'];
+// GET /ctl/v1/update — the Pi's controller: its own update and «Обновить всё»
+export type RunState = 'running' | 'done' | 'failed' | 'rolled_back' | 'interrupted';
+export type HostRun = { state: RunState; from: string; to: string; message?: string; started_at: number; at: number; log: string[] };
+export type AllRun = {
+  state: 'running' | 'done' | 'failed';
+  version: string;
+  step: 'router' | 'controller' | 'done';
+  message?: string;
+  started_at: number;
+  at: number;
+};
+export type SelfUpdate = {
+  current: string;
+  latest?: string;
+  router?: string;
+  available: boolean;
+  can_apply: boolean;
+  cannot?: string;
+  run: HostRun | null;
+  all: AllRun | null;
+};
+export type Component = S['Component'];
 export type DNSStatus = S['DNSStatus'];
 export type DNSSettings = S['DNSSettings'];
 export type DNSCheck = S['DNSCheck'];
@@ -145,6 +168,8 @@ export const api = {
   checkUpdate: () => req<UpdateStatus>('POST', v1('/update/check')),
   startUpdate: (version: string) => req<UpdateStatus>('POST', v1('/update'), { version }),
   setUpdateSettings: (s: UpdateSettings) => req<UpdateStatus>('PUT', v1('/update/settings'), s),
+  components: () => req<Components>('GET', v1('/components')),
+  installComponent: (id: string) => req<Components>('POST', v1(`/components/${encodeURIComponent(id)}/install`)),
 
   dns: () => req<DNSStatus>('GET', v1('/dns')),
   setDns: (s: Partial<DNSSettings>) => req<DNSStatus>('PUT', v1('/dns/settings'), s),
@@ -156,6 +181,9 @@ export const api = {
   // controller only (404 when the UI is served by the agent itself)
   agent: () => req<AgentState>('GET', '/ctl/v1/agent'),
   history: () => req<History>('GET', '/ctl/v1/history'),
+  ctlUpdate: () => req<SelfUpdate>('GET', '/ctl/v1/update'),
+  ctlUpdateStart: (version: string) => req<SelfUpdate>('POST', '/ctl/v1/update', { version }),
+  updateAll: (version: string) => req<SelfUpdate>('POST', '/ctl/v1/update/all', { version }),
   // null on the agent: its web server answers /ctl/* with the page itself
   setup: () => req<SetupState | null>('GET', '/ctl/v1/setup').then((s) => (s && typeof s === 'object' && 'admin' in s ? s : null)),
   setupAdmin: (password: string) => req<{ user: string }>('POST', '/ctl/v1/setup/admin', { password }),

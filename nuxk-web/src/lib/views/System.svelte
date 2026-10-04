@@ -3,6 +3,7 @@
   import { status, node, setup, pollNow } from '../status.svelte';
   import { ENGINE_LABEL, ago, fmtDur, planeOf, roleLabel } from '../ui';
   import UpdateCard from '../UpdateCard.svelte';
+  import ComponentsCard from '../ComponentsCard.svelte';
 
   const plane = $derived(planeOf(status.data));
   const i = $derived(node.info);
@@ -26,6 +27,8 @@
 </script>
 
 <UpdateCard />
+
+<ComponentsCard />
 
 <div class="grid g2">
   <section class="card">

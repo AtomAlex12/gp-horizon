@@ -8,7 +8,14 @@
 #   sh nuxk-full.sh            install or update the controller, then (asks) the router
 #   sh nuxk-full.sh router     install or update nuxk on the router, over SSH
 #   sh nuxk-full.sh status     sh nuxk-full.sh uninstall [--purge]
-#   sh ~/nuxk/nuxk-full.sh update    the latest release (the script keeps a copy there)
+#   nuxk-pi update             the newest release of the channel installed — a beta
+#                              takes betas too — never an older one; the same as
+#                              sh ~/nuxk/nuxk-full.sh update (a copy is kept there)
+#
+# The panel's «Обновить» leaves a request in ~/nuxk/update/inbox; a systemd
+# unit (nuxk-update.path, installed once with sudo, with the nuxk-pi command)
+# runs `nuxk-full.sh panel-update` for it — the controller never gets Docker
+# itself. A new controller that doesn't answer is replaced by the old one.
 #
 # The controller is a prebuilt image from GitHub (ghcr.io), pulled by the
 # digest the release lists — nothing is compiled here. The release's
@@ -18,9 +25,10 @@
 # password goes to ssh only, never through this script.
 #
 # Options: --yes (defaults without questions), --no-router (skip the router).
-# Env: NUXK_VERSION, NUXK_REPO, NUXK_DIR (default ~/nuxk), NUXK_PORT (4200),
-#      NUXK_IMAGE (another image), NUXK_PULL=0 (a local image: don't pull),
-#      NUXK_BASE_URL (a mirror of the release), NO_COLOR.
+# Env: NUXK_VERSION, NUXK_CHANNEL (stable|beta), NUXK_REPO, NUXK_DIR (default
+#      ~/nuxk), NUXK_PORT (4200), NUXK_IMAGE (another image), NUXK_PULL=0 (a
+#      local image: don't pull), NUXK_BASE_URL (a mirror of the release),
+#      NUXK_API (GitHub's API), NO_COLOR.
 
 VERSION="@VERSION@" # stamped by the release; unstamped = the latest release
 REPO="${NUXK_REPO:-AtomAlex12/nuxk-horizon}"
@@ -67,8 +75,22 @@ cleanup() { [ -n "$TMP" ] && rm -rf "$TMP"; }
 trap cleanup EXIT INT TERM
 die() {
     printf '\n  %s✗ %s%s\n' "$E" "$*" "$N" >&2
+    report "${FAIL_STATE:-failed}" "$*"
     cleanup
     exit 1
+}
+# report STATE MESSAGE — progress for the panel, when it asked (NUXK_STATUS)
+report() {
+    [ -n "${NUXK_STATUS:-}" ] || return 0
+    {
+        echo "state $1"
+        echo "from ${NUXK_FROM:-}"
+        echo "to ${NUXK_TO:-$VERSION}"
+        echo "pid $$"
+        echo "started ${NUXK_STARTED:-}"
+        echo "at $(date +%s)"
+        echo "message $(echo "$2" | tr '\n' ' ')"
+    } >"$NUXK_STATUS.tmp" 2>/dev/null && mv -f "$NUXK_STATUS.tmp" "$NUXK_STATUS"
 }
 YES=""
 ask() { # ask QUESTION y|n
@@ -98,6 +120,43 @@ input() { # input QUESTION DEFAULT → the answer on stdout
     echo "${v:-$2}"
 }
 have() { command -v "$1" >/dev/null 2>&1; }
+
+valid_ver() { echo "$1" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$'; }
+# newer A B — A is a later version than B (a release after its pre-releases)
+newer() {
+    awk -v a="$1" -v b="$2" '
+    function key(v,   i, n, p, c, x, s) {
+        sub(/^v/, "", v); p = ""
+        i = index(v, "-"); if (i) { p = substr(v, i + 1); v = substr(v, 1, i - 1) }
+        split(v, c, "."); s = sprintf("%09d.%09d.%09d", c[1], c[2], c[3])
+        if (p == "") return s "~"
+        n = split(p, x, "."); s = s "-"
+        for (i = 1; i <= n; i++) s = s (x[i] ~ /^[0-9]+$/ ? sprintf("0%09d", x[i]) : "1" x[i]) "."
+        return s
+    }
+    BEGIN { exit !(key(a) > key(b)) }'
+}
+# installed_version — the controller's, from the image in its compose file
+installed_version() {
+    sed -n 's|^ *image: .*nuxk-horizon-controller:\([^@ ]*\).*|\1|p' "$DIR/docker-compose.yml" 2>/dev/null | head -n 1
+}
+# newest_release CHANNEL — NEWEST: the newest version GitHub lists for it,
+# betas only on "beta" (the list: /releases/latest never shows a beta)
+newest_release() {
+    curl -fsSL --retry 2 --connect-timeout 15 -H 'Accept: application/vnd.github+json' \
+        -o "$TMP/releases.json" "${NUXK_API:-https://api.github.com}/repos/$REPO/releases?per_page=30" 2>"$TMP/.curl" ||
+        die "GitHub не ответил: $(tr '\n' ' ' <"$TMP/.curl")"
+    best=""
+    for t in $(tr ',{}' '\n\n\n' <"$TMP/releases.json" | awk -F'"' -v ch="$1" '
+        $2 == "tag_name" { tag = $4 }
+        $2 == "draft" { draft = ($3 ~ /true/) }
+        $2 == "prerelease" { if (tag != "" && !draft && ($3 !~ /true/ || ch == "beta")) print tag; tag = "" }'); do
+        t=${t#v}
+        valid_ver "$t" || continue
+        if [ -z "$best" ] || newer "$t" "$best"; then best=$t; fi
+    done
+    NEWEST=$best
+}
 # run CMD — its output indented and dimmed; its exit status
 run() {
     : >"$TMP/.rc"
@@ -108,6 +167,8 @@ run() {
 base_url() {
     if [ -n "${NUXK_BASE_URL:-}" ]; then
         echo "$NUXK_BASE_URL"
+    elif [ -n "${NUXK_RELEASES:-}" ] && [ "$VERSION" != "@""VERSION@" ]; then
+        echo "$NUXK_RELEASES/v$VERSION" # tests: releases laid out like GitHub's
     elif [ "$VERSION" = "@""VERSION@" ]; then
         echo "https://github.com/$REPO/releases/latest/download"
     else
@@ -208,11 +269,30 @@ keep_self() {
     return 0
 }
 
-# self_update — `update`: the latest release's own script, once its SHA256SUMS
-# signature and its hash check out here, installs that release
+# self_update — `update`: the release's own script, once its SHA256SUMS
+# signature and its hash check out here, installs that release. Which one:
+# NUXK_VERSION, or the newest of the channel installed (a beta: betas too),
+# and only if it's newer than what runs.
 self_update() {
-    VERSION="@""VERSION@"
-    [ -n "${NUXK_VERSION:-}" ] && VERSION=${NUXK_VERSION#v}
+    INSTALLED=$(installed_version)
+    if [ -n "${NUXK_VERSION:-}" ]; then
+        VERSION=${NUXK_VERSION#v}
+    elif [ -n "${NUXK_BASE_URL:-}" ]; then
+        VERSION="@""VERSION@" # a mirror: its own latest
+    else
+        ch=${NUXK_CHANNEL:-}
+        [ -n "$ch" ] || case "$INSTALLED" in *-*) ch=beta ;; *) ch=stable ;; esac
+        newest_release "$ch"
+        VERSION=$NEWEST
+        [ -n "$VERSION" ] || die "на GitHub нет релизов nuxk Horizon (канал $ch)"
+        if [ -n "$INSTALLED" ] && ! newer "$VERSION" "$INSTALLED"; then
+            banner "$INSTALLED"
+            ok "контроллер $INSTALLED — новее нет (последний $([ "$ch" = beta ] && echo 'с бетами' || echo 'релиз'): $VERSION)"
+            note "переставить ту же версию: NUXK_VERSION=$INSTALLED nuxk-pi update · роутер: nuxk-pi router"
+            report done "контроллер $INSTALLED — новее нет"
+            exit 0
+        fi
+    fi
     BASE=$(base_url)
     get "$BASE/SHA256SUMS" "$TMP/SHA256SUMS"
     verify_sums
@@ -220,10 +300,100 @@ self_update() {
     NUXK_SELF_UPDATED=1 exec sh "$TMP/nuxk-full.sh" install ${YES:+--yes} ${NO_ROUTER:+--no-router}
 }
 
+# panel_update — the panel's «Обновить»: the version in the request, only a
+# newer one, then `update` as from the command line, reporting into
+# update/status for the panel, the output into update/update.log
+panel_update() {
+    req="$DIR/update/inbox/request"
+    [ -f "$req" ] || exit 0
+    want=$(sed -n 's/^version //p' "$req" | head -n 1)
+    rm -f "$req"
+    exec >"$DIR/update/update.log" 2>&1
+    NUXK_STATUS="$DIR/update/status" NUXK_STARTED=$(date +%s) NUXK_FROM=$(installed_version) NUXK_TO=$want
+    export NUXK_STATUS NUXK_STARTED NUXK_FROM NUXK_TO
+    valid_ver "$want" || die "панель попросила «$want» — это не версия"
+    [ -z "$NUXK_FROM" ] || newer "$want" "$NUXK_FROM" || die "панель попросила $want, а стоит $NUXK_FROM — ставлю только новее"
+    report running "Скачиваю и проверяю файлы $want"
+    YES=1 NO_ROUTER=1
+    NUXK_VERSION=$want
+    export NUXK_VERSION
+    self_update
+}
+
+# ensure_helper — the panel's «Обновить» needs a hand here: a systemd unit
+# that runs `nuxk-full.sh panel-update` when a request lands in update/inbox,
+# and the nuxk-pi command. Installed once, with sudo; without it the panel
+# shows the command instead of the button.
+ensure_helper() {
+    [ -z "${NUXK_STATUS:-}" ] || return 0 # the helper is what runs this
+    [ "${NUXK_HELPER:-1}" != 0 ] || return 0 # tests
+    if [ ! -d /run/systemd/system ]; then
+        note "здесь нет systemd — кнопки обновления контроллера в панели не будет: sh $DIR/nuxk-full.sh update"
+        return 0
+    fi
+    me=$(id -un)
+    cat >"$TMP/nuxk-update.path" <<EOF
+[Unit]
+Description=nuxk Horizon: update requests from the panel
+
+[Path]
+PathExists=$DIR/update/inbox/request
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    cat >"$TMP/nuxk-update.service" <<EOF
+[Unit]
+Description=nuxk Horizon: update the controller, as the panel asked
+
+[Service]
+Type=oneshot
+User=$me
+Environment=HOME=$HOME NUXK_DIR=$DIR NUXK_PORT=$PORT
+ExecStart=/bin/sh $DIR/nuxk-full.sh panel-update
+EOF
+    printf '#!/bin/sh\n# nuxk Horizon on this computer: nuxk-pi update | router | status | uninstall\nexec sh "%s/nuxk-full.sh" "$@"\n' "$DIR" >"$TMP/nuxk-pi"
+    if cmp -s "$TMP/nuxk-update.path" /etc/systemd/system/nuxk-update.path &&
+        cmp -s "$TMP/nuxk-update.service" /etc/systemd/system/nuxk-update.service &&
+        cmp -s "$TMP/nuxk-pi" /usr/local/bin/nuxk-pi; then
+        echo "$VERSION" >"$DIR/update/helper"
+        return 0
+    fi
+    if ! have sudo || { ! sudo -n true 2>/dev/null && ! { [ -r /dev/tty ] && : </dev/tty; } 2>/dev/null; }; then
+        note "кнопка обновления контроллера в панели появится после: nuxk-full.sh update из терминала (нужен sudo)"
+        return 0
+    fi
+    ask "Поставить помощник обновления (кнопка «Обновить» в панели) и команду nuxk-pi? Нужен sudo — один раз." y || {
+        note "без него контроллер обновляется командой: sh $DIR/nuxk-full.sh update"
+        return 0
+    }
+    if sudo cp "$TMP/nuxk-update.path" "$TMP/nuxk-update.service" /etc/systemd/system/ &&
+        sudo chmod 644 /etc/systemd/system/nuxk-update.path /etc/systemd/system/nuxk-update.service &&
+        sudo cp "$TMP/nuxk-pi" /usr/local/bin/nuxk-pi && sudo chmod 755 /usr/local/bin/nuxk-pi &&
+        sudo systemctl daemon-reload && sudo systemctl enable --now nuxk-update.path >/dev/null 2>&1; then
+        echo "$VERSION" >"$DIR/update/helper"
+        ok "помощник обновления (nuxk-update.path) и команда nuxk-pi"
+    else
+        warn "помощник обновления не поставился — контроллер обновляется командой: sh $DIR/nuxk-full.sh update"
+    fi
+}
+
+# drop_helper — uninstall: the unit and the command go too
+drop_helper() {
+    [ -f /etc/systemd/system/nuxk-update.path ] || [ -f /usr/local/bin/nuxk-pi ] || return 0
+    have sudo || return 0
+    sudo systemctl disable --now nuxk-update.path >/dev/null 2>&1
+    sudo rm -f /etc/systemd/system/nuxk-update.path /etc/systemd/system/nuxk-update.service /usr/local/bin/nuxk-pi &&
+        sudo systemctl daemon-reload && ok "помощник обновления и команда nuxk-pi удалены"
+}
+
 # --- the controller ------------------------------------------------------------------
 
 write_compose() { # write_compose VOLUME-KEY
     mkdir -p "$DIR" || die "не создать $DIR"
+    # the panel's update requests: the controller (nobody) writes, the helper reads
+    mkdir -p "$DIR/update/inbox" && chmod 755 "$DIR/update" && chmod 777 "$DIR/update/inbox" ||
+        die "не создать $DIR/update"
     if [ "$1" = old ]; then
         vol="  controller-data:
     external: true
@@ -242,6 +412,7 @@ services:
     ports: ["$PORT:4200"]
     volumes:
       - controller-data:/var/lib/nuxk-controller
+      - ./update:/var/lib/nuxk-update   # the panel's «Обновить» (nuxk-update.path)
     read_only: true
     tmpfs: [/run, /tmp]
     init: true   # reaps what plugins leave behind
@@ -275,21 +446,46 @@ do_controller() {
     [ -z "$busy" ] || die "порт $PORT занят: $busy (другой порт: NUXK_PORT=4201 sh nuxk-full.sh)"
 
     step "Контроллер $VERSION"
+    report running "Скачиваю образ контроллера $VERSION"
+    C="$DIR/docker-compose.yml"
+    rm -f "$C.prev"
+    [ -f "$C" ] && cp -f "$C" "$C.prev"
     write_compose "${uses_old:+old}"
-    note "$DIR/docker-compose.yml · образ $(image)"
+    note "$C · образ $(image)"
     if [ "${NUXK_PULL:-1}" != 0 ]; then
-        run "$DOCKER compose -f '$DIR/docker-compose.yml' pull" ||
+        run "$DOCKER compose -f '$C' pull" ||
             die "образ не скачался — если репозиторий ещё приватный, сначала: docker login ghcr.io"
     fi
-    run "$DOCKER compose -f '$DIR/docker-compose.yml' up -d" || die "контейнер не запустился — вывод выше"
+    report running "Перезапускаю контроллер"
+    run "$DOCKER compose -f '$C' up -d" || die "контейнер не запустился — вывод выше"
+    if answers; then
+        ok "панель отвечает на :$PORT"
+        return 0
+    fi
+    run "$DOCKER logs --tail 20 nuxk-controller"
+    # the one before it, if there was one: back, by its compose file
+    if [ -f "$C.prev" ] && ! cmp -s "$C.prev" "$C"; then
+        warn "контроллер $VERSION не ответил за $HEALTH_WAIT секунд — возвращаю прежний"
+        cp -f "$C.prev" "$C"
+        if run "$DOCKER compose -f '$C' up -d" && answers; then
+            FAIL_STATE=rolled_back
+            die "контроллер $VERSION не ответил — работает прежний $(installed_version); строки журнала выше"
+        fi
+        die "контроллер $VERSION не ответил, и прежний тоже — строки журнала выше"
+    fi
+    die "контроллер не ответил за $HEALTH_WAIT секунд — строки его журнала выше"
+}
+
+# answers — the controller on PORT says it's up, within HEALTH_WAIT seconds
+HEALTH_WAIT=${NUXK_HEALTH_WAIT:-60}
+answers() {
     i=0
-    while [ "$i" -lt 30 ]; do
-        curl -fsS -m 2 "http://127.0.0.1:$PORT/ctl/v1/setup" >/dev/null 2>&1 && { ok "панель отвечает на :$PORT"; return 0; }
+    while [ "$i" -lt "$HEALTH_WAIT" ]; do
+        curl -fsS -m 2 "http://127.0.0.1:$PORT/ctl/v1/healthz" >/dev/null 2>&1 && return 0
         sleep 1
         i=$((i + 1))
     done
-    run "$DOCKER logs --tail 20 nuxk-controller"
-    die "контроллер не ответил за 30 секунд — строки его журнала выше"
+    return 1
 }
 
 # --- the router ------------------------------------------------------------------------
@@ -320,10 +516,16 @@ finish() {
     printf '  %s✓ nuxk Horizon %s%s\n' "$G$B" "$VERSION" "$N"
     printf '    %sПанель%s   http://%s:%s\n' "$B" "$N" "${IP:-<адрес Pi>}" "$PORT"
     printf '    %sДальше%s   мастер в панели: пароль admin → роутер%s (root и пароль Entware)\n' "$B" "$N" "${ROUTER:+ $ROUTER}"
-    printf '    %sКоманды%s  sh %s/nuxk-full.sh update · router · status · uninstall\n' "$B" "$N" "$DIR"
-    note "Обновление: sh $DIR/nuxk-full.sh update — новый образ контроллера, затем (спросит) роутер."
+    if [ -x /usr/local/bin/nuxk-pi ]; then
+        printf '    %sКоманды%s  nuxk-pi update · router · status · uninstall\n' "$B" "$N"
+        note "Обновление: кнопкой в панели («Система» → «Обновления» → «Обновить всё») или nuxk-pi update."
+    else
+        printf '    %sКоманды%s  sh %s/nuxk-full.sh update · router · status · uninstall\n' "$B" "$N" "$DIR"
+        note "Обновление: sh $DIR/nuxk-full.sh update — новый образ контроллера, затем (спросит) роутер."
+    fi
     note "Роутер обновляется и сам: кнопкой в панели («Система» → «Обновления») или nuxk update по SSH."
     printf '\n'
+    report done "контроллер $VERSION работает"
 }
 
 # --- modes -----------------------------------------------------------------------------
@@ -334,17 +536,18 @@ for a in "$@"; do
     --yes | -y) YES=1 ;;
     --purge) PURGE=1 ;;
     --no-router) NO_ROUTER=1 ;;
-    install | update | router | status | uninstall) MODE=$a ;;
+    install | update | router | status | uninstall | panel-update) MODE=$a ;;
     -h | --help)
-        sed -n '2,24p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'
+        awk 'NR > 1 && /^#/ { sub(/^# ?/, ""); print; next } NR > 1 { exit }' "$0" 2>/dev/null
         exit 0
         ;;
-    *) die "не понимаю «$a»: sh nuxk-full.sh [install|update|router|status|uninstall] [--yes]" ;;
+    *) die "не понимаю «$a»: nuxk-pi [install|update|router|status|uninstall] [--yes]" ;;
     esac
 done
 
 have curl || die "нет curl: sudo apt install -y curl"
 TMP=$(mktemp -d 2>/dev/null) || die "не создать временный каталог"
+[ "$MODE" = panel-update ] && panel_update
 [ "$MODE" = update ] && [ -z "${NUXK_SELF_UPDATED:-}" ] && self_update
 [ -n "${NUXK_VERSION:-}" ] && VERSION=${NUXK_VERSION#v}
 BASE=$(base_url)
@@ -363,6 +566,7 @@ install)
     STEPS=2
     do_controller
     keep_self
+    ensure_helper
     if [ -z "$NO_ROUTER" ] && ask "Поставить или обновить nuxk на роутере сейчас (по SSH)?" y; then
         do_router
     else
@@ -392,6 +596,7 @@ uninstall)
     confirm "Удалить контроллер${PURGE:+ вместе с его данными (пароль, роутер, плагины)}? На роутере nuxk останется (удаление там: nuxk uninstall)." || die "отменено"
     ext=$(sed -n 's/^    name: \(.*_controller-data\)$/\1/p' "$DIR/docker-compose.yml")
     run "$DOCKER compose -f '$DIR/docker-compose.yml' down ${PURGE:+-v}" || die "не удалось остановить — вывод выше"
+    drop_helper
     [ -n "$PURGE" ] && rm -rf "$DIR"
     if [ -n "$PURGE" ] && [ -n "$ext" ]; then
         ok "контроллер удалён; его данные — перенесённый том $ext — оставлены: docker volume rm $ext"

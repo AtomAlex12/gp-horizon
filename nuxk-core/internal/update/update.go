@@ -57,9 +57,11 @@ type Release struct {
 	Prerelease  bool   `json:"prerelease"`
 }
 
-// Run is the last update started from the panel, as its script reported it.
+// Run is the last update (or component install) started from the panel, as
+// its script reported it.
 type Run struct {
-	State     string   `json:"state"` // running | done | failed | rolled_back | interrupted
+	State     string   `json:"state"`          // running | done | failed | rolled_back | interrupted
+	Task      string   `json:"task,omitempty"` // a component install: its id
 	From      string   `json:"from"`
 	To        string   `json:"to"`
 	Message   string   `json:"message,omitempty"`
@@ -106,6 +108,9 @@ type Options struct {
 	// Handoff runs just before the update starts: the logins go to the next
 	// agent (auth.Guard.Handoff). Its failure only costs a login.
 	Handoff func() error
+	// Have: what's on the router of each component (the agent's engines and
+	// DNS know); nil = no components from the panel.
+	Have func(id string) Presence
 }
 
 type Updater struct {
@@ -335,7 +340,7 @@ func (u *Updater) startLocked(version string) error {
 	if why := u.cannot(); why != "" {
 		return fmt.Errorf("%w: %s", ErrCannot, why)
 	}
-	if r := u.readRun(); r != nil && r.State == "running" {
+	if u.busy() {
 		return ErrBusy
 	}
 	if u.latest == nil || version != u.latest.Version {
@@ -344,19 +349,38 @@ func (u *Updater) startLocked(version string) error {
 	if !Newer(version, u.o.Current) {
 		return ErrNotNewer
 	}
+	return u.spawn(script{
+		args: []string{"update", "--yes"}, status: statusFile, log: logFile,
+		first: fmt.Sprintf("from %s\nto %s\nmessage Запускаю обновление\n", u.o.Current, version),
+		env:   []string{"NUXK_VERSION=" + version, "NUXK_FROM=" + u.o.Current},
+	})
+}
+
+// script: one run of the router's `nuxk` from the panel.
+type script struct {
+	args   []string // nuxk's arguments
+	status string   // its report file in Dir
+	log    string   // its output in Dir
+	first  string   // the status until the script's own first report
+	env    []string // more for it, NUXK_*
+}
+
+// spawn starts `sh nuxk ARGS` in the background, apart from this agent (it
+// restarts the agent on the way) and returns at once; the script reports
+// into its status file.
+func (u *Updater) spawn(sc script) error {
 	if err := os.MkdirAll(u.o.Dir, 0o700); err != nil {
 		return err
 	}
-	logf, err := os.OpenFile(filepath.Join(u.o.Dir, logFile), os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
+	logf, err := os.OpenFile(filepath.Join(u.o.Dir, sc.log), os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
 	}
-	now := u.now()
-	started := strconv.FormatInt(now.Unix(), 10)
+	started := strconv.FormatInt(u.now().Unix(), 10)
+	status := filepath.Join(u.o.Dir, sc.status)
 	// the script's first report replaces this within a second; pid 0 until then
-	st := fmt.Sprintf("state running\nfrom %s\nto %s\npid 0\nstarted %s\nat %s\nmessage Запускаю обновление\n",
-		u.o.Current, version, started, started)
-	if err := writeFile(u.statusPath(), st); err != nil {
+	st := "state running\npid 0\nstarted " + started + "\nat " + started + "\n" + sc.first
+	if err := writeFile(status, st); err != nil {
 		logf.Close()
 		return err
 	}
@@ -365,10 +389,9 @@ func (u *Updater) startLocked(version string) error {
 			slog.Warn("update: logins not handed over", "err", err)
 		}
 	}
-	cmd := exec.Command("sh", u.o.Command, "update", "--yes")
-	cmd.Env = append(cleanEnv(os.Environ()),
-		"NUXK_VERSION="+version, "NUXK_STATUS="+u.statusPath(),
-		"NUXK_FROM="+u.o.Current, "NUXK_STARTED="+started, "NO_COLOR=1")
+	cmd := exec.Command("sh", append([]string{u.o.Command}, sc.args...)...)
+	cmd.Env = append(cleanEnv(os.Environ()), "NUXK_STATUS="+status, "NUXK_STARTED="+started, "NO_COLOR=1")
+	cmd.Env = append(cmd.Env, sc.env...)
 	if u.o.BaseURL != "" {
 		cmd.Env = append(cmd.Env, "NUXK_BASE_URL="+u.o.BaseURL)
 	}
@@ -376,7 +399,7 @@ func (u *Updater) startLocked(version string) error {
 	detach(cmd)
 	if err := cmd.Start(); err != nil {
 		logf.Close()
-		_ = writeFile(u.statusPath(), strings.Replace(st, "state running", "state failed", 1)+"message не запустилась команда nuxk: "+err.Error()+"\n")
+		_ = writeFile(status, strings.Replace(st, "state running", "state failed", 1)+"message не запустилась команда nuxk: "+err.Error()+"\n")
 		return err
 	}
 	go func() {
@@ -384,6 +407,17 @@ func (u *Updater) startLocked(version string) error {
 		logf.Close()
 	}()
 	return nil
+}
+
+// busy: an update or a component install is going — one at a time, both
+// change the router and restart the agent.
+func (u *Updater) busy() bool {
+	for _, f := range []string{statusFile, componentStatus} {
+		if r := u.readRunAt(f, ""); r != nil && r.State == "running" {
+			return true
+		}
+	}
+	return false
 }
 
 func (u *Updater) statusPath() string { return filepath.Join(u.o.Dir, statusFile) }
@@ -403,10 +437,13 @@ func cleanEnv(env []string) []string {
 	return out
 }
 
-// readRun: the last run from its status file; a "running" one whose script
-// is gone was cut short (a reboot, a power cut).
-func (u *Updater) readRun() *Run {
-	f, err := os.Open(u.statusPath())
+// readRun: the last update from its status file.
+func (u *Updater) readRun() *Run { return u.readRunAt(statusFile, logFile) }
+
+// readRunAt: a run from its status file (and the tail of its log, if named);
+// a "running" one whose script is gone was cut short (a reboot, a power cut).
+func (u *Updater) readRunAt(status, log string) *Run {
+	f, err := os.Open(filepath.Join(u.o.Dir, status))
 	if err != nil {
 		return nil
 	}
@@ -417,7 +454,7 @@ func (u *Updater) readRun() *Run {
 		k, v, _ := strings.Cut(sc.Text(), " ")
 		kv[k] = v
 	}
-	r := &Run{State: kv["state"], From: kv["from"], To: kv["to"], Message: kv["message"],
+	r := &Run{State: kv["state"], Task: kv["task"], From: kv["from"], To: kv["to"], Message: strings.TrimSpace(kv["message"]),
 		StartedAt: unix(kv["started"]), At: unix(kv["at"])}
 	if r.State == "" {
 		return nil
@@ -428,10 +465,13 @@ func (u *Updater) readRun() *Run {
 		stuck := pid == 0 && u.now().Unix()-r.At > 120
 		if gone || stuck {
 			r.State = "interrupted"
-			r.Message = "обновление прервалось (перезагрузка или сбой): " + r.Message
+			r.Message = "прервалось (перезагрузка или сбой): " + r.Message
 		}
 	}
-	r.Log = tailLines(filepath.Join(u.o.Dir, logFile), logLines)
+	r.Log = []string{}
+	if log != "" {
+		r.Log = tailLines(filepath.Join(u.o.Dir, log), logLines)
+	}
 	return r
 }
 

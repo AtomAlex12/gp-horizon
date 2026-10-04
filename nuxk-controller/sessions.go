@@ -1,17 +1,25 @@
 package main
 
 import (
+	"bufio"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
 
 // Browser sessions and the failed-login lockout — the same rules as the
-// agent's (nuxk-core/internal/auth), kept in memory: a restart logs out.
+// agent's (nuxk-core/internal/auth), kept in memory: a restart logs out,
+// except an update's — the sessions go to the next controller (Handoff),
+// as hashes only.
 const (
 	sessionCookie = "nuxk_ctl" // the agent's is nuxk_agent: no collision in one browser
 	sessionIdle   = 12 * time.Hour
@@ -23,9 +31,65 @@ const (
 type Sessions struct {
 	now func() time.Time
 
-	mu    sync.Mutex
-	live  map[string]sessionEntry
-	fails map[string]*failEntry
+	mu     sync.Mutex
+	live   map[string]sessionEntry
+	handed map[string]sessionEntry // from the controller before an update, by sha256(id)
+	fails  map[string]*failEntry
+}
+
+const handoffFresh = 15 * time.Minute
+
+func sessionHash(id string) string {
+	h := sha256.Sum256([]byte(id))
+	return hex.EncodeToString(h[:])
+}
+
+// Handoff writes the live sessions — their hashes, never the ids — for the
+// controller that replaces this one.
+func (s *Sessions) Handoff(path string) error {
+	s.mu.Lock()
+	var b strings.Builder
+	for id, e := range s.live {
+		fmt.Fprintf(&b, "%s %d %d\n", sessionHash(id), e.created.Unix(), e.seen.Unix())
+	}
+	s.mu.Unlock()
+	if err := os.WriteFile(path+".tmp", []byte(b.String()), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(path+".tmp", path)
+}
+
+// TakeHandoff reads what the controller before left, if it's fresh, and
+// removes it: a session shown by its id continues here.
+func (s *Sessions) TakeHandoff(path string) int {
+	st, err := os.Stat(path)
+	if err != nil {
+		return 0
+	}
+	defer os.Remove(path)
+	if s.now().Sub(st.ModTime()) > handoffFresh {
+		return 0
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return 0
+	}
+	defer f.Close()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n := 0
+	sc := bufio.NewScanner(f)
+	for sc.Scan() && len(s.handed) < maxSessions {
+		p := strings.Fields(sc.Text())
+		if len(p) != 3 || len(p[0]) != 64 {
+			continue
+		}
+		c, _ := strconv.ParseInt(p[1], 10, 64)
+		e, _ := strconv.ParseInt(p[2], 10, 64)
+		s.handed[p[0]] = sessionEntry{created: time.Unix(c, 0), seen: time.Unix(e, 0)}
+		n++
+	}
+	return n
 }
 
 type sessionEntry struct{ created, seen time.Time }
@@ -36,7 +100,7 @@ type failEntry struct {
 }
 
 func NewSessions() *Sessions {
-	return &Sessions{now: time.Now, live: map[string]sessionEntry{}, fails: map[string]*failEntry{}}
+	return &Sessions{now: time.Now, live: map[string]sessionEntry{}, handed: map[string]sessionEntry{}, fails: map[string]*failEntry{}}
 }
 
 func (s *Sessions) New() (string, error) {
@@ -74,6 +138,13 @@ func (s *Sessions) Valid(id string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	e, ok := s.live[id]
+	if !ok {
+		// handed over by the controller before an update
+		if h, was := s.handed[sessionHash(id)]; was {
+			delete(s.handed, sessionHash(id))
+			e, ok = h, true
+		}
+	}
 	now := s.now()
 	if !ok || now.Sub(e.seen) > sessionIdle {
 		delete(s.live, id)

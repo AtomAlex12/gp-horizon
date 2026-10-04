@@ -82,6 +82,8 @@ var Routes = []Route{
 	{"POST /api/v1/update", false, func(d Deps) http.HandlerFunc { return d.handleUpdateStart }},
 	{"POST /api/v1/update/check", false, func(d Deps) http.HandlerFunc { return d.handleUpdateCheck }},
 	{"PUT /api/v1/update/settings", false, func(d Deps) http.HandlerFunc { return d.handleUpdateSettings }},
+	{"GET /api/v1/components", false, func(d Deps) http.HandlerFunc { return d.handleComponents }},
+	{"POST /api/v1/components/{id}/install", false, func(d Deps) http.HandlerFunc { return d.handleComponentInstall }},
 	{"GET /api/v1/dns", false, func(d Deps) http.HandlerFunc { return d.handleDNS }},
 	{"PUT /api/v1/dns/settings", false, func(d Deps) http.HandlerFunc { return d.handleDNSSettings }},
 	{"POST /api/v1/dns/check", false, func(d Deps) http.HandlerFunc { return d.handleDNSCheck }},

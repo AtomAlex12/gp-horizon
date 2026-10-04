@@ -47,6 +47,7 @@ jobs:
       - run: sh engines/nuxk-smartdns/shim_test.sh
       - run: sh install/lite_test.sh
       - run: SH="busybox sh" sh install/lite_test.sh
+      - run: sh install/full_test.sh  # the Pi side: channel, the panel's request, rollback
       - run: sh -n install/nuxk-full.sh && busybox sh -n install/nuxk-lite.sh
       - name: router side with only a fresh Entware's tools (no nohup, a short od)
         run: docker run --rm -v "$PWD":/src -w /src debian:bookworm-slim sh install/router_test.sh

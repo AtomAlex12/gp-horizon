@@ -1,9 +1,20 @@
 <script lang="ts">
   // «Обновления»: this version, the newest release and what's in it, the
   // button that updates the router (its own `nuxk update` in the background),
-  // how the last update went. The Pi's controller is updated by a command:
-  // it runs in Docker and can't replace its own container.
-  import { upd, running, checkNow, saveSettings, startUpdate, newer, notesBlocks } from './update.svelte';
+  // how the last update went. Through the Pi's controller: «Обновить всё» —
+  // the router, then the controller (the Pi's helper swaps its container).
+  import {
+    upd,
+    running,
+    checkNow,
+    saveSettings,
+    startUpdate,
+    newer,
+    notesBlocks,
+    ctl,
+    ctlGoing,
+    updateAll,
+  } from './update.svelte';
   import { node } from './status.svelte';
   import { ago } from './ui';
 
@@ -11,8 +22,36 @@
   const run = $derived(s?.run ?? null);
   const latest = $derived(s?.latest ?? null);
   const full = $derived(node.via === 'controller');
-  const ctlVer = $derived(node.agent?.controller_version ?? '');
+  const cs = $derived(ctl.s);
+  const ctlVer = $derived(cs?.current ?? node.agent?.controller_version ?? '');
   const piBehind = $derived(full && !!latest && newer(latest.version, ctlVer));
+  const behind = $derived(!!latest && (!!s?.available || piBehind));
+  const all = $derived(cs?.all ?? null);
+  const showAll = $derived(!!all && (all.state !== 'done' || Date.now() / 1000 - all.at < 86400));
+  const ctlLog = $derived(cs?.run?.log ?? []);
+  // where «Обновить всё» is: each step as a chip
+  const stepChip = (which: 'router' | 'controller') => {
+    if (!all) return { label: '', chip: '' };
+    const order = { router: 0, controller: 1, done: 2 };
+    const at = order[all.step];
+    const mine = order[which];
+    if (at > mine) return { label: 'готово', chip: 'ok' };
+    if (at < mine) return { label: all.state === 'failed' ? 'не начато' : 'ждёт', chip: '' };
+    return all.state === 'failed' ? { label: 'не вышло', chip: 'warn' } : { label: 'обновляется', chip: 'acc' };
+  };
+
+  function goAll() {
+    if (!latest) return;
+    const parts: string[] = [];
+    if (s?.available) parts.push('роутер — его агент перезапустится, обход и туннели продолжат работать');
+    if (piBehind) parts.push('контроллер на Pi — эта страница пропадёт примерно на минуту и загрузится заново');
+    const ok = confirm(
+      `Обновить всё до ${latest.version}:\n\n• ${parts.join('\n• ')}\n\n` +
+        'Сначала роутер, потом контроллер. Файлы проверяются по подписи релиза; если новая версия не запустится, ' +
+        'вернётся прежняя.',
+    );
+    if (ok) void updateAll(latest.version);
+  }
   const notes = $derived(latest?.notes ? notesBlocks(latest.notes) : []);
   // the release page, only as GitHub's own link
   const page = $derived(latest?.url?.startsWith('https://github.com/') ? latest.url : '');
@@ -56,7 +95,7 @@
   <div class="card-head">
     <h2>Обновления</h2>
     {#if running()}<span class="chip acc">обновляется</span>
-    {:else if s?.available && latest}<span class="chip acc">доступна {latest.version}</span>
+    {:else if behind && latest}<span class="chip acc">доступна {latest.version}</span>
     {:else if s && latest}<span class="chip ok">последняя версия</span>{/if}
     <span class="spacer"></span>
     {#if s?.settings.check !== false}
@@ -104,7 +143,36 @@
       </div>
     {/if}
 
-    {#if s.available && latest && !running()}
+    {#if full && showAll && all}
+      <div class="run" class:bad={all.state === 'failed'}>
+        <div class="row">
+          <b>Обновить всё → {all.version}</b>
+          <span class="chip {all.state === 'done' ? 'ok' : all.state === 'failed' ? 'warn' : 'acc'}"
+            >{all.state === 'done' ? 'готово' : all.state === 'failed' ? 'не вышло' : 'идёт'}</span
+          >
+          <span class="spacer"></span>
+          <span class="hint">{ago(all.at)}</span>
+        </div>
+        <div class="row">
+          <span class="chip {stepChip('router').chip}">роутер · {stepChip('router').label}</span>
+          <span class="muted">→</span>
+          <span class="chip {stepChip('controller').chip}">контроллер на Pi · {stepChip('controller').label}</span>
+        </div>
+        <p class="hint">
+          {#if ctl.reloading}Контроллер обновился — загружаю новую страницу…
+          {:else if ctl.restarting && all.step === 'controller'}Контроллер перезапускается — страница вернётся примерно через минуту…
+          {:else}{all.message}{/if}
+        </p>
+        {#if all.step !== 'router' && ctlLog.length}
+          <details open={all.state === 'failed'}>
+            <summary class="hint">вывод обновления на Pi</summary>
+            <pre class="log mono" use:toEnd={ctlLog}>{ctlLog.join('\n')}</pre>
+          </details>
+        {/if}
+      </div>
+    {/if}
+
+    {#if behind && latest && !running() && !ctlGoing()}
       {#if notes.length}
         <div class="notes">
           {#each notes as n, i (i)}
@@ -115,22 +183,37 @@
         </div>
       {/if}
       <div class="row top">
-        <button onclick={go} disabled={!s.can_apply || !!upd.busy}>
-          {upd.busy === 'start' ? 'Запускаю…' : full ? `Обновить роутер до ${latest.version}` : `Обновить до ${latest.version}`}
-        </button>
+        {#if full}
+          <button
+            onclick={goAll}
+            disabled={!!upd.busy || !!ctl.busy || (piBehind && !cs?.can_apply) || (s.available && !s.can_apply)}
+          >
+            {ctl.busy === 'all' ? 'Запускаю…' : `Обновить всё до ${latest.version}`}
+          </button>
+          {#if s.available}
+            <button class="ghost" onclick={go} disabled={!s.can_apply || !!upd.busy || !!ctl.busy}>
+              {upd.busy === 'start' ? 'Запускаю…' : 'Только роутер'}
+            </button>
+          {/if}
+        {:else}
+          <button onclick={go} disabled={!s.can_apply || !!upd.busy}>
+            {upd.busy === 'start' ? 'Запускаю…' : `Обновить до ${latest.version}`}
+          </button>
+        {/if}
         {#if page}<a class="hint" href={page} target="_blank" rel="noopener noreferrer">что нового на GitHub</a>{/if}
       </div>
       {#if !s.can_apply && s.cannot}<p class="hint">{s.cannot}</p>{/if}
     {/if}
 
-    {#if piBehind && latest}
+    {#if piBehind && latest && cs && !cs.can_apply}
       <p class="hint top">
-        Контроллер на Pi ({ctlVer}) обновляется командой на Pi, не кнопкой — он в Docker и не может заменить свой
-        контейнер: <span class="mono">sh ~/nuxk/nuxk-full.sh update</span>. Она же предложит обновить роутер.
+        Контроллер на Pi ({ctlVer}) пока обновляется командой на Pi:
+        <span class="mono">sh ~/nuxk/nuxk-full.sh update</span>. {cs.cannot}
       </p>
     {/if}
 
     {#if upd.err}<p class="err-text">{upd.err}</p>{/if}
+    {#if ctl.err}<p class="err-text">{ctl.err}</p>{/if}
 
     <div class="settings">
       <label>

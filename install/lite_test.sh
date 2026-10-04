@@ -205,7 +205,13 @@ check "rerun: signature checked by the agent" "$(has "$ROOT/out" 'подпись
 
 # 4. WARP and VLESS by name; usque sits on OpkgTun0, someone's own VPN on OpkgTun1
 mkdir -p "$ROOT/ndm" && echo usque >"$ROOT/ndm/OpkgTun0" && echo my-vpn >"$ROOT/ndm/OpkgTun1"
-$SH "$(f /opt/bin/nuxk)" warp --yes >"$ROOT/out" 2>&1 || { cat "$ROOT/out"; exit 1; }
+# WARP the way the panel adds it: in the background, reporting into a file
+NUXK_STATUS="$ROOT/component-run" NUXK_TASK=warp NUXK_STARTED=1700000000 \
+    $SH "$(f /opt/bin/nuxk)" warp --yes >"$ROOT/out" 2>&1 || { cat "$ROOT/out"; exit 1; }
+check "warp from the panel: reported" "$(grep -c -e '^state done$' -e '^task warp$' -e '^message WARP установлен *$' "$ROOT/component-run")" "3"
+check "warp from the panel: no NUXK_ vars to the agent" "$(cat "$(f /opt/var/run/nuxk.running.env)")" ""
+NUXK_STATUS="$ROOT/component-run" NUXK_TASK=nfqws2 $SH "$(f /opt/bin/nuxk)" nfqws2 --yes >"$ROOT/out" 2>&1 || { cat "$ROOT/out"; exit 1; }
+check "nfqws2: already there, said to the panel" "$(grep -c -e '^state done$' -e '^message nfqws2-keenetic .* уже стоит *$' "$ROOT/component-run")" "2"
 check "warp: wired" "$(has "$C" 'ENGINE_USQUE="/opt/etc/init.d/S51usque"')/$(has "$C" 'PLANE_IFACE_WARP="OpkgTun0"')" "1/1"
 check "warp: hosts desynced" "$(has "$(f /opt/etc/nfqws2/lists/user.list)" 'cloudflareclient.com')" "1"
 $SH "$(f /opt/bin/nuxk)" vless --yes >"$ROOT/out" 2>&1 || { cat "$ROOT/out"; exit 1; }

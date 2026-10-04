@@ -91,6 +91,8 @@ func TestOpenAPISchemasCoverJSONFields(t *testing.T) {
 		"UpdateRelease":  update.Release{},
 		"UpdateRun":      update.Run{},
 		"UpdateStatus":   update.Status{},
+		"Component":      update.Component{},
+		"Components":     update.Components{},
 		"DNSSettings":    dns.Settings{},
 		"DNSResolver":    dns.Resolver{},
 		"DNSPathStat":    dns.PathStat{},

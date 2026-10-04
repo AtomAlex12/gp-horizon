@@ -539,6 +539,47 @@ paths:
         "400": { $ref: "#/components/responses/Error" }
         "401": { $ref: "#/components/responses/Error" }
 
+  /api/v1/components:
+    get:
+      tags: [update]
+      operationId: components
+      summary: WARP, VLESS, SmartDNS, nfqws2 — which are on the router, which the panel can add
+      responses:
+        "200":
+          description: the components and the last install started from the panel
+          content: { application/json: { schema: { $ref: "#/components/schemas/Components" } } }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /api/v1/components/{id}/install:
+    post:
+      tags: [update]
+      operationId: installComponent
+      summary: Add a component to the router — its own `nuxk <component> --yes`, in the background
+      description: >
+        The same as from SSH (`nuxk nfqws2|warp|vless|dns`): the files of
+        this release, checked against its SHA256SUMS; WARP and VLESS create
+        a Keenetic interface and save the router's configuration (each
+        component's `confirm` says what it does). The agent restarts on the
+        way: the panel follows the run in GET /components. One run at a
+        time, updates included.
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, enum: [nfqws2, warp, vless, smartdns] } }
+      responses:
+        "202":
+          description: started; the run is in `run`
+          content: { application/json: { schema: { $ref: "#/components/schemas/Components" } } }
+        "401": { $ref: "#/components/responses/Error" }
+        "404":
+          description: "unknown_component"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "409":
+          description: "component_installed: it's there already; update_busy: an update or an install is going"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+        "503":
+          description: "component_unavailable: no `nuxk` command here, not a router, or not for this box (the reason in the message)"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
   /api/v1/dns:
     get:
       tags: [dns]
@@ -1055,12 +1096,34 @@ components:
       required: [state, from, to, started_at, at, log]
       properties:
         state: { type: string, enum: [running, done, failed, rolled_back, interrupted] }
+        task: { type: string, description: "a component install: its id" }
         from: { type: string }
         to: { type: string }
         message: { type: string }
         started_at: { type: integer }
         at: { type: integer, description: the script's last report }
         log: { type: array, items: { type: string }, description: "the last lines of the update's output" }
+
+    Component:
+      type: object
+      required: [id, name, about, confirm, installed, can_install]
+      properties:
+        id: { type: string, enum: [nfqws2, warp, vless, smartdns] }
+        name: { type: string }
+        about: { type: string, description: "what it's for" }
+        confirm: { type: string, description: "what installing does to the router — for the confirmation" }
+        installed: { type: boolean }
+        version: { type: string }
+        can_install: { type: boolean }
+        cannot: { type: string, description: "why it can't be added (when it can't)" }
+
+    Components:
+      type: object
+      required: [items, run]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/Component" } }
+        run:
+          oneOf: [{ $ref: "#/components/schemas/UpdateRun" }, { type: "null" }]
 
     UpdateStatus:
       type: object
