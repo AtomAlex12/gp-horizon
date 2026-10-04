@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -56,7 +57,7 @@ func bigZone() []string {
 }
 
 // dohServer answers RFC 8484 POSTs from zone; it counts the questions.
-func dohServer(t *testing.T) (*httptest.Server, *int) {
+func dohServer(t *testing.T) (*httptest.Server, func() int) {
 	t.Helper()
 	n := 0
 	var mu sync.Mutex
@@ -82,7 +83,11 @@ func dohServer(t *testing.T) (*httptest.Server, *int) {
 		_, _ = w.Write(respond(q, ips...))
 	}))
 	t.Cleanup(srv.Close)
-	return srv, &n
+	return srv, func() int {
+		mu.Lock()
+		defer mu.Unlock()
+		return n
+	}
 }
 
 type failRT struct{}
@@ -147,7 +152,9 @@ func (m memStore) SaveJSON(n string, v any) error { m[n] = v; return nil }
 
 func newService(t *testing.T, srv *httptest.Server, o Options) *Service {
 	t.Helper()
-	o.Listen = freeAddr(t)
+	if o.Listen == "" {
+		o.Listen = freeAddr(t)
+	}
 	o.Resolvers = []Resolver{{ID: "t", Name: "Test", URL: srv.URL + "/dns-query"}}
 	if o.Transport == nil {
 		o.Transport = func(p Path) http.RoundTripper {
@@ -164,10 +171,18 @@ func newService(t *testing.T, srv *httptest.Server, o Options) *Service {
 
 func ask(t *testing.T, network, server, name string) []byte {
 	t.Helper()
+	resp, err := askErr(network, server, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp
+}
+
+func askErr(network, server, name string) ([]byte, error) {
 	q, _ := Query(0x4242, name, TypeA)
 	c, err := net.DialTimeout(network, server, 2*time.Second)
 	if err != nil {
-		t.Fatal(err)
+		return nil, err
 	}
 	defer c.Close()
 	_ = c.SetDeadline(time.Now().Add(5 * time.Second))
@@ -175,29 +190,25 @@ func ask(t *testing.T, network, server, name string) []byte {
 		q = append(binary.BigEndian.AppendUint16(nil, uint16(len(q))), q...)
 	}
 	if _, err := c.Write(q); err != nil {
-		t.Fatal(err)
+		return nil, err
 	}
 	if network == "tcp" {
 		var l [2]byte
 		if _, err := io.ReadFull(c, l[:]); err != nil {
-			t.Fatal(err)
+			return nil, err
 		}
 		resp := make([]byte, binary.BigEndian.Uint16(l[:]))
-		if _, err := io.ReadFull(c, resp); err != nil {
-			t.Fatal(err)
-		}
-		return resp
+		_, err := io.ReadFull(c, resp)
+		return resp, err
 	}
 	buf := make([]byte, 4096)
 	n, err := c.Read(buf)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return buf[:n]
+	return buf[:n], err
 }
 
 // A query in over UDP or TCP, out as DoH — through the tunnel if it's up,
-// straight when it isn't — and the asker's ID back in the answer.
+// straight when it isn't — and the asker's ID back in the answer (asked
+// again: from the cache).
 func TestForwarder(t *testing.T) {
 	srv, n := dohServer(t)
 	s := newService(t, srv, Options{Paths: func() []Path { return []Path{{Name: "vless", Iface: "opkgtun1"}} }})
@@ -212,8 +223,8 @@ func TestForwarder(t *testing.T) {
 		}
 	}
 	st := s.Status()
-	if st.Queries != 2 || st.LastPath != PathDirect || *n != 2 {
-		t.Fatalf("status %+v, doh asked %d", st, *n)
+	if st.Queries != 2 || st.LastPath != PathDirect || n() != 1 || st.Cache.Hits != 1 {
+		t.Fatalf("status %+v, doh asked %d (the second from the cache)", st, n())
 	}
 	var vless PathStat
 	for _, p := range st.Paths {
@@ -221,7 +232,7 @@ func TestForwarder(t *testing.T) {
 			vless = p
 		}
 	}
-	if !vless.Up || vless.Failed != 2 || !strings.Contains(vless.LastErr, "tunnel down") {
+	if !vless.Up || vless.Failed != 1 || !strings.Contains(vless.LastErr, "tunnel down") {
 		t.Fatalf("the tunnel was tried first: %+v", vless)
 	}
 
@@ -256,7 +267,7 @@ func TestServFailWhenNothingAnswers(t *testing.T) {
 // fakeProxy stands for the router's DNS proxy: it answers cloudflare.com
 // itself and passes nuxk's test question on to the forwarder, as a proxy with
 // nuxk among its servers does. dead: it doesn't answer at all.
-func fakeProxy(t *testing.T, forwarder func() string, dead *bool) string {
+func fakeProxy(t *testing.T, forwarder string, dead *atomic.Bool) string {
 	t.Helper()
 	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
@@ -271,13 +282,13 @@ func fakeProxy(t *testing.T, forwarder func() string, dead *bool) string {
 				return
 			}
 			q := append([]byte{}, buf[:n]...)
-			if *dead {
+			if dead.Load() {
 				continue
 			}
 			name := QName(q)
 			var resp []byte
 			if strings.HasSuffix(name, ".nuxk-check.example.com") {
-				if c, err := net.Dial("udp", forwarder()); err == nil {
+				if c, err := net.Dial("udp", forwarder); err == nil {
 					_ = c.SetDeadline(time.Now().Add(3 * time.Second))
 					_, _ = c.Write(q)
 					b := make([]byte, 4096)
@@ -299,11 +310,11 @@ func fakeProxy(t *testing.T, forwarder func() string, dead *bool) string {
 
 func TestEnableAttachesAndChecks(t *testing.T) {
 	srv, _ := dohServer(t)
-	dead := false
-	var s *Service
+	var dead atomic.Bool
 	h := &fakeHook{}
-	proxy := fakeProxy(t, func() string { return s.o.Listen }, &dead)
-	s = newService(t, srv, Options{Hook: h, RouterDNS: proxy})
+	addr := freeAddr(t)
+	proxy := fakeProxy(t, addr, &dead)
+	s := newService(t, srv, Options{Listen: addr, Hook: h, RouterDNS: proxy})
 	st, err := s.SetSettings(context.Background(), Settings{Enabled: true, Via: ViaAuto})
 	if err != nil {
 		t.Fatal(err)
@@ -321,11 +332,11 @@ func TestEnableAttachesAndChecks(t *testing.T) {
 // it was.
 func TestEnableRevertsWhenRouterDNSBreaks(t *testing.T) {
 	srv, _ := dohServer(t)
-	dead := false
-	var s *Service
-	h := &fakeHook{onAtt: func() { dead = true }}
-	proxy := fakeProxy(t, func() string { return s.o.Listen }, &dead)
-	s = newService(t, srv, Options{Hook: h, RouterDNS: proxy})
+	var dead atomic.Bool
+	h := &fakeHook{onAtt: func() { dead.Store(true) }}
+	addr := freeAddr(t)
+	proxy := fakeProxy(t, addr, &dead)
+	s := newService(t, srv, Options{Listen: addr, Hook: h, RouterDNS: proxy})
 	st, err := s.SetSettings(context.Background(), Settings{Enabled: true})
 	if err == nil || !strings.Contains(err.Error(), "отключил обратно") {
 		t.Fatalf("err %v", err)
@@ -357,14 +368,13 @@ func TestEnableRefuses(t *testing.T) {
 // again: added back.
 func TestSuspendAndResume(t *testing.T) {
 	srv, _ := dohServer(t)
-	down := false
+	var down, dead atomic.Bool
 	h := &fakeHook{}
-	dead := false
-	var s *Service
-	proxy := fakeProxy(t, func() string { return s.o.Listen }, &dead)
-	s = newService(t, srv, Options{Hook: h, RouterDNS: proxy, Transport: func(Path) http.RoundTripper {
+	addr := freeAddr(t)
+	proxy := fakeProxy(t, addr, &dead)
+	s := newService(t, srv, Options{Listen: addr, Hook: h, RouterDNS: proxy, Transport: func(Path) http.RoundTripper {
 		return rtFunc(func(r *http.Request) (*http.Response, error) {
-			if down {
+			if down.Load() {
 				return nil, errors.New("down")
 			}
 			return srv.Client().Transport.RoundTrip(r)
@@ -374,14 +384,14 @@ func TestSuspendAndResume(t *testing.T) {
 	if _, err := s.SetSettings(ctx, Settings{Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
-	down = true
+	down.Store(true)
 	for i := 0; i < 3; i++ {
 		s.tick(ctx)
 	}
 	if st := s.Status(); st.Attached || !st.Suspended || !st.Settings.Enabled || st.Error == "" {
 		t.Fatalf("suspended: %+v", st)
 	}
-	down = false
+	down.Store(false)
 	s.tick(ctx)
 	if st := s.Status(); !st.Attached || st.Suspended || st.Error != "" {
 		t.Fatalf("resumed: %+v", st)
