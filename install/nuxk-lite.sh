@@ -145,6 +145,7 @@ ask() {
     fi
     hint="[y/N]"
     [ "$2" = y ] && hint="[Y/n]"
+    drain
     printf '\n  %s?%s %s %s%s%s ' "$A" "$N" "$1" "$D" "$hint" "$N"
     read -r ans </dev/tty || ans=""
     case "$ans" in
@@ -152,6 +153,18 @@ ask() {
     [NnНн]*) return 1 ;;
     *) [ "$2" = y ] ;;
     esac
+}
+
+# drain — drops what was typed before a question was asked: a blank line
+# pasted along with the command (or a CRLF line end turned into two) would
+# otherwise answer it with the default. Without stty: nothing to do.
+drain() {
+    command -v stty >/dev/null 2>&1 || return 0
+    tty_mode=$(stty -g </dev/tty 2>/dev/null) || return 0
+    stty -icanon min 0 time 0 </dev/tty 2>/dev/null || return 0
+    dd bs=512 count=16 </dev/tty >/dev/null 2>&1
+    stty "$tty_mode" </dev/tty 2>/dev/null || stty sane </dev/tty 2>/dev/null
+    return 0
 }
 
 # confirm QUESTION — for an action the person asked for by name (nuxk warp,
@@ -304,9 +317,10 @@ survey() {
     *mips64*) ARCH="" ;;
     *mipsel* | *mipsle*) ARCH=mipsel ;;
     mips)
-        # uname says "mips" on little-endian MT7621 too: ELF EI_DATA, 1 = LE
-        case "$(od -An -t u1 -j 5 -N 1 /bin/busybox 2>/dev/null | tr -d ' ')" in
-        1) ARCH=mipsel ;; 2) ARCH=mips ;; *) ARCH="" ;;
+        # uname says "mips" on little-endian MT7621 too: ELF EI_DATA, 1 = LE.
+        # dd, not od: KeeneticOS's BusyBox od has no -A/-t/-j/-N
+        case "$(dd if=/bin/busybox bs=1 skip=5 count=1 2>/dev/null | tr '\001\002' 'lb')" in
+        l) ARCH=mipsel ;; b) ARCH=mips ;; *) ARCH="" ;;
         esac
         ;;
     *mips*) ARCH=mips ;;
@@ -614,7 +628,15 @@ wire() {
     fi
 }
 
-token() { head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n'; }
+# token — 128 random bits as 32 hex digits. KeeneticOS 5.01's BusyBox od has
+# no -A/-t: then the kernel's random UUID (122 random bits), then md5sum.
+token() {
+    t=$(head -c 16 /dev/urandom 2>/dev/null | od -An -tx1 2>/dev/null | tr -d ' \n')
+    hex32 "$t" || t=$(tr -d '\n-' </proc/sys/kernel/random/uuid 2>/dev/null)
+    hex32 "$t" || t=$(head -c 32 /dev/urandom 2>/dev/null | md5sum 2>/dev/null | cut -c1-32)
+    hex32 "$t" && echo "$t"
+}
+hex32() { [ ${#1} -eq 32 ] && case "$1" in *[!0-9a-f]*) false ;; esac; }
 
 do_config() {
     step "Конфиг $P_CONF"
@@ -694,8 +716,11 @@ seed_plane() {
 do_start() {
     step "Запуск и проверка"
     seed_plane
-    tok=$(conf_get API_TOKEN)
-    [ -n "$tok" ] || wire API_TOKEN "$(token)"
+    if [ -z "$(conf_get API_TOKEN)" ]; then
+        tok=$(token)
+        if [ -n "$tok" ]; then wire API_TOKEN "$tok"
+        else warn "не получилось создать API_TOKEN: контроллер на Pi не подключится, вход в панель работает"; fi
+    fi
     report running "Перезапускаю агент и проверяю, что он отвечает"
     if run "env $AGENT_ENV '$R$P_INIT' restart" && healthy; then
         ok "nuxk-core отвечает на http://$host:${port:-4141}"

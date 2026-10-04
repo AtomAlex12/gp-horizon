@@ -138,6 +138,12 @@ esac
 exec "$REAL_CURL" "\$@"
 EOF
 printf '#!/bin/sh\nexec "%s" -c "import zipfile,sys; sys.stdout.buffer.write(zipfile.ZipFile(sys.argv[2]).read(sys.argv[3]))" "$@"\n' "$PY" >"$BIN/unzip"
+# KeeneticOS 5.01's BusyBox od knows neither -A nor -t: nothing may rest on it
+cat >"$BIN/od" <<'EOF'
+#!/bin/sh
+echo "od: invalid option -- 'A'" >&2
+exit 1
+EOF
 chmod +x "$BIN"/*
 export PATH="$BIN:$PATH"
 export NUXK_BASE_URL=$(furl "$REL")
@@ -180,6 +186,8 @@ check "conf: no WARP" "$(has "$C" 'ENGINE_USQUE=""')" "1"
 check "conf: plan only" "$(has "$C" '^PLANE_APPLY="0"')" "1"
 TOKEN=$(sed -n 's/^API_TOKEN="\(.*\)"/\1/p' "$C")
 check "conf: a 128-bit token" "${#TOKEN}" "32"
+check "conf: the token is hex" "$(echo "$TOKEN" | grep -c '^[0-9a-f]*$')" "1"
+check "no od errors on screen" "$(has "$ROOT/out" 'invalid option')" "0"
 check "plane: DPI from user.list" "$(has "$(f /opt/etc/nuxk/plane.json)" '"youtube.com", "rutracker.org"')" "1"
 check "plane: comments left out" "$(has "$(f /opt/etc/nuxk/plane.json)" 'mine')" "0"
 check "started" "$(has "$ROOT/out" 'nuxk-core отвечает')" "1"
