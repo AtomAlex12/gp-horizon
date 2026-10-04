@@ -34,6 +34,7 @@ web-check:
 install-check:
 	sh engines/nuxk-nfqws2/shim_test.sh
 	sh engines/nuxk-xray/shim_test.sh
+	sh engines/nuxk-smartdns/shim_test.sh
 	sh install/lite_test.sh
 
 controller-check:
@@ -46,7 +47,7 @@ release: version-check
 	rm -rf $(OUT) && mkdir -p $(OUT)
 	cp nuxk-core/dist/nuxk-core-* $(OUT)/
 	# router files next to the agent: its init script and the engine adapters
-	cp nuxk-core/fs/opt/etc/init.d/S99nuxk-core engines/nuxk-nfqws2/S51nfqws2-nuxk engines/nuxk-xray/S52xray-nuxk $(OUT)/
+	cp nuxk-core/fs/opt/etc/init.d/S99nuxk-core engines/nuxk-nfqws2/S51nfqws2-nuxk engines/nuxk-xray/S52xray-nuxk engines/nuxk-smartdns/S53smartdns-nuxk $(OUT)/
 	# the installers, stamped with this release (they download from it)
 	for s in nuxk-lite nuxk-full; do \
 	  sed 's/^VERSION="@VERSION@"/VERSION="$(VERSION)"/' install/$$s.sh > $(OUT)/$$s.sh || exit 1; \

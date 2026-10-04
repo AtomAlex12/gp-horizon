@@ -11,12 +11,14 @@
 #                     the old version back by itself if the new one won't start
 #   nuxk rollback     the version before the last update, back
 #   nuxk warp         add WARP (usque)       nuxk vless   add VLESS (xray)
+#   nuxk dns          add SmartDNS (beta): the panel's «DNS» can use it instead
+#                     of nuxk's own DNS forwarder
 #   nuxk uninstall    remove nuxk; the router's own settings stay
 #
 # Everything comes prebuilt from the GitHub release and is checked against
 # its SHA256SUMS, and SHA256SUMS against the release signature — by the agent
-# already on the router; xray comes from XTLS's own release, pinned by hash
-# below. Nothing is compiled here.
+# already on the router; xray comes from XTLS's own release and SmartDNS from
+# pymumu's, each pinned by hash below. Nothing is compiled here.
 #
 # Options: --yes (defaults without questions), --with-warp, --with-vless.
 # Env: NUXK_VERSION, NUXK_REPO, NUXK_BASE_URL (a mirror of the release),
@@ -42,6 +44,19 @@ xray_asset() { # arch → "zip binary sha256"
 XRAY_BASE_URL="${XRAY_BASE_URL:-https://github.com/XTLS/Xray-core/releases/download}"
 XRAY_MARK="nuxk-vless" # description of the OpkgTun nuxk creates
 
+# SmartDNS (beta): the official release (pymumu/smartdns), its static binary
+# per router arch, pinned by SHA-256. "none": no pinned build — not installed.
+SMARTDNS_VERSION="Release48.4"
+smartdns_asset() { # arch → "file sha256"
+    case "$1" in
+    aarch64) echo "smartdns-aarch64 1208c5562046c71913c3df88ad4e3ed0a3410161ff77ce4a60cdd63936bf1b27" ;;
+    mips) echo "smartdns-mips 47ccd57e43fd8fe68e9b5a65cac865dff0ca8d4f1a09ab5d3a9b744190036b3d" ;;
+    mipsel) echo "smartdns-mipsel 02a3390b43af092f6bbf9312988d5f5094858e24f08bca70fab63eec11f90d11" ;;
+    x86_64) echo "smartdns-x86_64 none" ;;
+    esac
+}
+SMARTDNS_BASE_URL="${SMARTDNS_BASE_URL:-https://github.com/pymumu/smartdns/releases/download}"
+
 # router paths
 P_BIN=/opt/usr/bin/nuxk-core
 P_INIT=/opt/etc/init.d/S99nuxk-core
@@ -57,6 +72,9 @@ P_NFQ_FEED=/opt/etc/opkg/nfqws2-keenetic.conf
 P_USQUE=/opt/etc/init.d/S51usque
 P_XRAY=/opt/sbin/xray
 P_XRAY_INIT=/opt/etc/init.d/S52xray-nuxk
+P_SMARTDNS=/opt/sbin/smartdns
+P_SMARTDNS_INIT=/opt/etc/init.d/S53smartdns-nuxk
+P_SMARTDNS_DIR=/opt/etc/smartdns-nuxk
 P_PREV=/opt/var/lib/nuxk/prev # the version before the last update: agent, init, adapter, web
 NFQ_FEED="src/gz nfqws2-keenetic https://nfqws.github.io/nfqws2-keenetic/all"
 WARP_HOSTS="cloudflareclient.com" # desynced before usque registers (plane.WarpDomains)
@@ -324,6 +342,17 @@ survey() {
     XRAY_READY=0
     [ -n "$XRAY_VER" ] && [ -x "$R$P_XRAY_INIT" ] && XRAY_READY=1
     XRAY_IFACE=""
+    SMARTDNS_VER=""
+    [ -x "$R$P_SMARTDNS" ] && [ -x "$R$P_SMARTDNS_INIT" ] && SMARTDNS_VER=$(cat "$R$P_SMARTDNS_DIR/.release" 2>/dev/null)
+    [ -x "$R$P_SMARTDNS" ] && [ -x "$R$P_SMARTDNS_INIT" ] && [ -z "$SMARTDNS_VER" ] && SMARTDNS_VER="?"
+}
+
+# smartdns_ok — a pinned SmartDNS build for this arch (tests bring their own)
+smartdns_ok() {
+    set -- $(smartdns_asset "$ARCH")
+    [ -n "${1:-}" ] || return 1
+    [ "${2:-none}" != none ] && return 0
+    [ -n "$R" ] && [ -n "${SMARTDNS_TEST_SUM:-}" ]
 }
 
 # xray_iface — the OpkgTun for VLESS: the one nuxk made before (description
@@ -364,6 +393,7 @@ do_nfqws2() {
 core_files() {
     echo "nuxk-core-$ARCH nuxk-web-lite-$VERSION.tar.gz S99nuxk-core S51nfqws2-nuxk nuxk-lite.sh"
     [ -x "$R$P_XRAY_INIT" ] && echo S52xray-nuxk
+    [ -x "$R$P_SMARTDNS_INIT" ] && echo S53smartdns-nuxk
     return 0
 }
 
@@ -376,6 +406,7 @@ keep_prev() {
     [ -f "$R$P_INIT" ] && cp -f "$R$P_INIT" "$R$P_PREV/S99nuxk-core"
     [ -f "$R$P_SHIM" ] && cp -f "$R$P_SHIM" "$R$P_PREV/S51nfqws2-nuxk"
     [ -f "$R$P_XRAY_INIT" ] && cp -f "$R$P_XRAY_INIT" "$R$P_PREV/S52xray-nuxk"
+    [ -f "$R$P_SMARTDNS_INIT" ] && cp -f "$R$P_SMARTDNS_INIT" "$R$P_PREV/S53smartdns-nuxk"
     [ -d "$R$P_WEB" ] && cp -R "$R$P_WEB" "$R$P_PREV/web"
     return 0
 }
@@ -411,7 +442,7 @@ rollback() {
     "$R$P_INIT" stop >/dev/null 2>&1
     dns_detach
     cp -f "$R$P_PREV/nuxk-core" "$R$P_BIN" && chmod 755 "$R$P_BIN" || return 1
-    for f in "S99nuxk-core:$P_INIT" "S51nfqws2-nuxk:$P_SHIM" "S52xray-nuxk:$P_XRAY_INIT"; do
+    for f in "S99nuxk-core:$P_INIT" "S51nfqws2-nuxk:$P_SHIM" "S52xray-nuxk:$P_XRAY_INIT" "S53smartdns-nuxk:$P_SMARTDNS_INIT"; do
         [ -f "$R$P_PREV/${f%%:*}" ] && cp -f "$R$P_PREV/${f%%:*}" "$R${f#*:}" && chmod 755 "$R${f#*:}"
     done
     [ -d "$R$P_PREV/web" ] && rm -rf "$R$P_WEB" && cp -R "$R$P_PREV/web" "$R$P_WEB"
@@ -466,6 +497,7 @@ do_core() {
     set -- "S99nuxk-core:$P_INIT" "S51nfqws2-nuxk:$P_SHIM" "nuxk-lite.sh:$P_SELF"
     xa=""
     [ -x "$R$P_XRAY_INIT" ] && [ -f "$TMP/S52xray-nuxk" ] && set -- "$@" "S52xray-nuxk:$P_XRAY_INIT" && xa=" · адаптер xray"
+    [ -x "$R$P_SMARTDNS_INIT" ] && [ -f "$TMP/S53smartdns-nuxk" ] && set -- "$@" "S53smartdns-nuxk:$P_SMARTDNS_INIT" && xa="$xa · адаптер SmartDNS"
     for f in "$@"; do
         cp -f "$TMP/${f%%:*}" "$R${f#*:}" && chmod 755 "$R${f#*:}" || undo "не записался ${f#*:}"
     done
@@ -540,6 +572,34 @@ do_xray() {
     wire "ENGINE_XRAY" "$P_XRAY_INIT"
     wire "PLANE_IFACE_VLESS" "$tun"
     note "сервер задаётся в панели: xray (VLESS) → «Сервер VLESS» — ссылка vless:// или подписка 3x-ui"
+    return 0
+}
+
+do_smartdns() {
+    step "SmartDNS ($SMARTDNS_VERSION, бета)"
+    set -- $(smartdns_asset "$ARCH")
+    file=$1 ssum=$2
+    # tests serve their own binary; only under a test root
+    [ -n "$R" ] && [ -n "${SMARTDNS_TEST_SUM:-}" ] && ssum=$SMARTDNS_TEST_SUM
+    [ "$ssum" != none ] || die "для $ARCH нет закреплённой сборки SmartDNS"
+    fetch S53smartdns-nuxk
+    get "$SMARTDNS_BASE_URL/$SMARTDNS_VERSION/$file" "$TMP/$file"
+    [ "$(sha256 "$TMP/$file")" = "$ssum" ] || die "хеш SmartDNS не совпал с закреплённым — файл не тот, что выпустил автор SmartDNS; ставить не буду"
+    note "↓ $file · $(size_mb "$TMP/$file") · sha256 ✓ (pymumu/smartdns)"
+    chmod 755 "$TMP/$file"
+    "$TMP/$file" -v 2>/dev/null | grep -q '^smartdns' || die "SmartDNS не запускается на этом роутере ($ARCH_RAW)"
+    # running (chosen in the panel): stopped for the swap, back after
+    was_on=""
+    [ -f "$R$P_SMARTDNS_DIR/on" ] && was_on=1
+    [ -x "$R$P_SMARTDNS_INIT" ] && "$R$P_SMARTDNS_INIT" stop >/dev/null 2>&1
+    mkdir -p "$R$(dirname $P_SMARTDNS)" "$R$(dirname $P_SMARTDNS_INIT)" "$R$P_SMARTDNS_DIR"
+    mv -f "$TMP/$file" "$R$P_SMARTDNS" || die "не записался $P_SMARTDNS"
+    cp -f "$TMP/S53smartdns-nuxk" "$R$P_SMARTDNS_INIT" && chmod 755 "$R$P_SMARTDNS_INIT" || die "не записался $P_SMARTDNS_INIT"
+    echo "$SMARTDNS_VERSION" >"$R$P_SMARTDNS_DIR/.release"
+    [ -n "$was_on" ] && "$R$P_SMARTDNS_INIT" start >/dev/null 2>&1
+    ok "SmartDNS $SMARTDNS_VERSION → $P_SMARTDNS"
+    SMARTDNS_VER=$SMARTDNS_VERSION
+    note "включается в панели: «DNS» → «Чем отвечать» → SmartDNS. Пока не выбран — не запускается"
     return 0
 }
 
@@ -669,7 +729,7 @@ finish() {
     printf '  %s✓ nuxk Horizon %s на роутере%s\n' "$G$B" "$VERSION" "$N"
     printf '    %sПанель%s   http://%s\n' "$B" "$N" "${listen:-${LAN_IP:-роутер}:4141}"
     printf '    %sВход%s     root и пароль Entware (как для SSH)\n' "$B" "$N"
-    printf '    %sКоманды%s  nuxk · nuxk update · nuxk rollback · nuxk warp · nuxk vless · nuxk uninstall\n' "$B" "$N"
+    printf '    %sКоманды%s  nuxk · nuxk update · nuxk rollback · nuxk warp · nuxk vless · nuxk dns · nuxk uninstall\n' "$B" "$N"
     [ "$(conf_get PLANE_APPLY)" = 1 ] || note "Маршрутизация списков выключена (режим плана), пока в $P_CONF не поставить PLANE_APPLY=\"1\"."
     note "Есть Raspberry Pi? Полная версия (история, подбор стратегий): nuxk-full.sh — см. README."
     printf '\n'
@@ -760,15 +820,21 @@ mode_update() {
     UPDATING=1
     report running "Скачиваю и проверяю файлы $VERSION"
     STEPS=2
-    [ "$XRAY_READY" = 1 ] && [ "$XRAY_VER" != "$XRAY_VERSION" ] && STEPS=3
+    want_x="" want_s=""
+    [ "$XRAY_READY" = 1 ] && [ "$XRAY_VER" != "$XRAY_VERSION" ] && want_x=1 && STEPS=$((STEPS + 1))
+    [ -n "$SMARTDNS_VER" ] && [ "$SMARTDNS_VER" != "$SMARTDNS_VERSION" ] && smartdns_ok && want_s=1 && STEPS=$((STEPS + 1))
     printf '\n'
     row do "nuxk-core" "$CORE_VER → $VERSION"
     # shellcheck disable=SC2046
     prefetch $(core_files)
     do_core
-    if [ "$STEPS" = 3 ]; then
+    if [ -n "$want_x" ]; then
         report running "Обновляю xray до $XRAY_VERSION"
         do_xray
+    fi
+    if [ -n "$want_s" ]; then
+        report running "Обновляю SmartDNS до $SMARTDNS_VERSION"
+        do_smartdns
     fi
     do_start
     finish
@@ -788,7 +854,7 @@ mode_rollback() {
     ok "nuxk-core $pv отвечает; обновиться снова — nuxk update"
 }
 
-mode_add() { # add warp|vless
+mode_add() { # add warp|vless|dns
     survey
     [ -n "$CORE_VER" ] || die "сначала поставьте nuxk: запустите без аргументов"
     STEPS=2
@@ -805,6 +871,12 @@ mode_add() { # add warp|vless
         confirm "Поставить VLESS (xray $XRAY_VERSION)? Создаст в Keenetic интерфейс $(xray_iface) и сохранит конфигурацию роутера." || die "отменено"
         do_xray
         ;;
+    dns)
+        smartdns_ok || die "для $ARCH нет сборки SmartDNS"
+        [ "$SMARTDNS_VER" = "$SMARTDNS_VERSION" ] && { ok "SmartDNS $SMARTDNS_VERSION уже стоит — включается в панели, «DNS»"; return; }
+        confirm "Поставить SmartDNS $SMARTDNS_VERSION (бета)? Скачает его с GitHub автора со сверкой хеша в /opt. Сам не запустится: его выбирают в панели, «DNS», вместо встроенного DNS nuxk." || die "отменено"
+        do_smartdns
+        ;;
     esac
     do_start
     finish
@@ -818,7 +890,7 @@ mode_status() {
     if [ -z "$CORE_VER" ]; then row bad "nuxk-core" "не установлен"
     elif "$R$P_INIT" status 2>/dev/null | grep -q 'is running'; then row ok "nuxk-core" "$CORE_VER · работает · http://$(conf_get LISTEN)"
     else row warn "nuxk-core" "$CORE_VER · остановлен: $P_INIT start"; fi
-    for e in "nfqws2:$P_SHIM" "WARP:$P_USQUE" "VLESS:$P_XRAY_INIT"; do
+    for e in "nfqws2:$P_SHIM" "WARP:$P_USQUE" "VLESS:$P_XRAY_INIT" "SmartDNS:$P_SMARTDNS_INIT"; do
         s="${e#*:}"
         [ -x "$R$s" ] || { row skip "${e%%:*}" "не установлен"; continue; }
         st=$("$R$s" info 2>/dev/null)
@@ -857,8 +929,13 @@ mode_uninstall() {
     # (engines/) goes with the agent
     rm -rf "$R/opt/etc/nuxk/engines" "$R/opt/etc/nuxk.removed"
     [ -d "$R/opt/etc/nuxk" ] && mv -f "$R/opt/etc/nuxk" "$R/opt/etc/nuxk.removed"
+    # SmartDNS answered only for nuxk: it goes with it
+    if [ -x "$R$P_SMARTDNS_INIT" ]; then
+        "$R$P_SMARTDNS_INIT" down >/dev/null 2>&1
+        rm -rf "$R$P_SMARTDNS" "$R$P_SMARTDNS_INIT" "$R$P_SMARTDNS_DIR" "$R/tmp/smartdns-nuxk"
+    fi
     rm -rf "$R$P_BIN" "$R$P_BIN.prev" "$R$P_PREV" "$R$P_INIT" "$R$P_WEB" "$R$P_LOG"* "$R/opt/var/log/nuxk-core.crash"
-    ok "агент, веб и объекты nuxk-* убраны; конфиг и списки — /opt/etc/nuxk.removed"
+    ok "агент, веб, SmartDNS и объекты nuxk-* убраны; конфиг и списки — /opt/etc/nuxk.removed"
     if [ "$XRAY_READY" = 1 ]; then
         step "xray (VLESS)"
         tun=$(conf_get PLANE_IFACE_VLESS)
@@ -903,12 +980,12 @@ for a in "$@"; do
     --yes | -y) YES=1 ;;
     --with-warp) WITH_WARP=1 ;;
     --with-vless) WITH_VLESS=1 ;;
-    install | update | rollback | warp | vless | status | uninstall) MODE=$a ;;
+    install | update | rollback | warp | vless | dns | status | uninstall) MODE=$a ;;
     -h | --help)
-        sed -n '2,25p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'
+        sed -n '2,27p' "$0" 2>/dev/null | sed 's/^# \{0,1\}//'
         exit 0
         ;;
-    *) die "не понимаю «$a»: nuxk [install|update|rollback|warp|vless|status|uninstall] [--yes]" ;;
+    *) die "не понимаю «$a»: nuxk [install|update|rollback|warp|vless|dns|status|uninstall] [--yes]" ;;
     esac
 done
 # the downloaded script installs; the installed command shows the state
@@ -952,6 +1029,6 @@ banner "$VERSION"
 case "$MODE" in
 install) mode_install ;;
 update) mode_update ;;
-warp | vless) mode_add "$MODE" ;;
+warp | vless | dns) mode_add "$MODE" ;;
 uninstall) mode_uninstall ;;
 esac

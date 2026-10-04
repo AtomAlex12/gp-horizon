@@ -4,6 +4,7 @@ package dns
 
 import (
 	"errors"
+	"os"
 	"syscall"
 )
 
@@ -16,3 +17,6 @@ func bindTo(string) func(network, address string, c syscall.RawConn) error {
 }
 
 const canBind = false
+
+// inode: unknown here; a rotated log is caught by its size shrinking.
+func inode(os.FileInfo) uint64 { return 0 }

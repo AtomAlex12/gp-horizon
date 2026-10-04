@@ -44,6 +44,10 @@ type Config struct {
 	// when it's on, and the DNS proxy itself (for its checks).
 	DNSListen string // DNS_LISTEN; "" = DNSAddr()
 	DNSRouter string // DNS_ROUTER; "" = DNSRouterAddr()
+	// SmartDNS (beta) in its place: the init script `nuxk dns` puts there
+	// (missing = not installed), and the RAM dir for its logs.
+	SmartDNSInit string // SMARTDNS_INIT; "off" = not offered
+	SmartDNSDir  string // SMARTDNS_DIR
 }
 
 // PlaneConfig drives the routing plane (internal/plane). Off unless PLANE is
@@ -84,6 +88,8 @@ func Defaults() Config {
 			IfaceWarp: "OpkgTun0", IfaceVless: "OpkgTun1",
 		},
 		UpdateCommand: "/opt/bin/nuxk",
+		SmartDNSInit:  "/opt/etc/init.d/S53smartdns-nuxk",
+		SmartDNSDir:   "/tmp/smartdns-nuxk",
 	}
 }
 
@@ -165,6 +171,13 @@ func Load(path string) (Config, error) {
 			cfg.DNSListen = v
 		case "DNS_ROUTER":
 			cfg.DNSRouter = v
+		case "SMARTDNS_INIT":
+			if v == "off" {
+				v = ""
+			}
+			cfg.SmartDNSInit = v
+		case "SMARTDNS_DIR":
+			cfg.SmartDNSDir = v
 		}
 	}
 	return cfg, sc.Err()

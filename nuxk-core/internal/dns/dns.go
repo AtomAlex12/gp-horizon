@@ -70,6 +70,7 @@ type Settings struct {
 	Via       string   `json:"via"`       // auto | vless | warp | direct
 	Resolvers []string `json:"resolvers"` // Catalog ids, in order of preference
 	Cache     bool     `json:"cache"`     // answers kept for their TTL (on unless turned off)
+	Engine    string   `json:"engine"`    // nuxk (the built-in forwarder) | smartdns (beta)
 }
 
 // Path is a way out: a tunnel's interface, or direct ("" iface).
@@ -100,6 +101,7 @@ type Options struct {
 	Resolvers []Resolver                   // Catalog (tests replace it)
 	Transport func(Path) http.RoundTripper // tests: DoH without the internet
 	Clock     func() time.Time             // tests: time of their own
+	SmartDNS  *SmartDNSOptions             // nil: SmartDNS isn't offered
 }
 
 // PathStat: how one way out has been doing.
@@ -116,27 +118,29 @@ type PathStat struct {
 
 // Status is GET /api/v1/dns.
 type Status struct {
-	Settings  Settings   `json:"settings"`
-	Listen    string     `json:"listen"`
-	Running   bool       `json:"running"`   // the forwarder listens
-	Attached  bool       `json:"attached"`  // added to the router's DNS proxy
-	Suspended bool       `json:"suspended"` // taken back for a while: no way out answered
-	CanAttach bool       `json:"can_attach"`
-	Cannot    string     `json:"cannot,omitempty"`
-	Queries   uint64     `json:"queries"`
-	Failed    uint64     `json:"failed"`
-	LastQuery int64      `json:"last_query,omitempty"` // the DNS proxy last asked, unix
-	Consulted bool       `json:"consulted"`            // the proxy passed nuxk's own test question on
-	LastPath  string     `json:"last_path,omitempty"`
-	Resolver  string     `json:"resolver,omitempty"` // the one that answered last
-	Paths     []PathStat `json:"paths"`
-	Cache     CacheStat  `json:"cache"`
-	Error     string     `json:"error,omitempty"`
-	Catalog   []Resolver `json:"catalog"`
+	Settings  Settings       `json:"settings"`
+	Listen    string         `json:"listen"`
+	Running   bool           `json:"running"`   // the forwarder listens
+	Attached  bool           `json:"attached"`  // added to the router's DNS proxy
+	Suspended bool           `json:"suspended"` // taken back for a while: no way out answered
+	CanAttach bool           `json:"can_attach"`
+	Cannot    string         `json:"cannot,omitempty"`
+	Queries   uint64         `json:"queries"`
+	Failed    uint64         `json:"failed"`
+	LastQuery int64          `json:"last_query,omitempty"` // the DNS proxy last asked, unix
+	Consulted bool           `json:"consulted"`            // the proxy passed nuxk's own test question on
+	LastPath  string         `json:"last_path,omitempty"`
+	Resolver  string         `json:"resolver,omitempty"` // the one that answered last
+	Paths     []PathStat     `json:"paths"`
+	Cache     CacheStat      `json:"cache"`
+	SmartDNS  *SmartDNSState `json:"smartdns,omitempty"` // nil: not offered on this box
+	Error     string         `json:"error,omitempty"`
+	Catalog   []Resolver     `json:"catalog"`
 }
 
 var (
-	ErrBadSettings = errors.New("способ — auto, vless, warp или direct; серверы — из списка")
+	ErrBadSettings = errors.New("способ — auto, vless, warp или direct; серверы — из списка; движок — nuxk или smartdns")
+	ErrNoSmartDNS  = errors.New("SmartDNS не установлен на роутере — поставьте его командой nuxk dns")
 	ErrNoHook      = errors.New("подключить нечего: это не роутер Keenetic (или маршрутизация выключена)")
 )
 
@@ -163,7 +167,11 @@ type Service struct {
 	fmu       sync.Mutex
 	inflight  map[string]*call // questions out to the resolvers now, by cache key
 	staleWait time.Duration
+	warm      time.Duration // how long a just started SmartDNS gets to answer
 	clock     func() time.Time
+
+	sd  *smartDNS // nil: not offered
+	rec *recorder // the charts: every answer, by minute
 
 	queries   atomic.Uint64
 	failed    atomic.Uint64
@@ -198,8 +206,11 @@ func New(o Options, st Store) *Service {
 		cache:     newCache(),
 		inflight:  map[string]*call{},
 		staleWait: staleWait,
+		warm:      10 * time.Second,
 		clock:     o.Clock,
 		sem:       make(chan struct{}, 64),
+		sd:        newSmartDNS(o.SmartDNS),
+		rec:       newRecorder(o.Clock),
 	}
 	if st != nil {
 		_ = st.LoadJSON("dns", &s.set)
@@ -209,6 +220,9 @@ func New(o Options, st Store) *Service {
 }
 
 func (s *Service) normal(set Settings) Settings {
+	if set.Engine != EngineSmartDNS || s.sd == nil {
+		set.Engine = EngineNuxk
+	}
 	switch set.Via {
 	case ViaVless, ViaWarp, ViaDirect:
 	default:
@@ -240,8 +254,44 @@ func (s *Service) resolverByID(id string) *Resolver {
 
 // --- the forwarder -------------------------------------------------------------
 
-// start opens the listeners (UDP and TCP on the same address).
+// start: the chosen engine answering on the address — SmartDNS started
+// with its configuration, or the forwarder's own listeners.
 func (s *Service) start() error {
+	if s.engine() == EngineSmartDNS {
+		return s.startSmart(context.Background())
+	}
+	return s.listen()
+}
+
+func (s *Service) engine() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.set.Engine
+}
+
+func (s *Service) startSmart(ctx context.Context) error {
+	if !s.sd.installed() {
+		return ErrNoSmartDNS
+	}
+	if err := s.sd.apply(ctx, s.smartConf()); err != nil {
+		s.sd.note(false, err.Error())
+		return fmt.Errorf("SmartDNS не запустился: %w", err)
+	}
+	return nil
+}
+
+// stopAll: neither engine answers (protection turned off).
+func (s *Service) stopAll(ctx context.Context) {
+	s.stop()
+	if s.sd != nil && s.sd.installed() {
+		if err := s.sd.stop(ctx); err != nil {
+			slog.Warn("dns: smartdns stop", "err", err)
+		}
+	}
+}
+
+// listen opens the forwarder's listeners (UDP and TCP on the same address).
+func (s *Service) listen() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.udp != nil {
@@ -372,6 +422,16 @@ func (s *Service) answer(q []byte) []byte {
 	if len(q) < headerLen || q[2]&0x80 != 0 {
 		return nil
 	}
+	t0 := time.Now()
+	resp, src := s.reply(q)
+	s.rec.add(LogEntry{
+		At: s.clock().Unix(), Domain: QName(q), Type: typeName(QType(q)),
+		Answer: summary(resp), Source: src, Ms: int(time.Since(t0).Milliseconds()),
+	})
+	return resp
+}
+
+func (s *Service) reply(q []byte) ([]byte, string) {
 	s.queries.Add(1)
 	s.lastQuery.Store(time.Now().Unix())
 	if name := QName(q); name != "" {
@@ -391,19 +451,19 @@ func (s *Service) answer(q []byte) []byte {
 	resp, _, err := s.resolve(ctx, q)
 	if err != nil {
 		s.failed.Add(1)
-		return ServFail(q)
+		return ServFail(q), SrcFailed
 	}
-	return resp
+	return resp, SrcUpstream
 }
 
 // cached: from the cache while fresh; otherwise from the resolvers — and if
 // they don't answer in time (or fail), the expired answer: better than none.
-func (s *Service) cached(key string, q []byte) []byte {
+func (s *Service) cached(key string, q []byte) ([]byte, string) {
 	now := s.clock()
 	e, fresh := s.cache.get(key, now)
 	if fresh {
 		s.cache.count(func(c *CacheStat) { c.Hits++ })
-		return e.reply(q, now, false)
+		return e.reply(q, now, false), SrcCache
 	}
 	s.cache.count(func(c *CacheStat) { c.Misses++ })
 	c := s.flight(key, q, false)
@@ -417,17 +477,17 @@ func (s *Service) cached(key string, q []byte) []byte {
 		select {
 		case <-c.done:
 			if c.err == nil && (e == nil || c.resp[3]&0x0F != RcodeServFail) {
-				return own(c.resp, q)
+				return own(c.resp, q), SrcUpstream
 			}
 		case <-wait:
 		}
 	}
 	if e != nil {
 		s.cache.count(func(c *CacheStat) { c.Stale++ })
-		return e.reply(q, s.clock(), true)
+		return e.reply(q, s.clock(), true), SrcStale
 	}
 	s.failed.Add(1)
-	return ServFail(q)
+	return ServFail(q), SrcFailed
 }
 
 type call struct {
@@ -500,9 +560,34 @@ func (s *Service) cacheOn() bool {
 }
 
 // FlushCache forgets every kept answer (the counters stay).
-func (s *Service) FlushCache() Status {
+// With SmartDNS: restarted — its cache lives only in its memory.
+func (s *Service) FlushCache(ctx context.Context) (Status, error) {
 	s.cache.flush()
-	return s.Status()
+	if s.engine() == EngineSmartDNS && s.Settings().Enabled {
+		if err := s.sd.restart(ctx); err != nil {
+			return s.Status(), fmt.Errorf("SmartDNS не перезапустился: %w", err)
+		}
+	}
+	return s.Status(), nil
+}
+
+// Stats: the last hour of answers, for the charts.
+func (s *Service) Stats() Stats {
+	st := s.rec.stats()
+	st.Engine = s.engine()
+	st.StaleKnown = st.Engine == EngineNuxk
+	if !st.StaleKnown {
+		st.Note = "SmartDNS не сообщает, откуда ответ: «из кэша» — ответы быстрее 1 мс (среди них и устаревшие), «нет ответа» не отличить от пустого ответа"
+	}
+	return st
+}
+
+// Log: the last questions, newest first; match filters by part of the name.
+func (s *Service) Log(match string, n int) []LogEntry {
+	if n <= 0 || n > statRecent {
+		n = statRecent
+	}
+	return s.rec.log(match, n)
 }
 
 // order: the ways out to try, in turn — the chosen tunnel(s), then direct.
@@ -712,10 +797,16 @@ func (s *Service) Run(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			s.stop() // the attachment stays: an update restarts the agent in seconds
+			// the attachment stays: an update restarts the agent in seconds;
+			// SmartDNS keeps answering meanwhile
+			s.stop()
 			return
 		case <-r.C:
-			s.refresh()
+			if s.engine() == EngineSmartDNS {
+				s.sd.tail(s.rec, s.clock())
+			} else {
+				s.refresh()
+			}
 			continue
 		case <-t.C:
 		}
@@ -728,13 +819,30 @@ func (s *Service) tick(ctx context.Context) {
 	if !s.Settings().Enabled {
 		return
 	}
-	if err := s.start(); err != nil {
-		s.setErr(err.Error())
-		return
+	smart := s.engine() == EngineSmartDNS
+	// SmartDNS runs on its own: started again only when it doesn't answer —
+	// or with a new configuration when WARP's interface came or changed
+	if smart && s.sd.outdated(s.smartConf()) {
+		if err := s.startSmart(ctx); err != nil {
+			s.setErr(err.Error())
+		}
+	}
+	if !smart {
+		if err := s.start(); err != nil {
+			s.setErr(err.Error())
+			return
+		}
 	}
 	cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	_, err := s.lookup(cctx, "cloudflare.com")
+	if err != nil && smart {
+		if serr := s.start(); serr != nil {
+			s.setErr(serr.Error())
+		} else {
+			_, err = s.lookupWarm(cctx)
+		}
+	}
 	s.mu.Lock()
 	if err != nil {
 		s.fails++
@@ -770,7 +878,17 @@ func (s *Service) setErr(e string) {
 }
 
 // lookup: A records of name through the forwarder's own ways out.
+// With SmartDNS: asked on its address, as the router's DNS proxy asks it.
 func (s *Service) lookup(ctx context.Context, name string) (Answer, error) {
+	if s.engine() == EngineSmartDNS {
+		a, err := udpLookup(ctx, s.o.Listen, name)
+		if err != nil {
+			s.sd.note(false, "SmartDNS не ответил: "+err.Error())
+		} else {
+			s.sd.note(true, "")
+		}
+		return a, err
+	}
 	q, err := Query(randID(), name, TypeA)
 	if err != nil {
 		return Answer{}, err
@@ -780,6 +898,26 @@ func (s *Service) lookup(ctx context.Context, name string) (Answer, error) {
 		return Answer{}, err
 	}
 	return Parse(resp)
+}
+
+// lookupWarm: the engine answers — given a few seconds, as a SmartDNS just
+// started opens its first connections through the tunnel.
+func (s *Service) lookupWarm(ctx context.Context) (Answer, error) {
+	var a Answer
+	var err error
+	tries := 1
+	if s.engine() == EngineSmartDNS {
+		tries = 3
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, s.warm)
+		defer cancel()
+	}
+	for i := 0; i < tries; i++ {
+		if a, err = s.lookup(ctx, "cloudflare.com"); err == nil || ctx.Err() != nil {
+			break
+		}
+	}
+	return a, err
 }
 
 // attach adds the forwarder to the DNS proxy and makes sure the router still
@@ -887,6 +1025,18 @@ func (s *Service) SetSettings(ctx context.Context, set Settings) (Status, error)
 	if set.Via == "" {
 		set.Via = was.Via
 	}
+	if set.Engine == "" {
+		set.Engine = was.Engine
+	}
+	switch set.Engine {
+	case EngineNuxk:
+	case EngineSmartDNS:
+		if !s.sd.installed() {
+			return s.Status(), ErrNoSmartDNS
+		}
+	default:
+		return s.Status(), ErrBadSettings
+	}
 	if len(set.Resolvers) == 0 {
 		set.Resolvers = was.Resolvers
 	}
@@ -909,9 +1059,13 @@ func (s *Service) SetSettings(ctx context.Context, set Settings) (Status, error)
 	switch {
 	case set.Enabled && !was.Enabled:
 		err = s.enable(ctx)
+	case set.Enabled && was.Enabled && set.Engine != was.Engine:
+		err = s.switchEngine(ctx, was.Engine)
+	case set.Enabled && was.Enabled && set.Engine == EngineSmartDNS:
+		err = s.startSmart(ctx) // the way out, servers or cache changed: a new configuration
 	case !set.Enabled && was.Enabled:
 		s.detach(ctx)
-		s.stop()
+		s.stopAll(ctx)
 		s.cache.flush()
 		s.mu.Lock()
 		s.set.Enabled, s.suspended, s.lastErr = false, false, ""
@@ -933,12 +1087,15 @@ func (s *Service) enable(ctx context.Context) error {
 	if err := s.start(); err != nil {
 		return err
 	}
-	if _, err := s.lookup(ctx, "cloudflare.com"); err != nil {
-		s.stop()
+	if _, err := s.lookupWarm(ctx); err != nil {
+		s.stopAll(ctx)
+		if s.engine() == EngineSmartDNS {
+			return fmt.Errorf("SmartDNS запустился, но не отвечает — роутер не трогаю: %w", err)
+		}
 		return fmt.Errorf("DoH-серверы не отвечают ни через один путь — роутер не трогаю: %w", err)
 	}
 	if err := s.attach(ctx); err != nil {
-		s.stop()
+		s.stopAll(ctx)
 		s.setErr(err.Error())
 		return err
 	}
@@ -946,6 +1103,49 @@ func (s *Service) enable(ctx context.Context) error {
 	s.set.Enabled, s.suspended, s.fails, s.lastErr = true, false, 0, ""
 	s.mu.Unlock()
 	return nil
+}
+
+// switchEngine: the other engine on the same address. The router's DNS proxy
+// keeps asking that address — only what answers there changes, for a second
+// or two. If the new one doesn't answer, the old one comes back.
+func (s *Service) switchEngine(ctx context.Context, old string) error {
+	now := s.engine()
+	s.halt(ctx, old)
+	s.rec.reset()
+	err := s.start()
+	if err == nil {
+		_, err = s.lookupWarm(ctx)
+	}
+	if err == nil {
+		slog.Info("dns: engine switched", "from", old, "to", now)
+		return nil
+	}
+	s.halt(ctx, now)
+	s.mu.Lock()
+	s.set.Engine = old
+	s.mu.Unlock()
+	if berr := s.start(); berr != nil {
+		s.setErr(berr.Error())
+	}
+	return fmt.Errorf("%s не ответил — вернул прежний (%s): %w", engineTitle(now), engineTitle(old), err)
+}
+
+// halt stops one engine.
+func (s *Service) halt(ctx context.Context, engine string) {
+	if engine == EngineSmartDNS {
+		if s.sd != nil {
+			_ = s.sd.stop(ctx)
+		}
+		return
+	}
+	s.stop()
+}
+
+func engineTitle(e string) string {
+	if e == EngineSmartDNS {
+		return "SmartDNS"
+	}
+	return "встроенный DNS nuxk"
 }
 
 func (s *Service) save() error {
@@ -974,6 +1174,10 @@ func (s *Service) Status() Status {
 	s.mu.Unlock()
 	st.Queries, st.Failed, st.LastQuery = s.queries.Load(), s.failed.Load(), s.lastQuery.Load()
 	st.Cache = s.cache.stats()
+	st.SmartDNS = s.smartState()
+	if st.Settings.Engine == EngineSmartDNS && st.SmartDNS != nil {
+		st.Running = st.SmartDNS.Running
+	}
 	st.CanAttach = s.o.Hook != nil
 	if !st.CanAttach {
 		st.Cannot = ErrNoHook.Error()

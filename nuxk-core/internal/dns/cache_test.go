@@ -300,7 +300,7 @@ func TestCacheAnswers(t *testing.T) {
 	if st.Hits != 1 || st.Misses != 4 || st.Entries != 1 || st.Bytes == 0 {
 		t.Fatalf("%+v", st)
 	}
-	s.FlushCache()
+	_, _ = s.FlushCache(context.Background())
 	ask(t, "udp", s.o.Listen, "cloudflare.com")
 	if n() != 5 {
 		t.Fatalf("flushed: doh asked %d", n())

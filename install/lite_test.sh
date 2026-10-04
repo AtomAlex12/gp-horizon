@@ -1,7 +1,7 @@
 #!/bin/sh
 # Tests nuxk-lite.sh end to end on a fake router: a temp root (NUXK_ROOT),
 # fake opkg / ndmc / ip / lsmod, a release served as file:// and signed with a
-# throwaway key, a fake XTLS archive. Needs curl, sha256sum, tar, ssh-keygen
+# throwaway key, a fake XTLS archive and a fake SmartDNS binary. Needs curl, sha256sum, tar, ssh-keygen
 # (OpenSSH 8.1+, to sign) and python3 (to make the zip).
 #   sh install/lite_test.sh
 set -eu
@@ -59,6 +59,8 @@ esac
 EOF
     cp "$TOP/engines/nuxk-nfqws2/S51nfqws2-nuxk" "$TOP/engines/nuxk-xray/S52xray-nuxk" "$REL/"
     echo "# release $v" >>"$REL/S52xray-nuxk" # which release's adapter is on the router
+    cp "$TOP/engines/nuxk-smartdns/S53smartdns-nuxk" "$REL/"
+    echo "# release $v" >>"$REL/S53smartdns-nuxk"
     sed "s/^VERSION=\"@VERSION@\"/VERSION=\"$v\"/" "$LITE" >"$REL/nuxk-lite.sh"
     mkdir -p "$ROOT/web/assets" && echo "<!doctype html><title>nuxk $v</title>" >"$ROOT/web/index.html" && echo 1 >"$ROOT/web/assets/app.js"
     tar -C "$ROOT/web" -czf "$REL/nuxk-web-lite-$v.tar.gz" .
@@ -74,6 +76,17 @@ printf '#!/bin/sh\n[ "$1" = version ] && echo "Xray 26.3.27 (Xray, Penetrates Ev
 export XRAY_TEST_SUM
 XRAY_TEST_SUM=$(sha256sum "$XTLS/v26.3.27/Xray-linux-64.zip" | cut -d' ' -f1)
 export XRAY_BASE_URL=$(furl "$XTLS")
+
+# --- pymumu: SmartDNS's static binary --------------------------------------------------------
+SDNS="$ROOT/smartdns"
+mkdir -p "$SDNS/Release48.4"
+printf '#!/bin/sh
+[ "$1" = -v ] && echo "smartdns 1.2026.08.05-0921"
+true
+' >"$SDNS/Release48.4/smartdns-x86_64"
+export SMARTDNS_TEST_SUM
+SMARTDNS_TEST_SUM=$(sha256sum "$SDNS/Release48.4/smartdns-x86_64" | cut -d' ' -f1)
+export SMARTDNS_BASE_URL=$(furl "$SDNS")
 
 # --- the router's tools --------------------------------------------------------------------
 STATE="$ROOT/opkg.installed"
@@ -201,6 +214,18 @@ check "token kept" "$(has "$C" "API_TOKEN=\"$TOKEN\"")" "1"
 XRAY_TEST_SUM=0000 $SH "$(f /opt/bin/nuxk)" vless --yes >"$ROOT/out" 2>&1 || true
 check "vless: another archive refused" "$(has "$ROOT/out" 'хеш архива xray не совпал')" "1"
 
+# 5a. SmartDNS: a binary that isn't pymumu's is refused; then installed, not started
+SMARTDNS_TEST_SUM=0000 $SH "$(f /opt/bin/nuxk)" dns --yes >"$ROOT/out" 2>&1 || true
+check "dns: another binary refused" "$(has "$ROOT/out" 'хеш SmartDNS не совпал')/$([ -e "$(f /opt/sbin/smartdns)" ] && echo there || echo none)" "1/none"
+$SH "$(f /opt/bin/nuxk)" dns --yes >"$ROOT/out" 2>&1 || { cat "$ROOT/out"; exit 1; }
+check "dns: smartdns" "$("$(f /opt/sbin/smartdns)" -v)" "smartdns 1.2026.08.05-0921"
+check "dns: init" "$(has "$(f /opt/etc/init.d/S53smartdns-nuxk)" 'S53smartdns-nuxk')" "1"
+check "dns: the release noted" "$(cat "$(f /opt/etc/smartdns-nuxk/.release)")" "Release48.4"
+check "dns: not on until chosen in the panel" "$([ -e "$(f /opt/etc/smartdns-nuxk/on)" ] && echo on || echo off)" "off"
+check "dns: the router's config untouched" "$(has "$ROOT/ndm.saved" saved)" "1"
+$SH "$(f /opt/bin/nuxk)" dns --yes >"$ROOT/out" 2>&1
+check "dns: again — already there" "$(has "$ROOT/out" 'уже стоит')" "1"
+
 # 6. a newer release, the way the panel starts it: the new release's own
 # script does it, the agent moves, the old version is kept aside, the config
 # isn't touched, and the panel's status file says how it went
@@ -226,6 +251,9 @@ check "update: router config not saved again" "$(has "$ROOT/ndm.saved" saved)" "
 check "update: new xray adapter" "$(has "$(f /opt/etc/init.d/S52xray-nuxk)" '# release 0.3.1')" "1"
 check "update: the old xray adapter kept" "$(has "$(f /opt/var/lib/nuxk/prev/S52xray-nuxk)" '# release 0.3.0')" "1"
 check "update: xray itself not downloaded again" "$(has "$ROOT/out" 'Xray-linux')" "0"
+check "update: new SmartDNS adapter" "$(has "$(f /opt/etc/init.d/S53smartdns-nuxk)" '# release 0.3.1')" "1"
+check "update: the old SmartDNS adapter kept" "$(has "$(f /opt/var/lib/nuxk/prev/S53smartdns-nuxk)" '# release 0.3.0')" "1"
+check "update: SmartDNS itself not downloaded again" "$(has "$ROOT/out" 'smartdns-x86_64')" "0"
 
 # 7. releases the agent refuses: SHA256SUMS changed after signing, no
 # signature at all — nothing on the router changes
@@ -252,6 +280,7 @@ check "rollback: old agent" "$(agent)" "0.3.0"
 check "rollback: old web" "$(has "$(f /opt/share/www/nuxk/index.html)" 'nuxk 0.3.0')" "1"
 check "rollback: the command stays new" "$(has "$(f /opt/bin/nuxk)" 'VERSION="0.3.1"')" "1"
 check "rollback: old xray adapter" "$(has "$(f /opt/etc/init.d/S52xray-nuxk)" '# release 0.3.0')" "1"
+check "rollback: old SmartDNS adapter" "$(has "$(f /opt/etc/init.d/S53smartdns-nuxk)" '# release 0.3.0')" "1"
 check "rollback: nuxk DNS out of the DNS proxy first" "$(has "$ROOT/rci.log" '"parse":"no ip name-server 192.168.9.1:53053"')" "1"
 release 0.3.1
 nuxk update --yes || { cat "$ROOT/out"; exit 1; }
@@ -290,6 +319,7 @@ check "uninstall: config aside" "$(has "$(f /opt/etc/nuxk.removed/nuxk.conf)" 'A
 check "uninstall: nuxk routes dropped" "$(has "$ROOT/rci.log" '"group":"nuxk-vless","interface":"OpkgTun2","no":true')" "1"
 check "uninstall: nuxk DNS taken out of the DNS proxy" "$(has "$ROOT/rci.log" '"parse":"no ip name-server 192.168.9.1:53053"')" "1"
 check "uninstall: xray kept by default" "$([ -x "$(f /opt/sbin/xray)" ] && echo kept || echo gone)" "kept"
+check "uninstall: SmartDNS goes with nuxk" "$([ -e "$(f /opt/sbin/smartdns)" ] || [ -e "$(f /opt/etc/init.d/S53smartdns-nuxk)" ] && echo left || echo gone)" "gone"
 check "uninstall: nfqws2's list stays" "$(has "$(f /opt/etc/nfqws2/lists/user.list)" 'youtube.com')" "1"
 
 [ "$fail" = 0 ] && echo "all lite installer tests passed"

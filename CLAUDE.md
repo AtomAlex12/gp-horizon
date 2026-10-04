@@ -30,6 +30,7 @@
 | `engines/nuxk-nfqws2/S51nfqws2-nuxk` | прослойка над штатным пакетом nfqws2-keenetic |
 | `engines/nuxk-usque/` | форк usque-keenetic (ipk для mips/mipsel/aarch64) |
 | `engines/nuxk-xray/S52xray-nuxk` | init-скрипт xray (VLESS): свой TUN `opkgtunN`, конфиг от агента, проверка и откат; xray — официальный релиз XTLS, версия и хеши в `install/nuxk-lite.sh` |
+| `engines/nuxk-smartdns/S53smartdns-nuxk` | init-скрипт SmartDNS (бета): `up`/`down` от агента, при загрузке стартует, только если выбран в панели; конфиг пишет агент (`internal/dns/smartdns.go`), графики — из его журнала запросов; бинарник — официальный релиз pymumu, версия и хеши в `install/nuxk-lite.sh` (`nuxk dns`) |
 | `deploy/release/` | образ контроллера из готовых файлов релиза (собирает `release.yml`) |
 | `deploy/pi/`, `deploy/proto/` | стек **разработки** на Pi из исходников: стенд и контроллер |
 | `docs/BETA.md` | пошаговая установка и проверка (лайт, фул, этапы) |

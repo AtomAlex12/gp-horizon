@@ -599,6 +599,48 @@ paths:
           description: the state, the cache empty (its counters stay)
           content: { application/json: { schema: { $ref: "#/components/schemas/DNSStatus" } } }
         "401": { $ref: "#/components/responses/Error" }
+        "502":
+          description: "dns_failed: SmartDNS (its cache is cleared by a restart) didn't restart"
+          content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } }
+
+  /api/v1/dns/stats:
+    get:
+      tags: [dns]
+      operationId: dnsStats
+      summary: The last hour of answers, minute by minute — from the cache, a server, expired, none
+      description: >
+        Every answer the router's DNS proxy got from nuxk: from the built-in
+        forwarder as it answers, or read from SmartDNS's audit log. Kept for
+        an hour on the router (the controller keeps longer). With SmartDNS
+        «cache» means answered within 1 ms — SmartDNS doesn't say more —
+        so expired answers are among them (`stale_known: false`, `note`).
+      responses:
+        "200":
+          description: the hour
+          content: { application/json: { schema: { $ref: "#/components/schemas/DNSStats" } } }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /api/v1/dns/log:
+    get:
+      tags: [dns]
+      operationId: dnsLog
+      summary: The last questions and their answers, newest first
+      parameters:
+        - { name: q, in: query, schema: { type: string }, description: part of the name }
+        - { name: n, in: query, schema: { type: integer, minimum: 1, maximum: 200 }, description: "how many (200 by default)" }
+      responses:
+        "200":
+          description: the questions
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items: { type: array, items: { $ref: "#/components/schemas/DNSQuery" } }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
 
   /api/v1/dns/check:
     post:
@@ -1044,6 +1086,15 @@ components:
         via: { type: string, enum: [auto, vless, warp, direct], description: "auto: VLESS, then WARP, then straight; a tunnel falls back to straight while it's down" }
         resolvers: { type: array, items: { type: string }, description: "catalog ids, in order of preference" }
         cache: { type: boolean, description: "answers kept for their TTL (on unless turned off)" }
+        engine:
+          type: string
+          enum: [nuxk, smartdns]
+          description: >
+            what answers on the address: nuxk's built-in forwarder, or SmartDNS
+            (beta, installed by `nuxk dns`) — through WARP, straight when WARP
+            doesn't answer (via direct: straight only). Switching while on keeps
+            the router's DNS proxy as it is; if the new one doesn't answer, the
+            old one comes back. Absent from older agents: nuxk.
 
     DNSResolver:
       type: object
@@ -1096,8 +1147,69 @@ components:
         resolver: { type: string, description: the resolver that answered last }
         paths: { type: array, items: { $ref: "#/components/schemas/DNSPathStat" } }
         cache: { $ref: "#/components/schemas/DNSCache" }
+        smartdns: { $ref: "#/components/schemas/DNSSmartDNS" }
         error: { type: string }
         catalog: { type: array, items: { $ref: "#/components/schemas/DNSResolver" } }
+
+    DNSSmartDNS:
+      type: object
+      description: "SmartDNS on this router; absent where it isn't offered (not a router)"
+      required: [installed, running, fallback]
+      properties:
+        installed: { type: boolean, description: "S53smartdns-nuxk is there (`nuxk dns`)" }
+        running: { type: boolean, description: it answered the last check }
+        version: { type: string }
+        iface: { type: string, description: "the questions go out through it: WARP's interface" }
+        fallback: { type: boolean, description: "straight to the same servers when WARP doesn't answer" }
+        error: { type: string }
+
+    DNSMinute:
+      type: object
+      required: [t, cache, upstream, stale, failed]
+      properties:
+        t: { type: integer, description: "the minute's start, unix seconds" }
+        cache: { type: integer }
+        upstream: { type: integer }
+        stale: { type: integer }
+        failed: { type: integer }
+        avg_ms: { type: number, description: "upstream answers: the mean time" }
+        p95_ms: { type: number, description: "upstream answers: 95 % were faster" }
+
+    DNSCount:
+      type: object
+      required: [name, count]
+      properties:
+        name: { type: string }
+        count: { type: integer }
+
+    DNSStats:
+      type: object
+      required: [engine, queries, cache, upstream, stale, failed, minutes, top, types, stale_known]
+      properties:
+        engine: { type: string, enum: [nuxk, smartdns] }
+        since: { type: integer, description: "counting since, unix seconds" }
+        queries: { type: integer, description: in the last hour }
+        cache: { type: integer }
+        upstream: { type: integer }
+        stale: { type: integer }
+        failed: { type: integer }
+        avg_ms: { type: number }
+        minutes: { type: array, items: { $ref: "#/components/schemas/DNSMinute" }, description: "60, oldest first, the current one last" }
+        top: { type: array, items: { $ref: "#/components/schemas/DNSCount" }, description: the most asked names }
+        types: { type: array, items: { $ref: "#/components/schemas/DNSCount" } }
+        stale_known: { type: boolean, description: "expired answers counted apart (the built-in forwarder); with SmartDNS they're among cache" }
+        note: { type: string, description: "what this engine can't tell apart, in words for the panel" }
+
+    DNSQuery:
+      type: object
+      required: [at, domain, type, source, ms]
+      properties:
+        at: { type: integer }
+        domain: { type: string }
+        type: { type: string, description: "A, AAAA, HTTPS…" }
+        answer: { type: string, description: "the first addresses, or nxdomain / empty / rcode N" }
+        source: { type: string, enum: [cache, upstream, stale, failed] }
+        ms: { type: integer }
 
     DNSCheckItem:
       type: object
