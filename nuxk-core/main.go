@@ -234,6 +234,13 @@ func main() {
 	}
 	if pm != nil {
 		dopt.Hook = keenetic.DNSHook{B: keenetic.New(cfg.Plane.RCI)}
+		// SmartDNS (beta): offered on a router; installed by `nuxk dns`
+		if cfg.SmartDNSInit != "" {
+			dopt.SmartDNS = &dns.SmartDNSOptions{
+				Script: cfg.SmartDNSInit, Dir: cfg.SmartDNSDir,
+				WarpIface: func() string { return warpIface(hub.Get(), cfg) },
+			}
+		}
 		dopt.Domains = func() []string {
 			des, err := pm.Desired()
 			if err != nil {
@@ -284,6 +291,30 @@ func main() {
 		slog.Warn("graceful shutdown failed", "err", err)
 	}
 	slog.Info("nuxk-core stopped")
+}
+
+// warpIface: WARP's interface as the kernel names it (opkgtun0) — usque's
+// own report, else the config's — whether or not it's up now: SmartDNS is
+// told once and falls back straight while it's down.
+func warpIface(snap core.Snapshot, cfg config.Config) string {
+	for _, e := range snap.Engines {
+		if e.Kind == engine.KindUsque && e.Iface != "" {
+			return strings.ToLower(e.Iface)
+		}
+	}
+	if _, ok := snapEngine(snap, engine.KindUsque); !ok && cfg.Engines.Usque == "" {
+		return ""
+	}
+	return strings.ToLower(cfg.Plane.IfaceWarp)
+}
+
+func snapEngine(snap core.Snapshot, k engine.Kind) (int, bool) {
+	for i, e := range snap.Engines {
+		if e.Kind == k {
+			return i, true
+		}
+	}
+	return 0, false
 }
 
 // dnsPaths: the tunnels DNS can go through right now — VLESS first, then WARP

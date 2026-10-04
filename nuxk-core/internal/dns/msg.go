@@ -218,3 +218,44 @@ func Parse(resp []byte) (Answer, error) {
 	}
 	return a, nil
 }
+
+// QType: the first question's type; 0 if there is none.
+func QType(m []byte) uint16 {
+	if len(m) < headerLen || binary.BigEndian.Uint16(m[4:6]) == 0 {
+		return 0
+	}
+	off, err := skipName(m, headerLen)
+	if err != nil || off+2 > len(m) {
+		return 0
+	}
+	return binary.BigEndian.Uint16(m[off : off+2])
+}
+
+// summary: what an answer said, short — its first addresses, «nxdomain»,
+// «empty» or the error code — for the log of questions.
+func summary(resp []byte) string {
+	a, err := Parse(resp)
+	if err != nil {
+		return ""
+	}
+	switch {
+	case a.Rcode == 3:
+		return "nxdomain"
+	case a.Rcode != 0:
+		return "rcode " + itoa(a.Rcode)
+	case len(a.Addrs) == 0:
+		return "empty"
+	}
+	var b strings.Builder
+	for i, ip := range a.Addrs {
+		if i == 2 {
+			b.WriteString(" …")
+			break
+		}
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(ip.String())
+	}
+	return b.String()
+}

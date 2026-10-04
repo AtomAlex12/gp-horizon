@@ -1,0 +1,182 @@
+#!/bin/sh
+# S53smartdns-nuxk — nuxk's init script for SmartDNS (beta).
+#
+# SmartDNS answers where nuxk's own DNS forwarder would — the router's LAN
+# address, port 53053 — once it's chosen in the panel («DNS» → SmartDNS).
+# nuxk-core writes its configuration (DoH through WARP, straight as a
+# fallback, the cache, the audit log for the charts); this script only runs
+# the official SmartDNS binary and swaps configurations safely.
+#
+#   up | down                          the agent: on (and at every boot), off
+#   start | stop | restart | status    Entware's rc: start only if it's on
+#   info                               state as flat "key value" lines
+#   set-config < smartdns.conf         swapped in and SmartDNS restarted; the
+#                                      old configuration back if it won't start
+#
+# NUXK_ROOT prefixes every path (tests).
+
+R="${NUXK_ROOT:-}"
+SMARTDNS_BIN="${SMARTDNS_BIN:-$R/opt/sbin/smartdns}"
+DIR="$R/opt/etc/smartdns-nuxk"
+CONF="$DIR/smartdns.conf"
+ON="$DIR/on" # chosen in the panel: started at boot too
+PIDFILE="$R/opt/var/run/smartdns-nuxk.pid"
+RUN="${SMARTDNS_RUN:-$R/tmp/smartdns-nuxk}" # its logs, in RAM
+WAIT="${SMARTDNS_WAIT:-5}"
+
+die() {
+    echo "$*" >&2
+    exit 1
+}
+
+is_running() {
+    [ -f "$PIDFILE" ] || return 1
+    pid=$(cat "$PIDFILE" 2>/dev/null)
+    [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null
+}
+
+tail_log() { tail -n 3 "$RUN/smartdns.log" 2>/dev/null | tr '\n' ' '; }
+
+run() {
+    is_running && return 0
+    [ -x "$SMARTDNS_BIN" ] || die "SmartDNS не установлен: $SMARTDNS_BIN — поставьте его командой nuxk dns"
+    [ -f "$CONF" ] || die "нет конфигурации $CONF — её пишет nuxk, когда SmartDNS выбран в панели («DNS»)"
+    mkdir -p "$(dirname "$PIDFILE")" "$RUN"
+    # the version once per start, not a fork on every info
+    "$SMARTDNS_BIN" -v 2>/dev/null | head -n 1 | sed 's/^smartdns *//' >"$DIR/.version"
+    rm -f "$PIDFILE"
+    # it daemonizes itself and writes the pid file
+    "$SMARTDNS_BIN" -c "$CONF" -p "$PIDFILE" >"$RUN/start.out" 2>&1 </dev/null
+    rc=$?
+    i=0
+    while [ "$i" -lt "$WAIT" ]; do
+        is_running && break
+        sleep 1
+        i=$((i + 1))
+    done
+    if ! is_running; then
+        rm -f "$PIDFILE"
+        die "SmartDNS не запустился (код $rc): $(tr '\n' ' ' <"$RUN/start.out" 2>/dev/null) $(tail_log)"
+    fi
+    # alive a moment later: a bad option stops it right after the fork
+    sleep 1
+    is_running || {
+        rm -f "$PIDFILE"
+        die "SmartDNS запустился и сразу завершился: $(tail_log)"
+    }
+}
+
+halt() {
+    if ! is_running; then
+        rm -f "$PIDFILE"
+        return 0
+    fi
+    kill "$pid" 2>/dev/null
+    i=0
+    while [ "$i" -lt 10 ] && kill -0 "$pid" 2>/dev/null; do
+        sleep 1
+        i=$((i + 1))
+    done
+    kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null
+    rm -f "$PIDFILE"
+}
+
+info() {
+    running=0
+    pid_out=""
+    uptime=0
+    if is_running; then
+        running=1
+        pid_out=$pid
+        started=$(stat -c %Y "$PIDFILE" 2>/dev/null || echo 0)
+        now=$(date +%s)
+        [ "$started" -gt 0 ] && [ "$now" -ge "$started" ] && uptime=$((now - started))
+    fi
+    on=0
+    [ -f "$ON" ] && on=1
+    echo "name SMARTDNS"
+    echo "version $(cat "$DIR/.version" 2>/dev/null)"
+    echo "service.on $on"
+    echo "service.running $running"
+    echo "service.pid $pid_out"
+    echo "service.uptime_s $uptime"
+    echo "audit.file $RUN/audit.log"
+}
+
+# set-config < smartdns.conf
+set_config() {
+    [ -x "$SMARTDNS_BIN" ] || die "SmartDNS не установлен: $SMARTDNS_BIN — поставьте его командой nuxk dns"
+    mkdir -p "$DIR"
+    STAGE="$DIR/.stage.conf"
+    cat >"$STAGE"
+    [ -s "$STAGE" ] || {
+        rm -f "$STAGE"
+        die "set-config: пустая конфигурация"
+    }
+    # the configuration nuxk writes has only these words in it: no shell, no paths elsewhere
+    if grep -v '^#' "$STAGE" | grep -q '[;`$|&<>]'; then
+        rm -f "$STAGE"
+        die "set-config: в конфигурации недопустимые символы"
+    fi
+    touch "$ON"
+    if is_running && [ -f "$CONF" ] && [ "$(cat "$STAGE")" = "$(cat "$CONF")" ]; then
+        rm -f "$STAGE"
+        echo "unchanged"
+        return 0
+    fi
+    had=""
+    if [ -f "$CONF" ]; then
+        had=1
+        cp -p "$CONF" "$CONF.prev"
+    fi
+    mv "$STAGE" "$CONF"
+    halt
+    if (run) 2>"$DIR/.start.err"; then
+        rm -f "$CONF.prev" "$DIR/.start.err"
+        echo "applied"
+        return 0
+    fi
+    why=$(cat "$DIR/.start.err")
+    rm -f "$DIR/.start.err"
+    if [ -n "$had" ]; then
+        mv "$CONF.prev" "$CONF"
+        (run) 2>/dev/null
+        die "SmartDNS не запустился с новой конфигурацией — вернул прежнюю. $why"
+    fi
+    rm -f "$CONF" "$ON"
+    die "SmartDNS не запустился с этой конфигурацией. $why"
+}
+
+case "$1" in
+up)
+    mkdir -p "$DIR" && touch "$ON"
+    run
+    ;;
+down)
+    rm -f "$ON"
+    halt
+    ;;
+start)
+    # at boot: only when it's chosen in the panel
+    [ -f "$ON" ] || exit 0
+    run
+    ;;
+stop) halt ;;
+restart)
+    halt
+    [ -f "$ON" ] || exit 0
+    run
+    ;;
+status)
+    if is_running; then echo "SmartDNS работает, pid $pid"; else
+        echo "SmartDNS остановлен"
+        exit 1
+    fi
+    ;;
+info) info ;;
+set-config) set_config ;;
+*)
+    echo "usage: $0 {up|down|start|stop|restart|status|info|set-config}" >&2
+    exit 1
+    ;;
+esac

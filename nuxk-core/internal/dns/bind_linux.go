@@ -1,6 +1,9 @@
 package dns
 
-import "syscall"
+import (
+	"os"
+	"syscall"
+)
 
 // bindTo sends a socket out of iface (SO_BINDTODEVICE), whatever the routing
 // table says — the way S52xray-nuxk's probe uses curl --interface: packets
@@ -18,3 +21,11 @@ func bindTo(iface string) func(network, address string, c syscall.RawConn) error
 }
 
 const canBind = true
+
+// inode: a file's inode — a rotated log is a new file under the same name.
+func inode(fi os.FileInfo) uint64 {
+	if st, ok := fi.Sys().(*syscall.Stat_t); ok {
+		return uint64(st.Ino)
+	}
+	return 0
+}

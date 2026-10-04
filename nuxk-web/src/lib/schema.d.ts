@@ -534,6 +534,43 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/dns/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The last hour of answers, minute by minute — from the cache, a server, expired, none
+         * @description Every answer the router's DNS proxy got from nuxk: from the built-in forwarder as it answers, or read from SmartDNS's audit log. Kept for an hour on the router (the controller keeps longer). With SmartDNS «cache» means answered within 1 ms — SmartDNS doesn't say more — so expired answers are among them (`stale_known: false`, `note`).
+         */
+        get: operations["dnsStats"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/dns/log": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The last questions and their answers, newest first */
+        get: operations["dnsLog"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/dns/check": {
         parameters: {
             query?: never;
@@ -898,6 +935,11 @@ export interface components {
             resolvers: string[];
             /** @description answers kept for their TTL (on unless turned off) */
             cache: boolean;
+            /**
+             * @description what answers on the address: nuxk's built-in forwarder, or SmartDNS (beta, installed by `nuxk dns`) — through WARP, straight when WARP doesn't answer (via direct: straight only). Switching while on keeps the router's DNS proxy as it is; if the new one doesn't answer, the old one comes back. Absent from older agents: nuxk.
+             * @enum {string}
+             */
+            engine?: "nuxk" | "smartdns";
         };
         DNSResolver: {
             id: string;
@@ -951,8 +993,71 @@ export interface components {
             resolver?: string;
             paths: components["schemas"]["DNSPathStat"][];
             cache: components["schemas"]["DNSCache"];
+            smartdns?: components["schemas"]["DNSSmartDNS"];
             error?: string;
             catalog: components["schemas"]["DNSResolver"][];
+        };
+        /** @description SmartDNS on this router; absent where it isn't offered (not a router) */
+        DNSSmartDNS: {
+            /** @description S53smartdns-nuxk is there (`nuxk dns`) */
+            installed: boolean;
+            /** @description it answered the last check */
+            running: boolean;
+            version?: string;
+            /** @description the questions go out through it: WARP's interface */
+            iface?: string;
+            /** @description straight to the same servers when WARP doesn't answer */
+            fallback: boolean;
+            error?: string;
+        };
+        DNSMinute: {
+            /** @description the minute's start, unix seconds */
+            t: number;
+            cache: number;
+            upstream: number;
+            stale: number;
+            failed: number;
+            /** @description upstream answers: the mean time */
+            avg_ms?: number;
+            /** @description upstream answers: 95 % were faster */
+            p95_ms?: number;
+        };
+        DNSCount: {
+            name: string;
+            count: number;
+        };
+        DNSStats: {
+            /** @enum {string} */
+            engine: "nuxk" | "smartdns";
+            /** @description counting since, unix seconds */
+            since?: number;
+            /** @description in the last hour */
+            queries: number;
+            cache: number;
+            upstream: number;
+            stale: number;
+            failed: number;
+            avg_ms?: number;
+            /** @description 60, oldest first, the current one last */
+            minutes: components["schemas"]["DNSMinute"][];
+            /** @description the most asked names */
+            top: components["schemas"]["DNSCount"][];
+            types: components["schemas"]["DNSCount"][];
+            /** @description expired answers counted apart (the built-in forwarder); with SmartDNS they're among cache */
+            stale_known: boolean;
+            /** @description what this engine can't tell apart, in words for the panel */
+            note?: string;
+        };
+        DNSQuery: {
+            at: number;
+            domain: string;
+            /** @description A, AAAA, HTTPS… */
+            type: string;
+            /** @description the first addresses, or nxdomain / empty / rcode N */
+            answer?: string;
+            /** @enum {string} */
+            source: "cache" | "upstream" | "stale" | "failed";
+            ms: number;
         };
         DNSCheckItem: {
             domain: string;
@@ -1859,6 +1964,66 @@ export interface operations {
                 };
             };
             401: components["responses"]["Error"];
+            /** @description dns_failed: SmartDNS (its cache is cleared by a restart) didn't restart */
+            502: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    dnsStats: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the hour */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DNSStats"];
+                };
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    dnsLog: {
+        parameters: {
+            query?: {
+                /** @description part of the name */
+                q?: string;
+                /** @description how many (200 by default) */
+                n?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the questions */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["DNSQuery"][];
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
         };
     };
     checkDNS: {

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"time"
 
 	"nuxk.dev/horizon/core/internal/dns"
@@ -39,7 +40,7 @@ func (d Deps) handleDNSSettings(w http.ResponseWriter, r *http.Request) {
 	s := d.DNS.Settings()
 	s.Resolvers = nil
 	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<10)).Decode(&s); err != nil {
-		writeErr(w, http.StatusBadRequest, "bad_body", `want {"enabled":true,"via":"auto","resolvers":["cloudflare"],"cache":true}`)
+		writeErr(w, http.StatusBadRequest, "bad_body", `want {"enabled":true,"via":"auto","resolvers":["cloudflare"],"cache":true,"engine":"nuxk"}`)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
@@ -48,7 +49,7 @@ func (d Deps) handleDNSSettings(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case errors.Is(err, dns.ErrBadSettings):
 		writeErr(w, http.StatusBadRequest, "bad_settings", err.Error())
-	case errors.Is(err, dns.ErrNoHook):
+	case errors.Is(err, dns.ErrNoHook), errors.Is(err, dns.ErrNoSmartDNS):
 		writeErr(w, http.StatusConflict, "dns_unavailable", err.Error())
 	case err != nil:
 		writeErr(w, http.StatusBadGateway, "dns_failed", err.Error())
@@ -86,5 +87,31 @@ func (d Deps) handleDNSCacheFlush(w http.ResponseWriter, r *http.Request) {
 	if d.dnsOff(w) {
 		return
 	}
-	writeJSON(w, http.StatusOK, d.DNS.FlushCache())
+	ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
+	defer cancel()
+	st, err := d.DNS.FlushCache(ctx)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, "dns_failed", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, st)
+}
+
+// handleDNSStats: the last hour of answers, minute by minute — what came
+// from the cache, from a server, expired, or not at all.
+func (d Deps) handleDNSStats(w http.ResponseWriter, r *http.Request) {
+	if d.dnsOff(w) {
+		return
+	}
+	writeJSON(w, http.StatusOK, d.DNS.Stats())
+}
+
+// handleDNSLog: the last questions and their answers, newest first;
+// ?q= filters by part of the name, ?n= how many (up to 200).
+func (d Deps) handleDNSLog(w http.ResponseWriter, r *http.Request) {
+	if d.dnsOff(w) {
+		return
+	}
+	n, _ := strconv.Atoi(r.URL.Query().Get("n"))
+	writeJSON(w, http.StatusOK, map[string]any{"items": d.DNS.Log(r.URL.Query().Get("q"), n)})
 }
