@@ -44,9 +44,12 @@ jobs:
       - run: sudo apt-get install -y --no-install-recommends busybox openssh-client  # ssh-keygen signs the test releases
       - run: sh engines/nuxk-nfqws2/shim_test.sh
       - run: sh engines/nuxk-xray/shim_test.sh
+      - run: sh engines/nuxk-smartdns/shim_test.sh
       - run: sh install/lite_test.sh
       - run: SH="busybox sh" sh install/lite_test.sh
       - run: sh -n install/nuxk-full.sh && busybox sh -n install/nuxk-lite.sh
+      - name: router side with only a fresh Entware's tools (no nohup, a short od)
+        run: docker run --rm -v "$PWD":/src -w /src debian:bookworm-slim sh install/router_test.sh
 
   controller:
     runs-on: ubuntu-latest

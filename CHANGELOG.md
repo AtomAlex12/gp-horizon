@@ -10,6 +10,20 @@
 
 ## [Unreleased]
 
+## [0.5.0-beta.5] — 2026-10-04
+
+Исправление для роутеров со «свежим» Entware.
+
+### Fixed
+- **VLESS не запускался: `nohup: not found`.** В BusyBox из Entware нет команды `nohup`, и
+  адаптер xray падал при сохранении сервера VLESS в панели («S52xray-nuxk set-config: exit
+  status 1»). Теперь xray запускается без `nohup` и так же переживает закрытие SSH-сессии.
+
+### Changed
+- Скрипты для роутера (установщик, адаптеры nfqws2, xray, SmartDNS) теперь проверяются и на
+  наборе команд «свежего» Entware — его собственном BusyBox без `nohup`, `setsid`, `timeout` и
+  с урезанным `od`: `install/router_test.sh`, в CI.
+
 ## [0.5.0-beta.4] — 2026-10-04
 
 **SmartDNS вместо встроенного DNS (бета) и графики DNS.** На экране «DNS» теперь видно, как
