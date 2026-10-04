@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -151,7 +152,9 @@ func (m memStore) SaveJSON(n string, v any) error { m[n] = v; return nil }
 
 func newService(t *testing.T, srv *httptest.Server, o Options) *Service {
 	t.Helper()
-	o.Listen = freeAddr(t)
+	if o.Listen == "" {
+		o.Listen = freeAddr(t)
+	}
 	o.Resolvers = []Resolver{{ID: "t", Name: "Test", URL: srv.URL + "/dns-query"}}
 	if o.Transport == nil {
 		o.Transport = func(p Path) http.RoundTripper {
@@ -264,7 +267,7 @@ func TestServFailWhenNothingAnswers(t *testing.T) {
 // fakeProxy stands for the router's DNS proxy: it answers cloudflare.com
 // itself and passes nuxk's test question on to the forwarder, as a proxy with
 // nuxk among its servers does. dead: it doesn't answer at all.
-func fakeProxy(t *testing.T, forwarder func() string, dead *bool) string {
+func fakeProxy(t *testing.T, forwarder string, dead *atomic.Bool) string {
 	t.Helper()
 	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
 	if err != nil {
@@ -279,13 +282,13 @@ func fakeProxy(t *testing.T, forwarder func() string, dead *bool) string {
 				return
 			}
 			q := append([]byte{}, buf[:n]...)
-			if *dead {
+			if dead.Load() {
 				continue
 			}
 			name := QName(q)
 			var resp []byte
 			if strings.HasSuffix(name, ".nuxk-check.example.com") {
-				if c, err := net.Dial("udp", forwarder()); err == nil {
+				if c, err := net.Dial("udp", forwarder); err == nil {
 					_ = c.SetDeadline(time.Now().Add(3 * time.Second))
 					_, _ = c.Write(q)
 					b := make([]byte, 4096)
@@ -307,11 +310,11 @@ func fakeProxy(t *testing.T, forwarder func() string, dead *bool) string {
 
 func TestEnableAttachesAndChecks(t *testing.T) {
 	srv, _ := dohServer(t)
-	dead := false
-	var s *Service
+	var dead atomic.Bool
 	h := &fakeHook{}
-	proxy := fakeProxy(t, func() string { return s.o.Listen }, &dead)
-	s = newService(t, srv, Options{Hook: h, RouterDNS: proxy})
+	addr := freeAddr(t)
+	proxy := fakeProxy(t, addr, &dead)
+	s := newService(t, srv, Options{Listen: addr, Hook: h, RouterDNS: proxy})
 	st, err := s.SetSettings(context.Background(), Settings{Enabled: true, Via: ViaAuto})
 	if err != nil {
 		t.Fatal(err)
@@ -329,11 +332,11 @@ func TestEnableAttachesAndChecks(t *testing.T) {
 // it was.
 func TestEnableRevertsWhenRouterDNSBreaks(t *testing.T) {
 	srv, _ := dohServer(t)
-	dead := false
-	var s *Service
-	h := &fakeHook{onAtt: func() { dead = true }}
-	proxy := fakeProxy(t, func() string { return s.o.Listen }, &dead)
-	s = newService(t, srv, Options{Hook: h, RouterDNS: proxy})
+	var dead atomic.Bool
+	h := &fakeHook{onAtt: func() { dead.Store(true) }}
+	addr := freeAddr(t)
+	proxy := fakeProxy(t, addr, &dead)
+	s := newService(t, srv, Options{Listen: addr, Hook: h, RouterDNS: proxy})
 	st, err := s.SetSettings(context.Background(), Settings{Enabled: true})
 	if err == nil || !strings.Contains(err.Error(), "отключил обратно") {
 		t.Fatalf("err %v", err)
@@ -365,14 +368,13 @@ func TestEnableRefuses(t *testing.T) {
 // again: added back.
 func TestSuspendAndResume(t *testing.T) {
 	srv, _ := dohServer(t)
-	down := false
+	var down, dead atomic.Bool
 	h := &fakeHook{}
-	dead := false
-	var s *Service
-	proxy := fakeProxy(t, func() string { return s.o.Listen }, &dead)
-	s = newService(t, srv, Options{Hook: h, RouterDNS: proxy, Transport: func(Path) http.RoundTripper {
+	addr := freeAddr(t)
+	proxy := fakeProxy(t, addr, &dead)
+	s := newService(t, srv, Options{Listen: addr, Hook: h, RouterDNS: proxy, Transport: func(Path) http.RoundTripper {
 		return rtFunc(func(r *http.Request) (*http.Response, error) {
-			if down {
+			if down.Load() {
 				return nil, errors.New("down")
 			}
 			return srv.Client().Transport.RoundTrip(r)
@@ -382,14 +384,14 @@ func TestSuspendAndResume(t *testing.T) {
 	if _, err := s.SetSettings(ctx, Settings{Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
-	down = true
+	down.Store(true)
 	for i := 0; i < 3; i++ {
 		s.tick(ctx)
 	}
 	if st := s.Status(); st.Attached || !st.Suspended || !st.Settings.Enabled || st.Error == "" {
 		t.Fatalf("suspended: %+v", st)
 	}
-	down = false
+	down.Store(false)
 	s.tick(ctx)
 	if st := s.Status(); !st.Attached || st.Suspended || st.Error != "" {
 		t.Fatalf("resumed: %+v", st)
