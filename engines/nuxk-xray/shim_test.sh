@@ -117,8 +117,10 @@ check "probe when stopped" "$(sh "$SHIM" probe | sed -n 's/^reason //p')" "stopp
 check "restart" "$(sh "$SHIM" restart >/dev/null && kv tunnel.state)" "connected"
 
 # --- KeeneticOS: OpkgTun1 is configured only when nuxk created it -----------
+# like the firmware's: dies under Entware's LD_LIBRARY_PATH
 cat >"$ROOT/bin/ndmc" <<EOF
 #!/bin/sh
+[ -n "\${LD_LIBRARY_PATH:-}" ] && { echo "ndm: Cli::Main: failed to initialize." >&2; exit 1; }
 echo "\$2" >>"$ROOT/ndmc.log"
 case "\$2" in
 "show interface OpkgTun1") printf 'id: OpkgTun1\n  description: %s\n' "\$(cat "$ROOT/ndm.descr")" ;;
@@ -128,7 +130,7 @@ chmod +x "$ROOT/bin/ndmc"
 export NDMC="$ROOT/bin/ndmc"
 echo nuxk-vless >"$ROOT/ndm.descr"
 : >"$ROOT/ndmc.log"
-sh "$SHIM" restart
+LD_LIBRARY_PATH=/opt/lib:/opt/usr/lib sh "$SHIM" restart
 check "ndm: ours configured on start" "$(grep -v '^show' "$ROOT/ndmc.log" | tr '\n' ,)" "interface OpkgTun1 down,interface OpkgTun1 ip global auto,interface OpkgTun1 ip tcp adjust-mss pmtu,interface OpkgTun1 ip address 172.16.2.1 255.255.255.255,interface OpkgTun1 up,"
 : >"$ROOT/ndmc.log"
 sh "$SHIM" stop

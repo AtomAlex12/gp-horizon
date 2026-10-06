@@ -57,12 +57,16 @@ write_tun() {
 # description isn't nuxk's is never touched.
 ndm_iface() { echo "$(iface)" | sed 's/^opkg/Opkg/; s/tun/Tun/'; }
 
+# the firmware's ndmc with its own libraries, not Entware's (LD_LIBRARY_PATH
+# has /opt/lib first: ndmc then dies with "Cli::Main: failed to initialize")
+ndmc_run() { (unset LD_LIBRARY_PATH; exec "$NDMC" "$@"); }
+
 ndm_ours() {
     [ -x "$NDMC" ] || return 1
-    "$NDMC" -c "show interface $(ndm_iface)" 2>/dev/null | grep -q "description: *$MARK *\$"
+    ndmc_run -c "show interface $(ndm_iface)" 2>/dev/null | grep -q "description: *$MARK *\$"
 }
 
-ndm() { "$NDMC" -c "$1" >/dev/null 2>&1 || echo "ndmc «$1» не выполнилась" >&2; }
+ndm() { ndmc_run -c "$1" >/dev/null 2>&1 || echo "ndmc «$1» не выполнилась" >&2; }
 
 ndm_up() {
     if ! ndm_ours; then

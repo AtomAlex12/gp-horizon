@@ -210,7 +210,7 @@ fn_iface_ip_live() {
 
 # Parse `ndmc -c "show interface X"` for a single field
 fn_ndm_field() {
-    ndmc -c "show interface $(fn_iface_ndmname)" 2>/dev/null |
+    fn_ndmc -c "show interface $(fn_iface_ndmname)" 2>/dev/null |
         sed -n "s/^[[:space:]]*$1:[[:space:]]*//p" | head -1
 }
 
