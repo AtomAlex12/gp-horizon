@@ -64,6 +64,9 @@ root / nuxk-dev), на контроллере — admin из мастера. `AP
 - **Скрипты для роутера — только то, что есть в «свежем» Entware:** его BusyBox без `nohup`,
   `setsid`, `timeout`, `realpath`, с `od` без `-A`/`-t`; плюс `curl` и то, что ставит
   установщик. Проверяет `install/router_test.sh` (в CI).
+- **Go для агента — не новее 1.25, пока не проверено на ядре 3.4** (MIPS-роутеры Keenetic):
+  xray на Go 1.26 падает там при старте среды Go (`futexwakeup … returned -89`). Поэтому и xray
+  для mips/mipsel закреплён на 26.2.6 (Go 1.25), см. `xray_asset` в `install/nuxk-lite.sh`.
 - **API меняется только вместе с контрактом.** Новый/изменённый эндпоинт агента →
   запись в `api.Routes` (`internal/api/api.go`) + `api/openapi.yaml` + `npm run gen:api`.
   CI проверяет: `TestOpenAPIMatchesRoutes`, `TestOpenAPISchemasCoverJSONFields`, `check:api`.

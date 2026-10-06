@@ -53,5 +53,9 @@ On the Pi (arm64), in a throwaway container: the official v26.3.27 binary,
 a local VLESS + Reality (vision) server, the real nuxk-core — link through
 `PUT /api/v1/engines/xray/config`, the tunnel up, a new server while the old
 one runs, the probe through the tunnel, a broken link refused with 400.
+
+On a mipsel Keenetic (KeeneticOS 5.01, kernel 3.4): v26.3.27 (Go 1.26) dies at
+start (`futexwakeup … returned -89`), v26.2.6 (Go 1.25) runs — MIPS is pinned
+to 26.2.6 in `install/nuxk-lite.sh`.
 The address of `opkgtun1` comes from KeeneticOS (the `OpkgTun1` interface);
 without one, `curl --interface` has no source address.
