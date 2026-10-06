@@ -112,8 +112,10 @@ install) shift; for p in "\$@"; do case "\$p" in --*) continue ;; esac; echo "In
   echo "\$p - 1.0-test" >>"$STATE"; done ;;
 esac
 EOF
+# like the firmware's: dies under Entware's LD_LIBRARY_PATH (a mipsel Keenetic)
 cat >"$BIN/ndmc" <<EOF
 #!/bin/sh
+[ -n "\${LD_LIBRARY_PATH:-}" ] && { echo "[C] ndm: Cli::Main: failed to initialize." >&2; exit 1; }
 echo "\$2" >>"$ROOT/ndmc.log"
 D="$ROOT/ndm"
 case "\$2" in
@@ -121,7 +123,8 @@ case "\$2" in
 "show interface "*) f="\$D/\${2#show interface }"; [ -f "\$f" ] || exit 1; echo "  description: \$(cat "\$f")" ;;
 "interface "*" description "*) r=\${2#interface }; mkdir -p "\$D"; echo "\${r#* description }" >"\$D/\${r%% *}" ;;
 "no interface "*) rm -f "\$D/\${2#no interface }" ;;
-"interface "*) i=\${2#interface }; mkdir -p "\$D"; [ -f "\$D/\$i" ] || echo - >"\$D/\$i" ;;
+"interface "*) [ -f "$ROOT/ndm.refuse" ] && { echo "Command::Base error[7405600]: Cannot create NDM interface"; exit 1; }
+  i=\${2#interface }; mkdir -p "\$D"; [ -f "\$D/\$i" ] || echo - >"\$D/\$i" ;;
 "system configuration save") echo saved >>"$ROOT/ndm.saved" ;;
 esac
 EOF
@@ -148,6 +151,7 @@ chmod +x "$BIN"/*
 export PATH="$BIN:$PATH"
 export NUXK_BASE_URL=$(furl "$REL")
 export NO_COLOR=1
+export LD_LIBRARY_PATH="$ROOT/opt-lib" # as in an Entware shell: /opt/lib first
 export NUXK_TEST_WAIT=2 # a dead agent: 2 s, not 15
 
 fail=0
@@ -354,6 +358,31 @@ check "bad xray: not wired" "$(has "$C" 'ENGINE_XRAY="/opt/etc/init.d/S52xray-nu
 XRAY_BASE_URL=$(furl "$BADX") XRAY_TEST_SUM=$BADSUM $SH "$(f /opt/bin/nuxk)" vless --yes >"$ROOT/out" 2>&1 &&
     check "bad xray by name: fails" "exit 0" "exit 1"
 check "bad xray by name: says why" "$(has "$ROOT/out" 'xray 26.3.27 не запускается на этом роутере')" "1"
+
+# 15. a firmware that won't make an OpkgTun (seen on a mipsel Keenetic): a
+# whole install skips VLESS and goes on; xray isn't counted as installed
+grep -l nuxk-vless "$ROOT"/ndm/* | xargs rm -f # the router never had ours
+rm -f "$(f /opt/sbin/xray)"
+saved=$(has "$ROOT/ndm.saved" saved)
+touch "$ROOT/ndm.refuse"
+lite --yes --with-vless || { cat "$ROOT/out"; exit 1; }
+[ -n "${SHOW:-}" ] && cat "$ROOT/out"
+check "no OpkgTun: VLESS skipped, said why" "$(has "$ROOT/out" 'не создался: Command::Base error\[7405600\]: Cannot create NDM interface — VLESS пропускаю')" "1"
+check "no OpkgTun: the rest installed and started" "$(has "$ROOT/out" 'nuxk-core отвечает')" "1"
+check "no OpkgTun: no adapter, asked again next time" "$([ -e "$(f /opt/etc/init.d/S52xray-nuxk)" ] && echo there || echo gone)" "gone"
+check "no OpkgTun: not wired, config not saved" "$(has "$C" 'ENGINE_XRAY="/opt/etc/init.d/S52xray-nuxk"')/$(has "$ROOT/ndm.saved" saved)" "0/$saved"
+rm -f "$ROOT/ndm.refuse"
+
+# 16. usque installed but its OpkgTun never made (its ndmc died): `nuxk warp`
+# installs it again instead of "already there", and says the interface is missing
+rm -f "$ROOT/ndm/OpkgTun0"
+: >"$ROOT/opkg.log"
+$SH "$(f /opt/bin/nuxk)" warp --yes >"$ROOT/out" 2>&1 || { cat "$ROOT/out"; exit 1; }
+check "warp, no interface: installed again" "$(has "$ROOT/opkg.log" 'usque-keenetic-x86_64.ipk')/$(has "$ROOT/out" 'WARP уже стоит')" "1/0"
+check "warp, no interface: said so" "$(has "$ROOT/out" 'интерфейса OpkgTun0 в Keenetic нет')" "1"
+echo usque >"$ROOT/ndm/OpkgTun0"
+$SH "$(f /opt/bin/nuxk)" warp --yes >"$ROOT/out" 2>&1
+check "warp, interface back: already there" "$(has "$ROOT/out" 'WARP уже стоит')" "1"
 
 [ "$fail" = 0 ] && echo "all lite installer tests passed"
 exit "$fail"

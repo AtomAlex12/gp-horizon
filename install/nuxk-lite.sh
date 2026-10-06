@@ -309,6 +309,10 @@ in_release() { awk -v f="$1" '$2 == f || $2 == "*" f { found = 1 } END { exit !f
 # --- the router, read only -------------------------------------------------------------
 
 have() { command -v "$1" >/dev/null 2>&1; }
+# nd ARGS — the firmware's ndmc, with the firmware's own libraries: under
+# Entware's LD_LIBRARY_PATH (/opt/lib first) it picks up Entware's and dies
+# with "Cli::Main: failed to initialize" (seen on a mipsel Keenetic)
+nd() { (unset LD_LIBRARY_PATH; exec ndmc "$@"); }
 pkg_ver() { opkg list-installed "$1" 2>/dev/null | awk -v p="$1" '$1 == p { print $3 }'; }
 conf_get() { sed -n "s/^$1=[\"']\{0,1\}\([^\"']*\)[\"']\{0,1\}\$/\1/p" "$R$P_CONF" 2>/dev/null | tail -n 1; }
 
@@ -335,8 +339,8 @@ survey() {
     XRAY_VERSION=$(xray_version "$ARCH")
     KOS="" MODEL=""
     if have ndmc; then
-        KOS=$(ndmc -c 'show version' 2>/dev/null | sed -n 's/^ *release: *//p' | head -n 1)
-        MODEL=$(ndmc -c 'show version' 2>/dev/null | sed -n 's/^ *model: *//p' | head -n 1)
+        KOS=$(nd -c 'show version' 2>/dev/null | sed -n 's/^ *release: *//p' | head -n 1)
+        MODEL=$(nd -c 'show version' 2>/dev/null | sed -n 's/^ *model: *//p' | head -n 1)
     fi
     FREE_KB=$(df -k "$R/opt" 2>/dev/null | awk 'NR == 2 { print $4 }')
     MEM_KB=$(awk '/MemAvailable/ { print $2 }' /proc/meminfo 2>/dev/null)
@@ -357,6 +361,10 @@ survey() {
     USQUE_READY=0
     [ -x "$R$P_USQUE" ] && "$R$P_USQUE" info 2>/dev/null | grep -q '^service.running ' && USQUE_READY=1
     USQUE_IFACE=$(sed -n 's/^IFACE="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "$R/opt/etc/usque/usque.conf" 2>/dev/null | tail -n 1 | sed 's/^opkg/Opkg/; s/tun/Tun/')
+    # usque installed but its interface never made (its ndmc died): WARP
+    # can't work, the install offers it again
+    USQUE_NOIF=0
+    [ "$USQUE_READY" = 1 ] && [ -n "$USQUE_IFACE" ] && have ndmc && ! nd -c "show interface $USQUE_IFACE" >/dev/null 2>&1 && USQUE_NOIF=1
     XRAY_VER=""
     [ -x "$R$P_XRAY" ] && XRAY_VER=$("$R$P_XRAY" version 2>/dev/null | sed -n '1s/^Xray \([^ ]*\).*/\1/p')
     XRAY_READY=0
@@ -383,7 +391,7 @@ xray_iface() {
     free=""
     for n in 0 1 2 3 4 5 6 7 8 9; do
         i="OpkgTun$n"
-        if out=$(ndmc -c "show interface $i" 2>/dev/null); then
+        if out=$(nd -c "show interface $i" 2>/dev/null); then
             echo "$out" | grep -q "description: *$XRAY_MARK *\$" && { echo "$i"; return; }
         elif [ "$n" -gt 0 ] && [ -z "$free" ] && [ "$i" != "$USQUE_IFACE" ]; then
             free=$i
@@ -542,7 +550,11 @@ do_usque() {
     run "opkg install --force-reinstall '$TMP/usque-keenetic-$ARCH.ipk'" || die "usque-keenetic не установился"
     survey
     [ "$USQUE_READY" = 1 ] || die "usque установлен, но S51usque не отвечает на info — посмотрите /opt/var/log/usque.log"
-    ok "WARP · интерфейс ${USQUE_IFACE:-?}"
+    if [ "$USQUE_NOIF" = 1 ]; then
+        warn "WARP установлен, но интерфейса $USQUE_IFACE в Keenetic нет — туннель не заработает; что ответила прошивка — в выводе usque выше"
+    else
+        ok "WARP · интерфейс ${USQUE_IFACE:-?}"
+    fi
     "$R$P_USQUE" info 2>/dev/null | grep -q '^service.running 1' ||
         warn "usque пока не запущен (часто — не прошла регистрация в WARP): после запуска nuxk нажмите «Рестарт» у WARP в панели"
     wire "ENGINE_USQUE" "$P_USQUE"
@@ -590,9 +602,17 @@ do_xray() {
     # the interface is created once and saved; S52xray-nuxk gives it its
     # address at every start, like usque does for OpkgTun0. An update finds
     # it made: the router's configuration isn't saved again.
-    if have ndmc && ! ndmc -c "show interface $tun" 2>/dev/null | grep -q "description: *$XRAY_MARK *\$"; then
-        ndmc -c "show interface $tun" >/dev/null 2>&1 || ndmc -c "interface $tun" >/dev/null 2>&1 || die "интерфейс $tun в Keenetic не создался"
-        ndmc -c "interface $tun description $XRAY_MARK" >/dev/null 2>&1 && ndmc -c "system configuration save" >/dev/null 2>&1 ||
+    if have ndmc && ! nd -c "show interface $tun" 2>/dev/null | grep -q "description: *$XRAY_MARK *\$"; then
+        if ! nd -c "show interface $tun" >/dev/null 2>&1 && ! nerr=$(nd -c "interface $tun" 2>&1); then
+            nerr=$(echo "$nerr" | tr -s '\n' ' ' | sed 's/ *$//')
+            [ -n "$XRAY_SOFT" ] || die "интерфейс $tun в Keenetic не создался${nerr:+: $nerr}"
+            # xray stays in /opt; without its adapter it isn't counted as
+            # installed, so the next run asks again
+            rm -f "$R$P_XRAY_INIT"
+            warn "интерфейс $tun в Keenetic не создался${nerr:+: $nerr} — VLESS пропускаю, остальное ставлю дальше"
+            return 1
+        fi
+        nd -c "interface $tun description $XRAY_MARK" >/dev/null 2>&1 && nd -c "system configuration save" >/dev/null 2>&1 ||
             die "не удалось подписать $tun и сохранить конфигурацию роутера"
         ok "Keenetic: интерфейс $tun ($XRAY_MARK), конфигурация роутера сохранена"
     fi
@@ -781,6 +801,7 @@ mode_install() {
     blocked && die "установка невозможна: исправьте пункты с ✗ и запустите снова"
 
     section "План"
+    [ "$USQUE_NOIF" = 1 ] && USQUE_READY=0 # WARP without its interface: offered again
     want_deps="" want_nfq="" want_core="" want_usque="" want_xray="" want_conf=""
     if [ -n "$MISSING_DEPS" ]; then row do "Пакеты Entware" "opkg install$MISSING_DEPS"; want_deps=1; else row ok "Пакеты Entware" "$DEPS"; fi
     if [ -n "$NFQ_VER" ]; then row ok "nfqws2-keenetic" "$NFQ_VER · обновляется через opkg upgrade"; else row do "nfqws2-keenetic" "обход DPI: репозиторий nfqws2-keenetic + opkg install"; want_nfq=1; fi
@@ -911,7 +932,7 @@ mode_add() { # add nfqws2|warp|vless|dns
         DONE_MSG="nfqws2 установлен"
         ;;
     warp)
-        [ "$USQUE_READY" = 1 ] && { already "WARP уже стоит"; return; }
+        [ "$USQUE_READY" = 1 ] && [ "$USQUE_NOIF" != 1 ] && { already "WARP уже стоит"; return; }
         in_release "usque-keenetic-$ARCH.ipk" || die "в релизе нет usque для $ARCH"
         confirm "Поставить WARP? Регистрирует устройство в Cloudflare WARP (вы принимаете их условия), создаёт интерфейс OpkgTun и сохраняет конфигурацию роутера." || die "отменено"
         report running "Ставлю WARP (usque)"
@@ -1005,8 +1026,8 @@ mode_uninstall() {
         if ask "Удалить и xray${tun:+ с интерфейсом $tun} (конфигурация роутера сохранится)?" n; then
             "$R$P_XRAY_INIT" stop >/dev/null 2>&1
             rm -rf "$R$P_XRAY" "$R$P_XRAY_INIT" "$R/opt/etc/xray" "$R/opt/var/log/xray.log"
-            if [ -n "$tun" ] && have ndmc && ndmc -c "show interface $tun" 2>/dev/null | grep -q "description: *$XRAY_MARK"; then
-                ndmc -c "no interface $tun" >/dev/null 2>&1 && ndmc -c "system configuration save" >/dev/null 2>&1 && ok "интерфейс $tun убран"
+            if [ -n "$tun" ] && have ndmc && nd -c "show interface $tun" 2>/dev/null | grep -q "description: *$XRAY_MARK"; then
+                nd -c "no interface $tun" >/dev/null 2>&1 && nd -c "system configuration save" >/dev/null 2>&1 && ok "интерфейс $tun убран"
             fi
             ok "xray удалён"
         else
