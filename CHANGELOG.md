@@ -10,6 +10,15 @@
 
 ## [Unreleased]
 
+## [0.5.0-beta.8] — 2026-10-06
+
+**WARP и VLESS на роутерах, где `ndmc` из Entware не запускался.** Интерфейсы OpkgTun
+теперь создаются; установка не обрывается из-за VLESS.
+
+Бета: ставить по ссылке с номером —
+`curl -fsSLo /opt/tmp/nuxk-lite.sh https://github.com/AtomAlex12/nuxk-horizon/releases/download/v0.5.0-beta.8/nuxk-lite.sh`.
+WARP, поставленный раньше без интерфейса, установщик предложит поставить заново.
+
 ### Fixed
 - **WARP и VLESS не создавали интерфейс OpkgTun на части роутеров** («Cannot create NDM
   interface OpkgTun0», «интерфейс OpkgTun1 в Keenetic не создался»). Прошивочный `ndmc`,
