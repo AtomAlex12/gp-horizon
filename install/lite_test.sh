@@ -121,7 +121,8 @@ case "\$2" in
 "show interface "*) f="\$D/\${2#show interface }"; [ -f "\$f" ] || exit 1; echo "  description: \$(cat "\$f")" ;;
 "interface "*" description "*) r=\${2#interface }; mkdir -p "\$D"; echo "\${r#* description }" >"\$D/\${r%% *}" ;;
 "no interface "*) rm -f "\$D/\${2#no interface }" ;;
-"interface "*) i=\${2#interface }; mkdir -p "\$D"; [ -f "\$D/\$i" ] || echo - >"\$D/\$i" ;;
+"interface "*) [ -f "$ROOT/ndm.refuse" ] && { echo "Command::Base error[7405600]: Cannot create NDM interface"; exit 1; }
+  i=\${2#interface }; mkdir -p "\$D"; [ -f "\$D/\$i" ] || echo - >"\$D/\$i" ;;
 "system configuration save") echo saved >>"$ROOT/ndm.saved" ;;
 esac
 EOF
@@ -354,6 +355,20 @@ check "bad xray: not wired" "$(has "$C" 'ENGINE_XRAY="/opt/etc/init.d/S52xray-nu
 XRAY_BASE_URL=$(furl "$BADX") XRAY_TEST_SUM=$BADSUM $SH "$(f /opt/bin/nuxk)" vless --yes >"$ROOT/out" 2>&1 &&
     check "bad xray by name: fails" "exit 0" "exit 1"
 check "bad xray by name: says why" "$(has "$ROOT/out" 'xray 26.3.27 не запускается на этом роутере')" "1"
+
+# 15. a firmware that won't make an OpkgTun (seen on a mipsel Keenetic): a
+# whole install skips VLESS and goes on; xray isn't counted as installed
+grep -l nuxk-vless "$ROOT"/ndm/* | xargs rm -f # the router never had ours
+rm -f "$(f /opt/sbin/xray)"
+saved=$(has "$ROOT/ndm.saved" saved)
+touch "$ROOT/ndm.refuse"
+lite --yes --with-vless || { cat "$ROOT/out"; exit 1; }
+[ -n "${SHOW:-}" ] && cat "$ROOT/out"
+check "no OpkgTun: VLESS skipped, said why" "$(has "$ROOT/out" 'не создался: Command::Base error\[7405600\]: Cannot create NDM interface — VLESS пропускаю')" "1"
+check "no OpkgTun: the rest installed and started" "$(has "$ROOT/out" 'nuxk-core отвечает')" "1"
+check "no OpkgTun: no adapter, asked again next time" "$([ -e "$(f /opt/etc/init.d/S52xray-nuxk)" ] && echo there || echo gone)" "gone"
+check "no OpkgTun: not wired, config not saved" "$(has "$C" 'ENGINE_XRAY="/opt/etc/init.d/S52xray-nuxk"')/$(has "$ROOT/ndm.saved" saved)" "0/$saved"
+rm -f "$ROOT/ndm.refuse"
 
 [ "$fail" = 0 ] && echo "all lite installer tests passed"
 exit "$fail"

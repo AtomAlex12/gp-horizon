@@ -591,7 +591,15 @@ do_xray() {
     # address at every start, like usque does for OpkgTun0. An update finds
     # it made: the router's configuration isn't saved again.
     if have ndmc && ! ndmc -c "show interface $tun" 2>/dev/null | grep -q "description: *$XRAY_MARK *\$"; then
-        ndmc -c "show interface $tun" >/dev/null 2>&1 || ndmc -c "interface $tun" >/dev/null 2>&1 || die "интерфейс $tun в Keenetic не создался"
+        if ! ndmc -c "show interface $tun" >/dev/null 2>&1 && ! nerr=$(ndmc -c "interface $tun" 2>&1); then
+            nerr=$(echo "$nerr" | tr -s '\n' ' ' | sed 's/ *$//')
+            [ -n "$XRAY_SOFT" ] || die "интерфейс $tun в Keenetic не создался${nerr:+: $nerr}"
+            # xray stays in /opt; without its adapter it isn't counted as
+            # installed, so the next run asks again
+            rm -f "$R$P_XRAY_INIT"
+            warn "интерфейс $tun в Keenetic не создался${nerr:+: $nerr} — VLESS пропускаю, остальное ставлю дальше"
+            return 1
+        fi
         ndmc -c "interface $tun description $XRAY_MARK" >/dev/null 2>&1 && ndmc -c "system configuration save" >/dev/null 2>&1 ||
             die "не удалось подписать $tun и сохранить конфигурацию роутера"
         ok "Keenetic: интерфейс $tun ($XRAY_MARK), конфигурация роутера сохранена"
