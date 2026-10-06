@@ -31,16 +31,20 @@ R="${NUXK_ROOT:-}"
 
 # xray: the official XTLS release, pinned by version and by each archive's
 # SHA-256 (from its .dgst). MIPS routers take the soft-float build: most
-# have no FPU (nuxk-core is built the same way).
-XRAY_VERSION="26.3.27"
-xray_asset() { # arch → "zip binary sha256"
+# have no FPU (nuxk-core is built the same way). Since 26.3.23 XTLS builds
+# with Go 1.26, whose runtime dies at start on the MIPS Keenetics' 3.4
+# kernel (futexwakeup returned -89, ENOSYS): MIPS stays on 26.2.6 (Go 1.25),
+# checked on a live mipsel router.
+xray_asset() { # arch → "zip binary sha256 version"
     case "$1" in
-    aarch64) echo "Xray-linux-arm64-v8a.zip xray 4d30283ae614e3057f730f67cd088a42be6fdf91f8639d82cb69e48cde80413c" ;;
-    mips) echo "Xray-linux-mips32.zip xray_softfloat a562f2edbdabc0f1a17eee2226fa9f710e6b61c2d5e2bf3435157b5ce40b1c67" ;;
-    mipsel) echo "Xray-linux-mips32le.zip xray_softfloat fe1ded07a64fe0a406c6c1089f09b6c2999fc2309509ca4c98d93469c0cbf9df" ;;
-    x86_64) echo "Xray-linux-64.zip xray 23cd9af937744d97776ee35ecad4972cf4b2109d1e0fe6be9930467608f7c8ae" ;;
+    aarch64) echo "Xray-linux-arm64-v8a.zip xray 4d30283ae614e3057f730f67cd088a42be6fdf91f8639d82cb69e48cde80413c 26.3.27" ;;
+    mips) echo "Xray-linux-mips32.zip xray_softfloat 76a40ab665db109dad408abcdd01d8a6dabeaaac97f1b74d9f3b09429ff0bb30 26.2.6" ;;
+    mipsel) echo "Xray-linux-mips32le.zip xray_softfloat 1590b2bcefe64fb0604f29c8c75219bfbe8f63daa3bc8e3956edfa6da97c5869 26.2.6" ;;
+    x86_64) echo "Xray-linux-64.zip xray 23cd9af937744d97776ee35ecad4972cf4b2109d1e0fe6be9930467608f7c8ae 26.3.27" ;;
     esac
 }
+xray_version() { set -- $(xray_asset "$1"); echo "${4:-}"; }
+XRAY_VERSION="" # the one for this router's arch, set by survey
 XRAY_BASE_URL="${XRAY_BASE_URL:-https://github.com/XTLS/Xray-core/releases/download}"
 XRAY_MARK="nuxk-vless" # description of the OpkgTun nuxk creates
 
@@ -328,6 +332,7 @@ survey() {
     *x86_64* | *x64* | *amd64*) ARCH=x86_64 ;;
     *) ARCH="" ;;
     esac
+    XRAY_VERSION=$(xray_version "$ARCH")
     KOS="" MODEL=""
     if have ndmc; then
         KOS=$(ndmc -c 'show version' 2>/dev/null | sed -n 's/^ *release: *//p' | head -n 1)
@@ -570,7 +575,15 @@ do_xray() {
     $UNZIP -p "$TMP/$zip" "$xbin" >"$R$P_XRAY.new"
     rm -f "$TMP/$zip" # the archive (≈30 MB) goes before anything else takes room
     chmod 755 "$R$P_XRAY.new"
-    "$R$P_XRAY.new" version 2>/dev/null | grep -q '^Xray ' || { rm -f "$R$P_XRAY.new"; die "xray не запускается на этом роутере ($ARCH_RAW)"; }
+    if ! "$R$P_XRAY.new" version 2>/dev/null | grep -q '^Xray '; then
+        rm -f "$R$P_XRAY.new"
+        [ -n "$XRAY_SOFT" ] || die "xray $XRAY_VERSION не запускается на этом роутере ($ARCH_RAW)"
+        # a whole install or update doesn't fall over one optional engine:
+        # the old xray (if any) is started again, the rest goes on
+        [ -x "$R$P_XRAY" ] && [ -x "$R$P_XRAY_INIT" ] && "$R$P_XRAY_INIT" start >/dev/null 2>&1
+        warn "xray $XRAY_VERSION не запускается на этом роутере ($ARCH_RAW) — VLESS пропускаю, остальное ставлю дальше"
+        return 1
+    fi
     mv -f "$R$P_XRAY.new" "$R$P_XRAY"
     cp -f "$TMP/S52xray-nuxk" "$R$P_XRAY_INIT" && chmod 755 "$R$P_XRAY_INIT"
     ok "$("$R$P_XRAY" version | head -n 1 | cut -d' ' -f1-2) → $P_XRAY ($xbin)"
@@ -826,7 +839,7 @@ mode_install() {
     [ -n "$want_nfq" ] && do_nfqws2
     [ -n "$want_core" ] && do_core
     [ -n "$want_usque" ] && do_usque
-    [ -n "$want_xray" ] && do_xray
+    [ -n "$want_xray" ] && XRAY_SOFT=1 && { do_xray || :; }
     [ -n "$want_conf" ] && do_config
     do_start
     finish
@@ -856,7 +869,8 @@ mode_update() {
     do_core
     if [ -n "$want_x" ]; then
         report running "Обновляю xray до $XRAY_VERSION"
-        do_xray
+        XRAY_SOFT=1
+        do_xray || :
     fi
     if [ -n "$want_s" ]; then
         report running "Обновляю SmartDNS до $SMARTDNS_VERSION"
@@ -1023,7 +1037,7 @@ self_update() {
 # --- main ------------------------------------------------------------------------------
 
 MODE=""
-WITH_WARP="" WITH_VLESS=""
+WITH_WARP="" WITH_VLESS="" XRAY_SOFT=""
 for a in "$@"; do
     case "$a" in
     --yes | -y) YES=1 ;;

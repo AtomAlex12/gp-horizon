@@ -336,5 +336,24 @@ check "uninstall: xray kept by default" "$([ -x "$(f /opt/sbin/xray)" ] && echo 
 check "uninstall: SmartDNS goes with nuxk" "$([ -e "$(f /opt/sbin/smartdns)" ] || [ -e "$(f /opt/etc/init.d/S53smartdns-nuxk)" ] && echo left || echo gone)" "gone"
 check "uninstall: nfqws2's list stays" "$(has "$(f /opt/etc/nfqws2/lists/user.list)" 'youtube.com')" "1"
 
+# 14. an xray that dies at start (Go 1.26 on a 3.4 kernel): a whole install
+# skips VLESS and goes on; asked for by name, it's a failure
+release 0.3.4
+rm -f "$(f /opt/sbin/xray)"
+BADX="$ROOT/xtls-bad"
+mkdir -p "$BADX/v26.3.27"
+printf '#!/bin/sh\necho "futexwakeup addr=0x486032c returned -89" >&2\nexit 2\n' >"$ROOT/xray-bad"
+"$PY" -c "import zipfile,sys; z=zipfile.ZipFile(sys.argv[1],'w'); z.write(sys.argv[2],'xray'); z.close()" \
+    "$BADX/v26.3.27/Xray-linux-64.zip" "$ROOT/xray-bad"
+BADSUM=$(sha256sum "$BADX/v26.3.27/Xray-linux-64.zip" | cut -d' ' -f1)
+XRAY_BASE_URL=$(furl "$BADX") XRAY_TEST_SUM=$BADSUM lite --yes --with-vless || { cat "$ROOT/out"; exit 1; }
+check "bad xray: VLESS skipped, said why" "$(has "$ROOT/out" 'xray 26.3.27 не запускается на этом роутере (x64-3.2) — VLESS пропускаю')" "1"
+check "bad xray: the rest installed and started" "$(agent)/$(has "$ROOT/out" 'nuxk-core отвечает')" "0.3.4/1"
+check "bad xray: nothing of it left" "$(ls "$(f /opt/sbin)" 2>/dev/null | wc -l | tr -d ' ')" "0"
+check "bad xray: not wired" "$(has "$C" 'ENGINE_XRAY="/opt/etc/init.d/S52xray-nuxk"')" "0"
+XRAY_BASE_URL=$(furl "$BADX") XRAY_TEST_SUM=$BADSUM $SH "$(f /opt/bin/nuxk)" vless --yes >"$ROOT/out" 2>&1 &&
+    check "bad xray by name: fails" "exit 0" "exit 1"
+check "bad xray by name: says why" "$(has "$ROOT/out" 'xray 26.3.27 не запускается на этом роутере')" "1"
+
 [ "$fail" = 0 ] && echo "all lite installer tests passed"
 exit "$fail"
