@@ -130,7 +130,7 @@ chmod +x "$ROOT/bin/ndmc"
 export NDMC="$ROOT/bin/ndmc"
 echo nuxk-vless >"$ROOT/ndm.descr"
 : >"$ROOT/ndmc.log"
-LD_LIBRARY_PATH=/opt/lib:/opt/usr/lib sh "$SHIM" restart
+LD_LIBRARY_PATH="$ROOT/opt-lib" sh "$SHIM" restart # set, as in an Entware shell; nowhere real
 check "ndm: ours configured on start" "$(grep -v '^show' "$ROOT/ndmc.log" | tr '\n' ,)" "interface OpkgTun1 down,interface OpkgTun1 ip global auto,interface OpkgTun1 ip tcp adjust-mss pmtu,interface OpkgTun1 ip address 172.16.2.1 255.255.255.255,interface OpkgTun1 up,"
 : >"$ROOT/ndmc.log"
 sh "$SHIM" stop
