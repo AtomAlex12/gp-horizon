@@ -10,6 +10,15 @@
 
 ## [Unreleased]
 
+## [0.5.0-beta.7] — 2026-10-06
+
+**VLESS на MIPS-роутерах.** Исправление для Keenetic на mips/mipsel (ядро 3.4): xray теперь
+запускается, а установка не обрывается, если с xray что-то не так.
+
+Бета: ставить по ссылке с номером —
+`curl -fsSLo /opt/tmp/nuxk-lite.sh https://github.com/AtomAlex12/nuxk-horizon/releases/download/v0.5.0-beta.7/nuxk-lite.sh`,
+или на роутере с nuxk — кнопкой «Обновить роутер» / `nuxk update`.
+
 ### Fixed
 - **VLESS на MIPS-роутерах: `xray не запускается на этом роутере`.** xray с 26.3.23 собирается
   на Go 1.26, а его среда выполнения падает на ядре 3.4 MIPS-роутеров Keenetic
