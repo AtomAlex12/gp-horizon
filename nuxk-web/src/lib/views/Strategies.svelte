@@ -13,12 +13,15 @@
   let msg = $state('');
   let domain = $state('');
   let proto = $state('');
+  let query = $state('');
+  let safeOnly = $state(false);
+  let runDomains = $state<string[]>([]);
 
   async function load() {
     try {
       // everything found = candidates of every domain a run has checked
-      const runDomains = [...new Set((await gp.history()).runs.flatMap((r) => r.domains ?? []))];
-      candidates = runDomains.length ? (await gp.candidates(runDomains)).candidates : [];
+      runDomains = [...new Set((await gp.history()).runs.flatMap((r) => r.domains ?? []))];
+      candidates = runDomains.length ? (await gp.candidates({ domains: runDomains })).candidates : [];
       err = '';
     } catch (e) {
       err = e instanceof Error ? e.message : String(e);
@@ -39,9 +42,16 @@
   const domainsOf = (c: StrategyCandidate) => [...new Set([...(c.seen ?? []).map((s) => s.domain), ...(c.common_seen ?? []).flatMap((x) => x.domains)])];
   const allDomains = $derived([...new Set((candidates ?? []).flatMap(domainsOf))].sort());
   const allProtos = $derived([...new Set((candidates ?? []).map((c) => c.protocol))].sort());
-  const shown = $derived(
-    (candidates ?? []).filter((c) => (!domain || domainsOf(c).includes(domain)) && (!proto || c.protocol === proto)),
-  );
+  const shown = $derived.by(() => {
+    const q = query.trim().toLowerCase();
+    return (candidates ?? []).filter(
+      (c) =>
+        (!domain || domainsOf(c).includes(domain)) &&
+        (!proto || c.protocol === proto) &&
+        (!safeOnly || c.fragmentation_safe !== false) &&
+        (!q || c.args.toLowerCase().includes(q) || (c.family ?? '').toLowerCase().includes(q) || domainsOf(c).some((d) => d.includes(q))),
+    );
+  });
 
   // GP's test name → the nfqws2 filter nuxk puts in front of the profile
   function protocolOf(p: string): 'tls' | 'http' | 'quic' | '' {
@@ -191,7 +201,10 @@
 <section class="card">
   <div class="card-head">
     <h2>Найдено прогонами</h2>
+    {#if candidates?.length}<span class="chip">{shown.length} из {candidates.length}</span>{/if}
     <span class="spacer"></span>
+    <input type="search" bind:value={query} placeholder="домен или кусок стратегии" aria-label="Поиск" class="q" />
+    <label class="check hint"><input type="checkbox" bind:checked={safeOnly} /> без фрагментов</label>
     <select bind:value={domain} aria-label="Домен">
       <option value="">все домены</option>
       {#each allDomains as d (d)}<option value={d}>{d}</option>{/each}
@@ -200,6 +213,9 @@
       <option value="">все проверки</option>
       {#each allProtos as p (p)}<option value={p}>{p}</option>{/each}
     </select>
+    {#if runDomains.length}
+      <a class="ghost-link" href={gp.exportUrl({ domains: runDomains })} download="gp-strategies.ndjson">Выгрузить</a>
+    {/if}
   </div>
   {#if candidates === null}
     <p class="muted">Загрузка…</p>
@@ -236,6 +252,18 @@
 <style>
   h2 {
     font-size: 15px;
+  }
+  .q {
+    width: 200px;
+  }
+  .ghost-link {
+    font-size: 12px;
+    padding: 3px 9px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    color: var(--ink);
+    text-decoration: none;
+    background: var(--surface);
   }
   .args {
     font-size: 11.5px;
