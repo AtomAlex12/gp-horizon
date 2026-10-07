@@ -97,7 +97,11 @@ func secure(next http.Handler) http.Handler {
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("Referrer-Policy", "no-referrer")
 		if r.Body != nil {
-			r.Body = http.MaxBytesReader(w, r.Body, 4<<20)
+			limit := int64(4 << 20)
+			if r.URL.Path == "/ctl/v1/gp/backups/upload" {
+				limit = gpUploadMax // a GP backup archive
+			}
+			r.Body = http.MaxBytesReader(w, r.Body, limit)
 		}
 		next.ServeHTTP(w, r)
 	})

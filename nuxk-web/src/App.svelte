@@ -17,6 +17,7 @@
   import Runs from './lib/views/Runs.svelte';
   import Results from './lib/views/Results.svelte';
   import Strategies from './lib/views/Strategies.svelte';
+  import GpData from './lib/views/GpData.svelte';
   import { planeOf, healthDot, roleLabel, last } from './lib/ui';
   import { history as hist } from './lib/status.svelte';
   import { upd, ctl, newer, running as updating, watchUpdates } from './lib/update.svelte';
@@ -30,6 +31,7 @@
     runs: { label: 'Прогоны', icon: 'runs' },
     results: { label: 'Результаты', icon: 'results' },
     strategies: { label: 'Стратегии', icon: 'strategies' },
+    gpdata: { label: 'Данные GP', icon: 'gpdata' },
     decisions: { label: 'Решения', icon: 'decisions' },
     lists: { label: 'Списки', icon: 'lists' },
     dns: { label: 'DNS', icon: 'dns' },
@@ -43,11 +45,11 @@
   // The plugin host and GP's strategy search live in nuxk-controller on the
   // Pi. The router build (lite) leaves them out — tabs and code: a mips
   // router has nothing to run them with.
-  const PI_ONLY = ['runs', 'results', 'strategies', 'plugins'];
+  const PI_ONLY = ['runs', 'results', 'strategies', 'gpdata', 'plugins'];
   const shown = (k: string) => !(__LITE__ && PI_ONLY.includes(k));
   const NAV = [
     { title: 'Статус', items: ['dashboard', 'conns', 'devices'] },
-    { title: 'Подбор', items: ['runs', 'results', 'strategies', 'decisions'] },
+    { title: 'Подбор', items: ['runs', 'results', 'strategies', 'gpdata', 'decisions'] },
     { title: 'Списки и данные', items: ['lists', 'dns'] },
     { title: 'Движки', items: ['nfqws2', 'usque', 'xray'] },
     { title: 'Управление', items: ['logs', 'plugins', 'system'] },
@@ -231,6 +233,8 @@
           <GpGate {go}><Results {go} /></GpGate>
         {:else if !__LITE__ && tab === 'strategies'}
           <GpGate {go}><Strategies /></GpGate>
+        {:else if !__LITE__ && tab === 'gpdata'}
+          <GpGate {go}><GpData /></GpGate>
         {:else if tab === 'system'}
           <System />
         {:else if tab === 'dns'}

@@ -4,7 +4,7 @@
   "description": "Подбор стратегий nfqws2 через blockcheck2 (zapret2): ядро GP Access Control Plane без его веб-интерфейса. Прогоны идут с Pi, через того же провайдера, что и роутер.",
   "homepage": "https://github.com/balbomush/GP-access-control-plane",
   "releases": "github:balbomush/GP-access-control-plane",
-  "default_version": "v0.4.2",
+  "default_version": "v0.4.4",
   "install": "install.sh",
   "install_env": { "ZAPRET_REF": "v1.0.5.2" },
   "run": ["bin/run"],

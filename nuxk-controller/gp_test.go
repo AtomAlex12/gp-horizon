@@ -56,6 +56,18 @@ func (f *fakeGP) handler() http.Handler {
 		f.tokens[tok] = true
 		fmt.Fprintf(w, `{"access_token":%q,"token_type":"bearer","expires_in":86400}`, tok)
 	})
+	mux.HandleFunc("GET /api/core/backups/download-archive", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/zip")
+		w.Header().Set("Content-Disposition", `attachment; filename="gp-backup.zip"`)
+		w.Write([]byte("PKzip"))
+	})
+	mux.HandleFunc("/api/service/", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		f.calls = append(f.calls, r.Method+" "+r.URL.RequestURI())
+		f.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"state":"ready"}`)
+	})
 	mux.HandleFunc("/api/core/", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
 		ok := f.tokens[strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")]
@@ -68,7 +80,7 @@ func (f *fakeGP) handler() http.Handler {
 		w.Header().Set("Content-Type", "application/json")
 		if r.Method == http.MethodPost {
 			w.WriteHeader(202)
-			body, _ := json.Marshal(map[string]string{"got": readAll(r)})
+			body, _ := json.Marshal(map[string]string{"got": readAll(r), "type": r.Header.Get("Content-Type")})
 			w.Write(body)
 			return
 		}
@@ -135,7 +147,32 @@ func TestGPProxy(t *testing.T) {
 		t.Error("a relogin must not rotate the password again")
 	}
 
-	for _, p := range []string{"/ctl/v1/gp/../auth/change-password", "/ctl/v1/gp/backups/create", "/ctl/v1/gp/status/../../auth/login"} {
+	// GP's service API: under /api/service, not /api/core
+	if code, _ := do("GET", "/ctl/v1/gp/service/v2fly/local-storage-status", ""); code != 200 || gp.calls[len(gp.calls)-1] != "GET /api/service/v2fly/local-storage-status" {
+		t.Errorf("service -> %d, %s", code, gp.calls[len(gp.calls)-1])
+	}
+	// a backup archive goes up as it is, application/zip only; comes down with its name
+	up := func(ct, body string) (int, string) {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest("POST", "/ctl/v1/gp/backups/upload", strings.NewReader(body))
+		req.Header.Set("Content-Type", ct)
+		mux.ServeHTTP(w, req)
+		return w.Code, w.Body.String()
+	}
+	if code, body := up("application/zip", "PK-archive"); code != 202 || !strings.Contains(body, `"type":"application/zip"`) || !strings.Contains(body, "PK-archive") {
+		t.Errorf("upload -> %d %s", code, body)
+	}
+	if code, _ := up("text/plain", "x"); code != 415 {
+		t.Errorf("upload as text -> %d", code)
+	}
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest("GET", "/ctl/v1/gp/backups/download-archive?snapshot_id=s1", nil))
+	if w.Code != 200 || !strings.Contains(w.Header().Get("Content-Disposition"), "gp-backup.zip") || w.Header().Get("Content-Type") != "application/zip" {
+		t.Errorf("download -> %d %v", w.Code, w.Header())
+	}
+
+	// never GP's own auth, its installer's vaults, its web UI's slices
+	for _, p := range []string{"/ctl/v1/gp/../auth/change-password", "/ctl/v1/gp/clean-install-vaults/restore", "/ctl/v1/gp/status/../../auth/login", "/ctl/v1/gp/service/../web/presets/save", "/ctl/v1/gp/web/presets/save"} {
 		if code, _ := do("POST", p, "{}"); code != 404 && code != 301 && code != 307 {
 			t.Errorf("POST %s -> %d, must not reach GP", p, code)
 		}

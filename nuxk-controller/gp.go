@@ -132,11 +132,14 @@ func randomPassword() string {
 	return base64.RawURLEncoding.EncodeToString(b)
 }
 
-// gpAllowed: the GP core calls the UI may make, "METHOD path" under /api/core/.
-// Nothing about GP's own auth, backups, service or web slices.
+// gpAllowed: the GP calls the UI may make, "METHOD path": under /api/core/,
+// or under /api/service/ for "service/…" (GP's openapi.json, plugins/gp).
+// Never GP's own auth (the controller holds GP's password), its clean-install
+// vaults (its own installer's) or the slices of its own web UI.
 var gpAllowed = map[string]bool{
-	"GET status":                                    true,
-	"GET strategy-discovery/preflight":              true,
+	"GET status":                       true,
+	"GET events":                       true,
+	"GET strategy-discovery/preflight": true,
 	"GET strategy-discovery/current-run-progress":   true,
 	"GET strategy-discovery/current-run-latest-log": true,
 	"POST strategy-discovery/start-run":             true,
@@ -144,16 +147,52 @@ var gpAllowed = map[string]bool{
 	"GET runs/history":                              true,
 	"GET runs/latest-log":                           true,
 	"GET strategy-candidates":                       true,
+	"GET strategy-candidates/export":                true,
 	"GET presets/domain-lists":                      true,
+	"POST presets/save-domain-list":                 true,
+	"POST presets/delete-user-domain-list":          true,
+	"GET presets/v2fly/categories":                  true,
+	"GET presets/v2fly/category-domains":            true,
 	"GET run-settings":                              true,
+	"POST run-settings/save":                        true,
+	"GET backups/list":                              true,
+	"POST backups/create":                           true,
+	"POST backups/restore":                          true,
+	"POST backups/delete":                           true,
+	"GET backups/download-archive":                  true,
+	"POST backups/upload":                           true,
+	"GET service/status":                            true,
+	"GET service/v2fly/local-storage-status":        true,
+	"POST service/v2fly/check-updates":              true,
+	"POST service/v2fly/update-local-storage":       true,
 }
 
-// handle proxies /ctl/v1/gp/<path> to GP's /api/core/<path>.
+const (
+	gpBodyMax   = 1 << 20  // a JSON request
+	gpUploadMax = 32 << 20 // a backup archive (backups/upload); secure() lets it through
+	gpReplyMax  = 64 << 20 // an answer: a backup archive or every candidate as NDJSON
+)
+
+// handle proxies /ctl/v1/gp/<path> to GP's /api/core/<path> (or /api/<path>
+// for service/…).
 func (g *GPClient) handle(w http.ResponseWriter, r *http.Request) {
 	path := r.PathValue("path")
 	if !gpAllowed[r.Method+" "+path] {
 		writeErr(w, http.StatusNotFound, "not_allowed", "этот вызов GP недоступен из панели")
 		return
+	}
+	api := "/api/core/" + path
+	if strings.HasPrefix(path, "service/") {
+		api = "/api/" + path
+	}
+	limit, ctype := int64(gpBodyMax), "application/json"
+	if path == "backups/upload" {
+		// the archive as it is: GP takes application/zip
+		if ct := strings.TrimSpace(r.Header.Get("Content-Type")); ct != "application/zip" {
+			writeErr(w, http.StatusUnsupportedMediaType, "bad_type", "бэкап GP загружается как application/zip")
+			return
+		}
+		limit, ctype = gpUploadMax, "application/zip"
 	}
 	p, ok := g.Host.Get("gp")
 	if !ok || p.Phase != "running" {
@@ -168,7 +207,12 @@ func (g *GPClient) handle(w http.ResponseWriter, r *http.Request) {
 	g.mu.Unlock()
 	var body []byte
 	if r.Body != nil {
-		body, _ = io.ReadAll(io.LimitReader(r.Body, 1<<20))
+		b, err := io.ReadAll(io.LimitReader(r.Body, limit+1))
+		if err != nil || int64(len(b)) > limit {
+			writeErr(w, http.StatusRequestEntityTooLarge, "too_large", fmt.Sprintf("запрос больше %d МБ", limit>>20))
+			return
+		}
+		body = b
 	}
 	for attempt := 0; attempt < 2; attempt++ {
 		tok, err := g.Token(r.Context())
@@ -176,14 +220,14 @@ func (g *GPClient) handle(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusBadGateway, "gp_auth", err.Error())
 			return
 		}
-		u := base + "/api/core/" + path
+		u := base + api
 		if r.URL.RawQuery != "" {
 			u += "?" + r.URL.RawQuery
 		}
 		req, _ := http.NewRequestWithContext(r.Context(), r.Method, u, bytes.NewReader(body))
 		req.Header.Set("Authorization", "Bearer "+tok)
 		if len(body) > 0 {
-			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Content-Type", ctype)
 		}
 		resp, err := g.HTTP.Do(req)
 		if err != nil {
@@ -197,9 +241,12 @@ func (g *GPClient) handle(w http.ResponseWriter, r *http.Request) {
 		}
 		defer resp.Body.Close()
 		w.Header().Set("Content-Type", strings.TrimSpace(resp.Header.Get("Content-Type")))
+		if cd := resp.Header.Get("Content-Disposition"); cd != "" {
+			w.Header().Set("Content-Disposition", cd) // a backup archive, the NDJSON export
+		}
 		w.Header().Set("Cache-Control", "no-store")
 		w.WriteHeader(resp.StatusCode)
-		io.Copy(w, io.LimitReader(resp.Body, 16<<20))
+		io.Copy(w, io.LimitReader(resp.Body, gpReplyMax))
 		return
 	}
 }
