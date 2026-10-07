@@ -1,8 +1,8 @@
 #!/bin/sh
-# nuxk Horizon — lite: installs nuxk on a Keenetic router, in Entware.
+# GP Horizon — lite: installs nuxk on a Keenetic router, in Entware.
 #
 #   opkg update && opkg install curl ca-certificates
-#   curl -fsSLo /opt/tmp/nuxk-lite.sh https://github.com/AtomAlex12/nuxk-horizon/releases/latest/download/nuxk-lite.sh
+#   curl -fsSLo /opt/tmp/nuxk-lite.sh https://github.com/AtomAlex12/gp-horizon/releases/latest/download/nuxk-lite.sh
 #   sh /opt/tmp/nuxk-lite.sh
 #
 # It stays on the router as `nuxk`:
@@ -26,7 +26,7 @@
 #      NUXK_STATUS (progress for it), NUXK_FROM, NUXK_STARTED, NUXK_TASK.
 
 VERSION="@VERSION@" # stamped by the release; unstamped = the latest release
-REPO="${NUXK_REPO:-AtomAlex12/nuxk-horizon}"
+REPO="${NUXK_REPO:-AtomAlex12/gp-horizon}"
 R="${NUXK_ROOT:-}"
 
 # xray: the official XTLS release, pinned by version and by each archive's
@@ -96,7 +96,7 @@ else
 fi
 line() { printf '  %s────────────────────────────────────────────────────%s\n' "$D" "$N"; }
 banner() {
-    printf '\n  %s◆ nuxk Horizon%s  %sлайт · %s%s\n' "$A$B" "$N" "$D" "$1" "$N"
+    printf '\n  %s◆ GP Horizon%s  %sлайт · %s%s\n' "$A$B" "$N" "$D" "$1" "$N"
     printf '    %sобход блокировок на роутере Keenetic%s\n' "$D" "$N"
     line
 }
@@ -236,7 +236,7 @@ sum_ok() { # sum_ok NAME — $TMP/NAME is the release's, or the run stops
     : >"$TMP/.ok.$1"
 }
 
-# verify_sums — SHA256SUMS carries the nuxk Horizon release signature
+# verify_sums — SHA256SUMS carries the GP Horizon release signature
 # (SHA256SUMS.sig, made by the release workflow). The agent already on the
 # router checks it: a newly downloaded one can't vouch for itself. A first
 # install has no agent yet — its files are checked against SHA256SUMS only,
@@ -253,7 +253,7 @@ verify_sums() {
     case $? in
     0) SIG_NOTE="подпись релиза ✓ ${out##* }" ;;
     2) SIG_NOTE="установленный агент старше проверки подписей — сверяю хеши; со следующего обновления подпись обязательна" ;;
-    *) die "SHA256SUMS релиза не подписан ключом nuxk Horizon ($out) — файлы не от проекта; ставить не буду" ;;
+    *) die "SHA256SUMS релиза не подписан ключом GP Horizon ($out) — файлы не от проекта; ставить не буду" ;;
     esac
 }
 
@@ -788,7 +788,7 @@ finish() {
     printf '\n'
     line
     listen=$(conf_get LISTEN)
-    printf '  %s✓ nuxk Horizon %s на роутере%s\n' "$G$B" "$VERSION" "$N"
+    printf '  %s✓ GP Horizon %s на роутере%s\n' "$G$B" "$VERSION" "$N"
     printf '    %sПанель%s   http://%s\n' "$B" "$N" "${listen:-${LAN_IP:-роутер}:4141}"
     printf '    %sВход%s     root и пароль Entware (как для SSH)\n' "$B" "$N"
     printf '    %sКоманды%s  nuxk · nuxk update · nuxk rollback · nuxk warp · nuxk vless · nuxk dns · nuxk uninstall\n' "$B" "$N"
@@ -797,7 +797,7 @@ finish() {
     # what was skipped is said last — and to the panel, next to «done»
     [ -n "$SKIPPED" ] && warn "$SKIPPED — повторить: nuxk vless"
     printf '\n'
-    report done "${DONE_MSG:-nuxk Horizon $VERSION работает}${SKIPPED:+ · $SKIPPED}"
+    report done "${DONE_MSG:-GP Horizon $VERSION работает}${SKIPPED:+ · $SKIPPED}"
 }
 
 mode_install() {

@@ -1,8 +1,8 @@
 #!/bin/sh
-# nuxk Horizon — full: the controller on a Raspberry Pi (or any 64-bit Linux
+# GP Horizon — full: the controller on a Raspberry Pi (or any 64-bit Linux
 # with Docker) plus nuxk on the router.
 #
-#   curl -fsSLo nuxk-full.sh https://github.com/AtomAlex12/nuxk-horizon/releases/latest/download/nuxk-full.sh
+#   curl -fsSLo nuxk-full.sh https://github.com/AtomAlex12/gp-horizon/releases/latest/download/nuxk-full.sh
 #   sh nuxk-full.sh
 #
 #   sh nuxk-full.sh            install or update the controller, then (asks) the router
@@ -19,7 +19,7 @@
 #
 # The controller is a prebuilt image from GitHub (ghcr.io), pulled by the
 # digest the release lists — nothing is compiled here. The release's
-# SHA256SUMS is checked against the nuxk Horizon release signature
+# SHA256SUMS is checked against the GP Horizon release signature
 # (ssh-keygen, the key below). The router gets nuxk-lite from the same
 # release, checked against that SHA256SUMS, run on the router over SSH: its
 # password goes to ssh only, never through this script.
@@ -31,7 +31,7 @@
 #      NUXK_API (GitHub's API), NO_COLOR.
 
 VERSION="@VERSION@" # stamped by the release; unstamped = the latest release
-REPO="${NUXK_REPO:-AtomAlex12/nuxk-horizon}"
+REPO="${NUXK_REPO:-AtomAlex12/gp-horizon}"
 DIR="${NUXK_DIR:-$HOME/nuxk}"
 PORT="${NUXK_PORT:-4200}"
 OLD_PROJECT="${NUXK_OLD_PROJECT:-nuxk-pi}" # deploy/pi (building from source, for development)
@@ -49,7 +49,7 @@ else
 fi
 line() { printf '  %s────────────────────────────────────────────────────%s\n' "$D" "$N"; }
 banner() {
-    printf '\n  %s◆ nuxk Horizon%s  %sфул · %s%s\n' "$A$B" "$N" "$D" "$1" "$N"
+    printf '\n  %s◆ GP Horizon%s  %sфул · %s%s\n' "$A$B" "$N" "$D" "$1" "$N"
     printf '    %sпанель на Raspberry Pi + агент на роутере Keenetic%s\n' "$D" "$N"
     line
 }
@@ -190,7 +190,7 @@ fetch() {
     [ "$(sha256sum "$TMP/$1" | cut -d' ' -f1)" = "$want" ] || die "хеш $1 не совпал с SHA256SUMS — файл не тот, что в релизе; ставить не буду"
 }
 
-# verify_sums — SHA256SUMS carries the nuxk Horizon release signature: checked
+# verify_sums — SHA256SUMS carries the GP Horizon release signature: checked
 # with ssh-keygen (OpenSSH 8.1+) against RELEASE_KEY
 SIG_NOTE=""
 verify_sums() {
@@ -204,7 +204,7 @@ verify_sums() {
     if [ -n "${NUXK_SIGNERS:-}" ]; then cp "$NUXK_SIGNERS" "$TMP/allowed_signers"; else printf '%s\n' "$RELEASE_KEY" >"$TMP/allowed_signers"; fi
     ssh-keygen -Y verify -f "$TMP/allowed_signers" -I release@nuxk-horizon -n nuxk-release \
         -s "$TMP/SHA256SUMS.sig" <"$TMP/SHA256SUMS" >"$TMP/.sig" 2>&1 ||
-        die "SHA256SUMS релиза не подписан ключом nuxk Horizon — файлы не от проекта; ставить не буду ($(tr '\n' ' ' <"$TMP/.sig"))"
+        die "SHA256SUMS релиза не подписан ключом GP Horizon — файлы не от проекта; ставить не буду ($(tr '\n' ' ' <"$TMP/.sig"))"
     SIG_NOTE="подпись релиза ✓ $(sed -n 's/.* key \(SHA256:[^ ]*\).*/\1/p' "$TMP/.sig")"
 }
 
@@ -284,7 +284,7 @@ self_update() {
         [ -n "$ch" ] || case "$INSTALLED" in *-*) ch=beta ;; *) ch=stable ;; esac
         newest_release "$ch"
         VERSION=$NEWEST
-        [ -n "$VERSION" ] || die "на GitHub нет релизов nuxk Horizon (канал $ch)"
+        [ -n "$VERSION" ] || die "на GitHub нет релизов GP Horizon (канал $ch)"
         if [ -n "$INSTALLED" ] && ! newer "$VERSION" "$INSTALLED"; then
             banner "$INSTALLED"
             ok "контроллер $INSTALLED — новее нет (последний $([ "$ch" = beta ] && echo 'с бетами' || echo 'релиз'): $VERSION)"
@@ -332,6 +332,8 @@ ensure_helper() {
         return 0
     fi
     me=$(id -un)
+    # their text is compared with what's installed, byte for byte: it keeps the
+    # old name (nuxk Horizon) — a change would ask for sudo again on every Pi
     cat >"$TMP/nuxk-update.path" <<EOF
 [Unit]
 Description=nuxk Horizon: update requests from the panel
@@ -402,7 +404,7 @@ write_compose() { # write_compose VOLUME-KEY
         vol="  controller-data: {}"
     fi
     cat >"$DIR/docker-compose.yml" <<EOF
-# nuxk Horizon — full, written by nuxk-full.sh $VERSION. Re-run it to update;
+# GP Horizon — full, written by nuxk-full.sh $VERSION. Re-run it to update;
 # edits here are overwritten then.
 name: nuxk
 services:
@@ -513,7 +515,7 @@ do_router() {
 finish() {
     printf '\n'
     line
-    printf '  %s✓ nuxk Horizon %s%s\n' "$G$B" "$VERSION" "$N"
+    printf '  %s✓ GP Horizon %s%s\n' "$G$B" "$VERSION" "$N"
     printf '    %sПанель%s   http://%s:%s\n' "$B" "$N" "${IP:-<адрес Pi>}" "$PORT"
     printf '    %sДальше%s   мастер в панели: пароль admin → роутер%s (root и пароль Entware)\n' "$B" "$N" "${ROUTER:+ $ROUTER}"
     if [ -x /usr/local/bin/nuxk-pi ]; then

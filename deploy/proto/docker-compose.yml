@@ -1,4 +1,4 @@
-# nuxk Horizon — REAL-engine prototype stack (deploy/proto). Isolated own
+# GP Horizon — REAL-engine prototype stack (deploy/proto). Isolated own
 # bridge network, no network_mode: host — must not touch the Pi's other
 # running containers (warp, dutyviewer, hawser) or its real routing state.
 #

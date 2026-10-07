@@ -1,4 +1,4 @@
-// Command nuxk-core is the nuxk Horizon control daemon.
+// Command nuxk-core is the GP Horizon control daemon.
 //
 // It owns platform state (the learned domain->mode cache, engine configs,
 // settings), supervises the engines (nfqws2, usque, xray) through a single
@@ -55,7 +55,7 @@ func main() {
 		debug   = flag.Bool("debug", false, "verbose logging")
 		showVer = flag.Bool("version", false, "print version and exit")
 		logPath = flag.String("log", "", "log file, rotated in-process at 512 KiB (empty = stderr)")
-		verify  = flag.String("verify", "", "check FILE against FILE.sig, the nuxk Horizon release signature, and exit (1 = not signed by it)")
+		verify  = flag.String("verify", "", "check FILE against FILE.sig, the GP Horizon release signature, and exit (1 = not signed by it)")
 	)
 	flag.Parse()
 	if *showVer {

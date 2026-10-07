@@ -1,5 +1,5 @@
 #!/bin/sh
-# S51nfqws2-docker — nuxk Horizon prototype (deploy/proto), NOT shipped to the
+# S51nfqws2-docker — GP Horizon prototype (deploy/proto), NOT shipped to the
 # router. Derived from nfqws2-keenetic's etc/init.d/{entware-start,common,
 # entware-end} (branch master), which are almost entirely portable as-is —
 # plain iptables/ipset/netfilter primitives, no Keenetic dependency baked in.

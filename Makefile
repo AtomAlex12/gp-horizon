@@ -1,4 +1,4 @@
-# nuxk Horizon — top-level build. Component Makefiles/npm scripts do the work;
+# GP Horizon — top-level build. Component Makefiles/npm scripts do the work;
 # this ties them to the single VERSION file and produces release bundles.
 #
 #   make check      version + gofmt + vet + tests + web typecheck + installers (what CI runs)

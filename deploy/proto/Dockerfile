@@ -1,4 +1,4 @@
-# nuxk Horizon — REAL-engine prototype image (deploy/proto). NOT deploy/dev
+# GP Horizon — REAL-engine prototype image (deploy/proto). NOT deploy/dev
 # (which stays mock-only and untouched) and NOT a production image — the
 # router ships an opkg package, not this. Runs real usque + real nfqws2
 # inside one container so the whole reconcile/routing chain can be exercised

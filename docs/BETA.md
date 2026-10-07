@@ -1,4 +1,4 @@
-# nuxk Horizon — установка и проверка по шагам
+# GP Horizon — установка и проверка по шагам
 
 | Где | Что | Как ставится |
 |---|---|---|
@@ -36,7 +36,7 @@
 
 ```sh
 opkg update && opkg install curl ca-certificates
-curl -fsSLo /opt/tmp/nuxk-lite.sh https://github.com/AtomAlex12/nuxk-horizon/releases/latest/download/nuxk-lite.sh
+curl -fsSLo /opt/tmp/nuxk-lite.sh https://github.com/AtomAlex12/gp-horizon/releases/latest/download/nuxk-lite.sh
 sh /opt/tmp/nuxk-lite.sh
 ```
 
@@ -81,7 +81,7 @@ sh /opt/tmp/nuxk-lite.sh
 ([get.docker.com](https://get.docker.com)). На Pi:
 
 ```sh
-curl -fsSLo nuxk-full.sh https://github.com/AtomAlex12/nuxk-horizon/releases/latest/download/nuxk-full.sh
+curl -fsSLo nuxk-full.sh https://github.com/AtomAlex12/gp-horizon/releases/latest/download/nuxk-full.sh
 sh nuxk-full.sh
 ```
 
@@ -262,7 +262,7 @@ DoH через туннель (VLESS, потом WARP, потом напряму
 
 Каждое обновление сначала проверяет **подпись релиза** — это делает агент, который уже
 работает на роутере, до того как что-то поменять. Подменённый или неподписанный релиз
-не встанет: `SHA256SUMS релиза не подписан ключом nuxk Horizon`.
+не встанет: `SHA256SUMS релиза не подписан ключом GP Horizon`.
 
 **Если новая версия не запустилась** (не ответила за 15 с) — прежняя возвращается сама;
 в панели будет «возвращена прежняя версия» и вывод обновления. Вернуть прежнюю вручную,

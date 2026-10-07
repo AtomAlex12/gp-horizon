@@ -1,4 +1,8 @@
-# nuxk Horizon
+# GP Horizon
+
+> Раньше проект назывался **nuxk Horizon**. Технические имена остались прежними — команда
+> `nuxk` на роутере, `nuxk-pi` на Pi, объекты `nuxk-*` в Keenetic, пути `/opt/etc/nuxk` и
+> `~/nuxk`: их переименование на работающих роутерах ничего не даёт, а риск сбоя есть.
 
 Обход блокировок на роутерах **Keenetic + Entware**: у каждого сайта свой путь —
 **DPI** (nfqws2), **WARP** (Cloudflare) или **ваш VLESS-сервер** (xray), — и одна
@@ -30,7 +34,7 @@
 подхватит уже стоящий на роутере лайт.
 
 Установщики ничего не собирают: берут готовые файлы из
-[релиза на GitHub](https://github.com/AtomAlex12/nuxk-horizon/releases/latest), сверяют
+[релиза на GitHub](https://github.com/AtomAlex12/gp-horizon/releases/latest), сверяют
 каждый с `SHA256SUMS` и сам `SHA256SUMS` — с [подписью релиза](#подпись-релизов). На
 роутере ничего не меняется без вашего ответа «да», а маршрутизация списков по умолчанию
 выключена — nuxk только показывает, что сделал бы.
@@ -62,7 +66,7 @@
 
 ```sh
 opkg update && opkg install curl ca-certificates
-curl -fsSLo /opt/tmp/nuxk-lite.sh https://github.com/AtomAlex12/nuxk-horizon/releases/latest/download/nuxk-lite.sh
+curl -fsSLo /opt/tmp/nuxk-lite.sh https://github.com/AtomAlex12/gp-horizon/releases/latest/download/nuxk-lite.sh
 sh /opt/tmp/nuxk-lite.sh
 ```
 
@@ -88,7 +92,7 @@ sh /opt/tmp/nuxk-lite.sh
 2. **Установщик** — на Pi:
 
    ```sh
-   curl -fsSLo nuxk-full.sh https://github.com/AtomAlex12/nuxk-horizon/releases/latest/download/nuxk-full.sh
+   curl -fsSLo nuxk-full.sh https://github.com/AtomAlex12/gp-horizon/releases/latest/download/nuxk-full.sh
    sh nuxk-full.sh
    ```
 
@@ -154,7 +158,7 @@ sh ~/nuxk/nuxk-full.sh update
 
 ### Подпись релизов
 
-`SHA256SUMS` каждого релиза подписан ключом nuxk Horizon при сборке на GitHub, и в нём
+`SHA256SUMS` каждого релиза подписан ключом GP Horizon при сборке на GitHub, и в нём
 же — точный отпечаток образа контроллера. Обновление на роутере проверяет подпись ещё
 старым, уже работающим агентом: подменённый релиз не встанет. Проверить релиз вручную
 (OpenSSH 8.1+; файл `allowed_signers` — в `nuxk-core/internal/release/`):
