@@ -958,6 +958,9 @@ export interface components {
             confirm: string;
             installed: boolean;
             version?: string;
+            /** @description installed, but it can't work (a tunnel without its Keenetic interface): why; installing again mends it */
+            broken?: string;
+            /** @description not installed, or broken — and nothing stands in the way */
             can_install: boolean;
             /** @description why it can't be added (when it can't) */
             cannot?: string;

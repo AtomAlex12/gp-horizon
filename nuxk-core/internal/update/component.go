@@ -20,6 +20,7 @@ const (
 type Presence struct {
 	Installed bool
 	Version   string
+	Broken    string // installed, but it can't work: why ("" = fine); installing again mends it
 	Cannot    string // why it can't be added here ("" = it can)
 }
 
@@ -31,6 +32,7 @@ type Component struct {
 	Confirm    string `json:"confirm"` // what installing does to the router
 	Installed  bool   `json:"installed"`
 	Version    string `json:"version,omitempty"`
+	Broken     string `json:"broken,omitempty"` // installed, but it can't work: why; installing again mends it
 	CanInstall bool   `json:"can_install"`
 	Cannot     string `json:"cannot,omitempty"` // why not, when it can't
 }
@@ -79,23 +81,27 @@ func (u *Updater) Components() Components {
 		if u.o.Have != nil {
 			pr := u.o.Have(p.id)
 			it.Installed, it.Version, it.Cannot = pr.Installed, pr.Version, pr.Cannot
+			if it.Installed {
+				it.Broken = pr.Broken
+			}
 		}
 		switch {
-		case it.Installed:
+		case it.Installed && it.Broken == "":
 			it.Cannot = ""
 		case why != "":
 			it.Cannot = why
 		case it.Cannot == "" && busy:
 			it.Cannot = "идёт обновление или установка — дождитесь конца"
 		}
-		it.CanInstall = !it.Installed && it.Cannot == ""
+		it.CanInstall = (!it.Installed || it.Broken != "") && it.Cannot == ""
 		c.Items = append(c.Items, it)
 	}
 	return c
 }
 
 // Install starts `nuxk <part> --yes` in the background and returns at once;
-// the panel follows the run in Components().Run.
+// the panel follows the run in Components().Run. A broken one is installed
+// again (`nuxk warp` mends a WARP without its interface).
 func (u *Updater) Install(id string) (Components, error) {
 	u.mu.Lock()
 	err := u.installLocked(id)
@@ -117,7 +123,7 @@ func (u *Updater) installLocked(id string) error {
 		return fmt.Errorf("%w: компоненты ставятся из панели только на роутере", ErrNoInstall)
 	}
 	pr := u.o.Have(id)
-	if pr.Installed {
+	if pr.Installed && pr.Broken == "" {
 		return ErrInstalled
 	}
 	if why := u.cannot(); why != "" {

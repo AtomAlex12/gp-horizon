@@ -227,7 +227,7 @@ func main() {
 	}
 	// components from the panel: a router's, where `nuxk` put them
 	if pm != nil {
-		uo.Have = func(id string) update.Presence { return presence(id, hub.Get(), dnsSvc) }
+		uo.Have = func(id string) update.Presence { return presence(id, hub.Get(), dnsSvc, pm, cfg) }
 	}
 	upd := update.New(uo, st)
 	go upd.Run(ctx)
@@ -300,14 +300,24 @@ func main() {
 }
 
 // presence: is a component on the router — an engine the config wires up
-// (and its version as the engine reports it), SmartDNS as DNS knows it.
-func presence(id string, snap core.Snapshot, d *dns.Service) update.Presence {
+// (and its version as the engine reports it), SmartDNS as DNS knows it. A
+// tunnel whose Keenetic interface isn't there (the firmware refused it, or
+// an Entware ndmc died making it) is installed but broken.
+func presence(id string, snap core.Snapshot, d *dns.Service, pm *plane.Manager, cfg config.Config) update.Presence {
 	kinds := map[string]engine.Kind{"nfqws2": engine.KindNfqws2, "warp": engine.KindUsque, "vless": engine.KindXray}
+	ifaces := map[string]string{"warp": cfg.Plane.IfaceWarp, "vless": cfg.Plane.IfaceVless}
 	if k, ok := kinds[id]; ok {
-		if i, ok := snapEngine(snap, k); ok {
-			return update.Presence{Installed: true, Version: snap.Engines[i].Version}
+		i, ok := snapEngine(snap, k)
+		if !ok {
+			return update.Presence{}
 		}
-		return update.Presence{}
+		p := update.Presence{Installed: true, Version: snap.Engines[i].Version}
+		if want := ifaces[id]; want != "" && pm != nil {
+			if exists, known := pm.Interface(want); known && !exists {
+				p.Broken = "интерфейса " + want + " в Keenetic нет — туннель не работает"
+			}
+		}
+		return p
 	}
 	if id == "smartdns" {
 		var sd *dns.SmartDNSState
