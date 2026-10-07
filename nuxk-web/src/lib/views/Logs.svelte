@@ -1,6 +1,8 @@
 <script lang="ts">
   // The agent's own log, live (SSE) — the last entries it keeps in memory.
-  import { logs, status } from '../status.svelte';
+  import { logs, status, node } from '../status.svelte';
+
+  let { go }: { go: (tab: string) => void } = $props();
 
   const LEVELS = ['all', 'warn', 'error'] as const;
   let level = $state<(typeof LEVELS)[number]>('all');
@@ -56,6 +58,13 @@
     {/each}
   </div>
   <p class="hint">Хранятся последние 500 записей в памяти nuxk-core. Полный файл на роутере: <span class="mono">/opt/var/log/nuxk-core.log</span>.</p>
+  {#if !__LITE__ && node.via === 'controller'}
+    <p class="hint">
+      Это журнал агента на роутере. Подбор стратегий идёт на Pi, и сюда он не пишет: почему прогон завершился — в
+      <button class="linkbtn" onclick={() => go('results')}>«Результатах»</button> (раскройте строку прогона), журнал
+      самого GP — в <button class="linkbtn" onclick={() => go('plugins')}>«Плагинах»</button>.
+    </p>
+  {/if}
 </section>
 
 <style>

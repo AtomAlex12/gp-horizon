@@ -67,6 +67,22 @@ type pluginProc struct {
 
 func (s *Supervisor) pluginDir(name string) string { return filepath.Join(s.DataDir, "plugins", name) }
 
+// pluginTmp is a plugin's TMPDIR. The container's /tmp is a noexec tmpfs, and
+// GP runs a script it writes there (gp-root-helper's multi-domain runner):
+// "Permission denied" three seconds into the run. This one is on the data
+// volume, emptied at every start, and sticky and world-writable like /tmp.
+func (s *Supervisor) pluginTmp(name string) string { return filepath.Join(s.pluginDir(name), "tmp") }
+
+func freshTmp(dir string) error {
+	if err := os.RemoveAll(dir); err != nil {
+		return err
+	}
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		return err
+	}
+	return os.Chmod(dir, 0o777|os.ModeSticky)
+}
+
 func runSupervisor(ctx context.Context) error {
 	s := &Supervisor{
 		DataDir:    env("DATA_DIR", "/var/lib/nuxk-controller"),
@@ -348,6 +364,9 @@ func (s *Supervisor) runOnce(p *pluginProc, stop chan struct{}) error {
 		return err
 	}
 	defer logf.Close()
+	if err := freshTmp(s.pluginTmp(p.m.Name)); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	version := p.st.Version
 	s.mu.Unlock()
@@ -427,7 +446,7 @@ func (s *Supervisor) pluginEnv(m *Manifest, version, dir string) []string {
 	return []string{
 		"PATH=/usr/sbin:/usr/bin:/sbin:/bin",
 		"HOME=" + data,
-		"TMPDIR=/tmp",
+		"TMPDIR=" + s.pluginTmp(m.Name),
 		"LANG=C.UTF-8",
 		"PLUGIN_NAME=" + m.Name,
 		"PLUGIN_VERSION=" + version,

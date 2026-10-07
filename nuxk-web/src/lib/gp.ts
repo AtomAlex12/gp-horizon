@@ -167,6 +167,99 @@ export const RUN_MODE_LABEL: Record<string, string> = {
   'multi-domain-discovery': 'несколько вместе',
   'common-strategy-discovery': 'одна общая',
 };
+// --- why a run ended ---------------------------------------------------------
+// GP's history says only «ошибка»; the reason is in the run's stderr and its
+// last progress. runVerdict reads both: how far the run got, and the stderr
+// lines we know, in words. A line we don't know is shown as it is.
+
+export interface RunCause {
+  level: 'warn' | 'deg';
+  title: string;
+  hint?: string;
+  line?: string;
+}
+
+const KNOWN_ERRORS: { re: RegExp; cause: (status: string) => Omit<RunCause, 'line'> }[] = [
+  {
+    // the container's /tmp is noexec; fixed by the plugin's own TMPDIR (0.5.0-beta.11)
+    re: /gp-root-helper\.\w+\/\S+: Permission denied/,
+    cause: () => ({
+      level: 'warn',
+      title: 'GP не смог запустить свой скрипт проверки',
+      hint:
+        'GP кладёт скрипт во временную папку, а в контейнере контроллера там запрещён запуск программ. ' +
+        'С 0.5.0-beta.11 у GP своя временная папка — обновите контроллер («Система» → «Обновления») и повторите прогон.',
+    }),
+  },
+  {
+    re: /managed supervisor exited before target status/,
+    cause: (st) =>
+      st === 'stopped'
+        ? { level: 'deg', title: 'Прогон остановлен', hint: 'Строка в ошибках — след остановки, а не сбой: проверку прервали раньше, чем она вернула итог.' }
+        : { level: 'warn', title: 'Проверка прервалась, не вернув итога' },
+  },
+  {
+    re: /root-helper (is not configured|unavailable)/,
+    cause: () => ({ level: 'warn', title: 'У GP нет помощника с правами root', hint: 'Переустановите плагин GP в «Плагинах».' }),
+  },
+];
+
+const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
+const fmt = (v: number) => v.toLocaleString('ru-RU');
+
+export function runVerdict(status: string | null | undefined, log: RunLogTail | null | undefined): { facts: string[]; causes: RunCause[] } {
+  const st = status ?? '';
+  const failed = st === 'failed' || st === 'timeout';
+  const p = (log?.progress ?? {}) as Record<string, unknown>;
+
+  const facts: string[] = [];
+  if (failed && typeof p.phase_label === 'string' && p.phase_label) facts.push(`оборвался на этапе «${p.phase_label}»`);
+  const done = num(p.attempted) ?? 0,
+    total = num(p.attempt_total);
+  if (total) facts.push(`проверено ${fmt(done)} из ${fmt(total)} вариантов`);
+  const found = num(p.successful);
+  if (found !== undefined && total) facts.push(`найдено ${fmt(found)}`);
+  // the whole plan at the speed GP measured in this very run
+  const ms = num(p.eta_ms_per_attempt),
+    par = num(p.eta_parallelism) || 1;
+  if (ms && total && total > done && st !== 'success')
+    facts.push(
+      `при скорости этого прогона (${(ms / 1000).toLocaleString('ru-RU', { maximumFractionDigits: 1 })} с на проверку) весь план занял бы ≈ ${fmtLong(((total - done) * ms) / par / 1000)}`,
+    );
+
+  const lines = [log?.stderr_tail, log?.stderr_append]
+    .filter(Boolean)
+    .join('\n')
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const causes: RunCause[] = [];
+  for (const line of lines) {
+    const k = KNOWN_ERRORS.find((k) => k.re.test(line));
+    if (!k) continue;
+    const c = k.cause(st);
+    if (!causes.some((x) => x.title === c.title)) causes.push({ ...c, line });
+  }
+  for (const d of log?.stderr_diagnostics ?? [])
+    causes.push({ level: d.severity === 'error' ? 'warn' : 'deg', title: d.label || d.status || 'замечание GP', hint: d.message, line: d.line });
+  if (failed && !causes.some((c) => c.level === 'warn')) {
+    if (st === 'timeout') causes.push({ level: 'warn', title: 'Вышло время прогона', hint: 'Предел времени — в настройках прогона.' });
+    else if (lines.length) causes.push({ level: 'warn', title: 'GP завершил прогон с ошибкой', hint: 'Его последняя строка ошибок:', line: lines[lines.length - 1] });
+    else causes.push({ level: 'warn', title: 'GP не записал причину', hint: 'У прогона нет ни журнала, ни ошибок — посмотрите «Журнал работы» плагина GP в «Плагинах».' });
+  }
+  return { facts, causes };
+}
+
+// days for the long ones: a plan of millions of checks runs for weeks
+function fmtLong(s: number): string {
+  const d = Math.floor(s / 86400),
+    h = Math.floor((s % 86400) / 3600),
+    m = Math.floor((s % 3600) / 60);
+  if (d) return `${fmt(d)} сут ${h} ч`;
+  if (h) return `${h} ч ${m} мин`;
+  return `${Math.max(1, m)} мин`;
+}
+
 export const LIST_KIND: Record<string, { label: string; chip: string }> = {
   required: { label: 'обязательный', chip: 'acc' },
   desired: { label: 'желательный', chip: '' },

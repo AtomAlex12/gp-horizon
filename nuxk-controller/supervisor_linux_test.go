@@ -112,6 +112,14 @@ func TestSupervisorLifecycle(t *testing.T) {
 	if strings.Contains(string(env), "router-secret") || !strings.Contains(string(env), "PLUGIN_NAME=demo") {
 		t.Errorf("plugin env leaks the supervisor's or lacks its own:\n%s", env)
 	}
+	// its own TMPDIR, where it may run what it writes (the container's /tmp is noexec)
+	tmp := filepath.Join(data, "plugins", "demo", "tmp")
+	if !strings.Contains(string(env), "TMPDIR="+tmp+"\n") {
+		t.Errorf("plugin TMPDIR is not its own %s:\n%s", tmp, env)
+	}
+	if st, err := os.Stat(tmp); err != nil || st.Mode()&os.ModeSticky == 0 || st.Mode().Perm() != 0o777 {
+		t.Errorf("plugin tmp: %v %v", st, err)
+	}
 
 	// a failing recipe leaves the running version alone
 	h.call(supReq{Op: "install", Name: "demo", Version: "bad"})
