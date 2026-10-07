@@ -19,7 +19,7 @@
   const runName = $derived(c?.items.find((i) => i.id === run?.task)?.name ?? run?.task ?? '');
   // one reason for all of them (no `nuxk` here, an install going): said once
   const common = $derived.by(() => {
-    const why = (c?.items ?? []).filter((i) => !i.installed).map((i) => i.cannot ?? '');
+    const why = (c?.items ?? []).filter((i) => !i.installed || i.broken).map((i) => i.cannot ?? '');
     return why.length > 1 && why[0] && why.every((w) => w === why[0]) ? why[0] : '';
   });
   // the last run: while it goes, when it didn't go well, and for a day after
@@ -55,8 +55,8 @@
     return () => clearTimeout(t);
   });
 
-  async function install(id: string, name: string, what: string) {
-    if (!confirm(`Поставить ${name}?\n\n${what}`)) return;
+  async function install(id: string, name: string, what: string, again: boolean) {
+    if (!confirm(`${again ? 'Переустановить' : 'Поставить'} ${name}?\n\n${what}`)) return;
     busy = id;
     err = '';
     try {
@@ -102,19 +102,21 @@
           <div class="what">
             <div class="row">
               <b>{it.name}</b>
-              {#if it.installed}<span class="chip ok">установлен{it.version ? ` · ${it.version}` : ''}</span>
+              {#if it.installed && it.broken}<span class="chip warn">установлен, но не работает</span>
+              {:else if it.installed}<span class="chip ok">установлен{it.version ? ` · ${it.version}` : ''}</span>
               {:else}<span class="chip">не установлен</span>{/if}
             </div>
             <p class="hint">{it.about}</p>
-            {#if !it.installed && it.cannot && it.cannot !== common}<p class="hint">{it.cannot}</p>{/if}
+            {#if it.broken}<p class="err-text">{it.broken}. Переустановка создаст его заново.</p>{/if}
+            {#if (!it.installed || it.broken) && it.cannot && it.cannot !== common}<p class="hint">{it.cannot}</p>{/if}
           </div>
-          {#if !it.installed}
+          {#if !it.installed || it.broken}
             <button
               class="sm"
-              onclick={() => install(it.id, it.name, it.confirm)}
+              onclick={() => install(it.id, it.name, it.confirm, !!it.broken)}
               disabled={!it.can_install || !!busy || going}
             >
-              {busy === it.id ? 'Запускаю…' : 'Установить'}
+              {busy === it.id ? 'Запускаю…' : it.broken ? 'Переустановить' : 'Установить'}
             </button>
           {/if}
         </div>

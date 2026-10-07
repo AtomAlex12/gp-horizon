@@ -1114,7 +1114,8 @@ components:
         confirm: { type: string, description: "what installing does to the router — for the confirmation" }
         installed: { type: boolean }
         version: { type: string }
-        can_install: { type: boolean }
+        broken: { type: string, description: "installed, but it can't work (a tunnel without its Keenetic interface): why; installing again mends it" }
+        can_install: { type: boolean, description: "not installed, or broken — and nothing stands in the way" }
         cannot: { type: string, description: "why it can't be added (when it can't)" }
 
     Components:

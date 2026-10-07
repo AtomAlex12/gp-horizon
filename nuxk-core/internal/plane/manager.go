@@ -64,8 +64,20 @@ type Manager struct {
 	kick   chan struct{}
 	run    sync.Mutex // one reconcile at a time; guards pushed
 	pushed []string   // last desync list nfqws2 accepted; nil = not pushed yet
-	mu     sync.Mutex // guards st only: Status never waits for a slow pass
+	mu     sync.Mutex // guards st and ifaces: Status never waits for a slow pass
 	st     Status
+	ifaces map[string]bool // the firmware's interfaces, as the last pass saw them; nil = not known
+}
+
+// Interface: is name among the firmware's interfaces (OpkgTun0), as the last
+// pass saw them; known = false when no pass could tell yet.
+func (m *Manager) Interface(name string) (exists, known bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.ifaces == nil {
+		return false, false
+	}
+	return m.ifaces[name], true
 }
 
 const stateName = "plane"
@@ -217,6 +229,11 @@ func (m *Manager) Reconcile(ctx context.Context) {
 	if err != nil {
 		fail(err)
 		return
+	}
+	if obs.Interfaces != nil {
+		m.mu.Lock()
+		m.ifaces = obs.Interfaces
+		m.mu.Unlock()
 	}
 	st.DesyncOn = d.ManageDesync && m.Cfg.Desync != nil
 	st.Desync = Desync(d, m.Cfg.Ifaces[ModeWarp] != "")

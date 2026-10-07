@@ -594,6 +594,8 @@ do_xray() {
         # the old xray (if any) is started again, the rest goes on
         [ -x "$R$P_XRAY" ] && [ -x "$R$P_XRAY_INIT" ] && "$R$P_XRAY_INIT" start >/dev/null 2>&1
         warn "xray $XRAY_VERSION не запускается на этом роутере ($ARCH_RAW) — VLESS пропускаю, остальное ставлю дальше"
+        if [ -x "$R$P_XRAY" ]; then SKIPPED="xray не обновлён: $XRAY_VERSION не запускается на этом роутере, работает прежний"
+        else SKIPPED="VLESS пропущен: xray $XRAY_VERSION не запускается на этом роутере"; fi
         return 1
     fi
     mv -f "$R$P_XRAY.new" "$R$P_XRAY"
@@ -606,10 +608,11 @@ do_xray() {
         if ! nd -c "show interface $tun" >/dev/null 2>&1 && ! nerr=$(nd -c "interface $tun" 2>&1); then
             nerr=$(echo "$nerr" | tr -s '\n' ' ' | sed 's/ *$//')
             [ -n "$XRAY_SOFT" ] || die "интерфейс $tun в Keenetic не создался${nerr:+: $nerr}"
-            # xray stays in /opt; without its adapter it isn't counted as
+            # xray (≈35 MB) goes too: without its adapter it isn't counted as
             # installed, so the next run asks again
-            rm -f "$R$P_XRAY_INIT"
+            rm -f "$R$P_XRAY" "$R$P_XRAY_INIT"
             warn "интерфейс $tun в Keenetic не создался${nerr:+: $nerr} — VLESS пропускаю, остальное ставлю дальше"
+            SKIPPED="VLESS пропущен: Keenetic не создал интерфейс $tun${nerr:+ ($nerr)}"
             return 1
         fi
         nd -c "interface $tun description $XRAY_MARK" >/dev/null 2>&1 && nd -c "system configuration save" >/dev/null 2>&1 ||
@@ -791,8 +794,10 @@ finish() {
     printf '    %sКоманды%s  nuxk · nuxk update · nuxk rollback · nuxk warp · nuxk vless · nuxk dns · nuxk uninstall\n' "$B" "$N"
     [ "$(conf_get PLANE_APPLY)" = 1 ] || note "Маршрутизация списков выключена (режим плана), пока в $P_CONF не поставить PLANE_APPLY=\"1\"."
     note "Есть Raspberry Pi? Полная версия (история, подбор стратегий): nuxk-full.sh — см. README."
+    # what was skipped is said last — and to the panel, next to «done»
+    [ -n "$SKIPPED" ] && warn "$SKIPPED — повторить: nuxk vless"
     printf '\n'
-    report done "${DONE_MSG:-nuxk Horizon $VERSION работает}"
+    report done "${DONE_MSG:-nuxk Horizon $VERSION работает}${SKIPPED:+ · $SKIPPED}"
 }
 
 mode_install() {
@@ -1058,7 +1063,7 @@ self_update() {
 # --- main ------------------------------------------------------------------------------
 
 MODE=""
-WITH_WARP="" WITH_VLESS="" XRAY_SOFT=""
+WITH_WARP="" WITH_VLESS="" XRAY_SOFT="" SKIPPED=""
 for a in "$@"; do
     case "$a" in
     --yes | -y) YES=1 ;;

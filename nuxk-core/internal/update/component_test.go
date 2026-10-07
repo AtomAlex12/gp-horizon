@@ -55,6 +55,16 @@ func TestComponents(t *testing.T) {
 	if s := item(c, "smartdns"); s.CanInstall || s.Cannot != "SmartDNS отключён" {
 		t.Fatalf("not here: %+v", s)
 	}
+	// installed, but broken (WARP without its interface): offered again
+	u.o.Have = func(id string) Presence {
+		if id == "warp" {
+			return Presence{Installed: true, Broken: "интерфейса OpkgTun0 в Keenetic нет"}
+		}
+		return Presence{}
+	}
+	if w := item(u.Components(), "warp"); !w.Installed || !w.CanInstall || w.Broken == "" {
+		t.Fatalf("broken: %+v", w)
+	}
 	// not a router: nothing from the panel
 	u.o.Have = nil
 	if w := item(u.Components(), "warp"); w.CanInstall || w.Cannot == "" {
@@ -62,11 +72,23 @@ func TestComponents(t *testing.T) {
 	}
 }
 
+// waitRun: the install from the panel is over
+func waitRun(t *testing.T, u *Updater) {
+	t.Helper()
+	for i := 0; i < 200; i++ {
+		if r := u.Components().Run; r != nil && r.State != "running" {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatal("the install didn't finish")
+}
+
 func TestInstall(t *testing.T) {
 	if _, err := exec.LookPath("sh"); err != nil {
 		t.Skip("no sh")
 	}
-	u := componentUpdater(t, map[string]Presence{"nfqws2": {Installed: true}})
+	u := componentUpdater(t, map[string]Presence{"nfqws2": {Installed: true}, "warp": {Installed: true, Broken: "нет интерфейса"}})
 	t.Setenv("NUXK_BASE_URL", "http://mirror-long-gone:8099") // the installer's, left in the agent
 	if _, err := u.Install("tor"); !errors.Is(err, ErrUnknownComponent) {
 		t.Fatalf("unknown: %v", err)
@@ -74,6 +96,10 @@ func TestInstall(t *testing.T) {
 	if _, err := u.Install("nfqws2"); !errors.Is(err, ErrInstalled) {
 		t.Fatalf("installed: %v", err)
 	}
+	if c, err := u.Install("warp"); err != nil || c.Run == nil || c.Run.Task != "warp" { // broken: installed again
+		t.Fatalf("broken: %v", err)
+	}
+	waitRun(t, u)
 	c, err := u.Install("vless")
 	if err != nil || c.Run == nil || c.Run.Task != "vless" {
 		t.Fatalf("start: %v %+v", err, c.Run)

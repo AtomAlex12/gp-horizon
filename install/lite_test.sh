@@ -352,6 +352,7 @@ printf '#!/bin/sh\necho "futexwakeup addr=0x486032c returned -89" >&2\nexit 2\n'
 BADSUM=$(sha256sum "$BADX/v26.3.27/Xray-linux-64.zip" | cut -d' ' -f1)
 XRAY_BASE_URL=$(furl "$BADX") XRAY_TEST_SUM=$BADSUM lite --yes --with-vless || { cat "$ROOT/out"; exit 1; }
 check "bad xray: VLESS skipped, said why" "$(has "$ROOT/out" 'xray 26.3.27 не запускается на этом роутере (x64-3.2) — VLESS пропускаю')" "1"
+check "bad xray: said again at the end" "$(has "$ROOT/out" 'VLESS пропущен: xray 26.3.27 не запускается на этом роутере — повторить: nuxk vless')" "1"
 check "bad xray: the rest installed and started" "$(agent)/$(has "$ROOT/out" 'nuxk-core отвечает')" "0.3.4/1"
 check "bad xray: nothing of it left" "$(ls "$(f /opt/sbin)" 2>/dev/null | wc -l | tr -d ' ')" "0"
 check "bad xray: not wired" "$(has "$C" 'ENGINE_XRAY="/opt/etc/init.d/S52xray-nuxk"')" "0"
@@ -365,8 +366,10 @@ grep -l nuxk-vless "$ROOT"/ndm/* | xargs rm -f # the router never had ours
 rm -f "$(f /opt/sbin/xray)"
 saved=$(has "$ROOT/ndm.saved" saved)
 touch "$ROOT/ndm.refuse"
-lite --yes --with-vless || { cat "$ROOT/out"; exit 1; }
+NUXK_STATUS="$ROOT/run-status" lite --yes --with-vless || { cat "$ROOT/out"; exit 1; }
 [ -n "${SHOW:-}" ] && cat "$ROOT/out"
+check "no OpkgTun: the panel told, next to done" "$(grep -c -e '^state done' -e '^message .* · VLESS пропущен: Keenetic не создал интерфейс OpkgTun' "$ROOT/run-status")" "2"
+check "no OpkgTun: xray gone too (35 MB)" "$([ -e "$(f /opt/sbin/xray)" ] && echo there || echo gone)" "gone"
 check "no OpkgTun: VLESS skipped, said why" "$(has "$ROOT/out" 'не создался: Command::Base error\[7405600\]: Cannot create NDM interface — VLESS пропускаю')" "1"
 check "no OpkgTun: the rest installed and started" "$(has "$ROOT/out" 'nuxk-core отвечает')" "1"
 check "no OpkgTun: no adapter, asked again next time" "$([ -e "$(f /opt/etc/init.d/S52xray-nuxk)" ] && echo there || echo gone)" "gone"

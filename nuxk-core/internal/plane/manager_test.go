@@ -36,3 +36,30 @@ func TestStatusDoesNotWaitForReconcile(t *testing.T) {
 	}
 	close(b.release)
 }
+
+type ifaceBackend struct{ ifaces map[string]bool }
+
+func (b ifaceBackend) Name() string { return "ifaces" }
+func (b ifaceBackend) Observe(context.Context) (Observed, error) {
+	return Observed{Groups: map[string][]string{}, Interfaces: b.ifaces}, nil
+}
+func (b ifaceBackend) Apply(context.Context, Op) error { return nil }
+
+// The firmware's interfaces, as the last pass saw them: unknown before one,
+// and when the backend can't tell.
+func TestInterface(t *testing.T) {
+	m := NewManager(ifaceBackend{ifaces: map[string]bool{"OpkgTun0": true}}, memStore{}, Config{})
+	if _, known := m.Interface("OpkgTun0"); known {
+		t.Fatal("known before a pass")
+	}
+	m.Reconcile(context.Background())
+	if ok, known := m.Interface("OpkgTun0"); !ok || !known {
+		t.Fatal("OpkgTun0 not seen")
+	}
+	if ok, known := m.Interface("OpkgTun1"); ok || !known {
+		t.Fatal("OpkgTun1 seen")
+	}
+	if _, known := NewManager(ifaceBackend{}, memStore{}, Config{}).Interface("OpkgTun0"); known {
+		t.Fatal("a backend that can't tell")
+	}
+}
