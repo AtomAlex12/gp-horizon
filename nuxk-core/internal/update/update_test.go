@@ -131,7 +131,7 @@ const fakeNuxk = `#!/bin/sh
 [ "$1 $2" = "update --yes" ] || exit 9
 echo "▸ nuxk-core $NUXK_VERSION"
 echo "base=${NUXK_BASE_URL:-} self=${NUXK_SELF_UPDATED:-} old=${NUXK_OLD_TMP:-}"
-{ echo "state done"; echo "from $NUXK_FROM"; echo "to $NUXK_VERSION"; echo "pid $$"; echo "started $NUXK_STARTED"; echo "at $(date +%s)"; echo "message nuxk Horizon $NUXK_VERSION работает"; } >"$NUXK_STATUS.tmp" && mv "$NUXK_STATUS.tmp" "$NUXK_STATUS"
+{ echo "state done"; echo "from $NUXK_FROM"; echo "to $NUXK_VERSION"; echo "pid $$"; echo "started $NUXK_STARTED"; echo "at $(date +%s)"; echo "message GP Horizon $NUXK_VERSION работает"; } >"$NUXK_STATUS.tmp" && mv "$NUXK_STATUS.tmp" "$NUXK_STATUS"
 `
 
 func TestStart(t *testing.T) {
@@ -164,7 +164,7 @@ func TestStart(t *testing.T) {
 		st = u.Status()
 	}
 	r := st.Run
-	if r.State != "done" || r.Message != "nuxk Horizon 0.4.1 работает" || r.StartedAt == 0 || len(r.Log) != 2 || r.Log[0] != "▸ nuxk-core 0.4.1" {
+	if r.State != "done" || r.Message != "GP Horizon 0.4.1 работает" || r.StartedAt == 0 || len(r.Log) != 2 || r.Log[0] != "▸ nuxk-core 0.4.1" {
 		t.Fatalf("run: %+v", r)
 	}
 	if r.Log[1] != "base= self= old=" {

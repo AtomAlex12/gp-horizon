@@ -12,10 +12,17 @@
 
 ## [0.5.0-beta.9] — 2026-10-07
 
+**nuxk Horizon теперь называется GP Horizon** — вместе с проектом GP
+([balbomush/GP-access-control-plane](https://github.com/balbomush/GP-access-control-plane)),
+который уже работает в контроллере плагином подбора стратегий. Репозиторий —
+[AtomAlex12/gp-horizon](https://github.com/AtomAlex12/gp-horizon); старые адреса GitHub
+перенаправляет, установленные роутеры и Pi находят обновления как раньше. Команды (`nuxk`,
+`nuxk-pi`), пути и объекты в Keenetic не меняются.
+
 Доработки после бет 0.5.0-beta.7 и 0.5.0-beta.8.
 
 Бета: ставить по ссылке с номером —
-`curl -fsSLo /opt/tmp/nuxk-lite.sh https://github.com/AtomAlex12/nuxk-horizon/releases/download/v0.5.0-beta.9/nuxk-lite.sh`,
+`curl -fsSLo /opt/tmp/nuxk-lite.sh https://github.com/AtomAlex12/gp-horizon/releases/download/v0.5.0-beta.9/nuxk-lite.sh`,
 или на роутере с nuxk — кнопкой «Обновить роутер» / «Обновить всё».
 
 ### Added
@@ -24,6 +31,10 @@
   «установлен, но не работает» — с причиной и кнопкой «Переустановить». Раньше такой WARP
   выглядел установленным, а починить его можно было только командой `nuxk warp`. Агент
   узнаёт интерфейсы Keenetic через RCI — тот же, что для маршрутизации списков.
+
+### Changed
+- Название в панели, установщиках и документации — **GP Horizon**; адреса по умолчанию
+  (проверка обновлений, установщики) — новый репозиторий `AtomAlex12/gp-horizon`.
 
 ### Fixed
 - **Пропущенный VLESS не был виден в панели.** Если при установке или обновлении xray не
@@ -39,7 +50,7 @@
 теперь создаются; установка не обрывается из-за VLESS.
 
 Бета: ставить по ссылке с номером —
-`curl -fsSLo /opt/tmp/nuxk-lite.sh https://github.com/AtomAlex12/nuxk-horizon/releases/download/v0.5.0-beta.8/nuxk-lite.sh`.
+`curl -fsSLo /opt/tmp/nuxk-lite.sh https://github.com/AtomAlex12/gp-horizon/releases/download/v0.5.0-beta.8/nuxk-lite.sh`.
 WARP, поставленный раньше без интерфейса, установщик предложит поставить заново.
 
 ### Fixed
@@ -63,7 +74,7 @@ WARP, поставленный раньше без интерфейса, уст�
 запускается, а установка не обрывается, если с xray что-то не так.
 
 Бета: ставить по ссылке с номером —
-`curl -fsSLo /opt/tmp/nuxk-lite.sh https://github.com/AtomAlex12/nuxk-horizon/releases/download/v0.5.0-beta.7/nuxk-lite.sh`,
+`curl -fsSLo /opt/tmp/nuxk-lite.sh https://github.com/AtomAlex12/gp-horizon/releases/download/v0.5.0-beta.7/nuxk-lite.sh`,
 или на роутере с nuxk — кнопкой «Обновить роутер» / `nuxk update`.
 
 ### Fixed
@@ -281,7 +292,7 @@ nuxk — серверы DoH **через туннель**: провайдер н
 **Обновление с 0.3.0.** Роутер — по SSH в Entware:
 
 ```sh
-curl -fsSLo /opt/tmp/nuxk-lite.sh https://github.com/AtomAlex12/nuxk-horizon/releases/download/v0.4.0/nuxk-lite.sh
+curl -fsSLo /opt/tmp/nuxk-lite.sh https://github.com/AtomAlex12/gp-horizon/releases/download/v0.4.0/nuxk-lite.sh
 sh /opt/tmp/nuxk-lite.sh
 ```
 
@@ -650,10 +661,10 @@ nuxk-core покажет «0.2.0-beta.2 → 0.2.0-beta.3», вместе с ни
 - Настоящего `S52xray` нет, пакетов opkg нет.
 - Токен прототипа вшит в JS-сборку — только для изолированного стенда.
 
-[Unreleased]: https://github.com/AtomAlex12/nuxk-horizon/compare/v0.3.0...HEAD
-[0.3.0]: https://github.com/AtomAlex12/nuxk-horizon/releases/tag/v0.3.0
-[0.2.0-beta.3]: https://github.com/AtomAlex12/nuxk-horizon/releases/tag/v0.2.0-beta.3
-[0.2.0-beta.2]: https://github.com/AtomAlex12/nuxk-horizon/releases/tag/v0.2.0-beta.2
-[0.2.0-beta.1]: https://github.com/AtomAlex12/nuxk-horizon/releases/tag/v0.2.0-beta.1
-[0.1.0-beta.1]: https://github.com/AtomAlex12/nuxk-horizon/releases/tag/v0.1.0-beta.1
-[0.1.0-alpha.1]: https://github.com/AtomAlex12/nuxk-horizon/releases/tag/v0.1.0-alpha.1
+[Unreleased]: https://github.com/AtomAlex12/gp-horizon/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/AtomAlex12/gp-horizon/releases/tag/v0.3.0
+[0.2.0-beta.3]: https://github.com/AtomAlex12/gp-horizon/releases/tag/v0.2.0-beta.3
+[0.2.0-beta.2]: https://github.com/AtomAlex12/gp-horizon/releases/tag/v0.2.0-beta.2
+[0.2.0-beta.1]: https://github.com/AtomAlex12/gp-horizon/releases/tag/v0.2.0-beta.1
+[0.1.0-beta.1]: https://github.com/AtomAlex12/gp-horizon/releases/tag/v0.1.0-beta.1
+[0.1.0-alpha.1]: https://github.com/AtomAlex12/gp-horizon/releases/tag/v0.1.0-alpha.1

@@ -139,7 +139,7 @@
       <div class="brand">
         {@render brandMark()}
         <div>
-          <b>nuxk Horizon</b><small>{node.via === 'controller' ? 'контроллер на Pi' : location.host}</small>
+          <b>GP Horizon</b><small>{node.via === 'controller' ? 'контроллер на Pi' : location.host}</small>
         </div>
       </div>
       <button class="ghost sm" onclick={toggleTheme} aria-label="Сменить тему"><Icon name={theme === 'dark' ? 'sun' : 'moon'} size={15} /></button>
@@ -160,7 +160,7 @@
   <aside class="side" class:open={menuOpen} aria-label="Разделы">
     <div class="brand">
       {@render brandMark()}
-      <div><b>nuxk Horizon</b><small>{roleLabel(node.info)} · {where}</small></div>
+      <div><b>GP Horizon</b><small>{roleLabel(node.info)} · {where}</small></div>
     </div>
     {#each NAV as g (g.title)}
       <div class="nav-group">

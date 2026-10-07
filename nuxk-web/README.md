@@ -1,6 +1,6 @@
 # nuxk-web
 
-The nuxk Horizon UI. **Svelte** SPA, talks only to `nuxk-core` `/api/v1`.
+The GP Horizon UI. **Svelte** SPA, talks only to `nuxk-core` `/api/v1`.
 
 Two builds from one codebase:
 

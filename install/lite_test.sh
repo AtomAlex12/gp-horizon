@@ -278,13 +278,13 @@ check "update: SmartDNS itself not downloaded again" "$(has "$ROOT/out" 'smartdn
 release 0.3.2
 echo "0000  nuxk-core-mips" >>"$REL/SHA256SUMS"
 panel 0.3.1 && check "changed sums: fails" "exit 0" "exit 1"
-check "changed sums: says why" "$(has "$ROOT/out" 'не подписан ключом nuxk Horizon')" "1"
+check "changed sums: says why" "$(has "$ROOT/out" 'не подписан ключом GP Horizon')" "1"
 check "changed sums: agent as it was" "$(agent)" "0.3.1"
 check "changed sums: the panel sees it failed" "$(sed -n 's/^state //p' "$RUN")" "failed"
 release 0.3.2
 rm -f "$REL/SHA256SUMS.sig"
 nuxk update --yes && check "no signature: fails" "exit 0" "exit 1"
-check "no signature: says why" "$(has "$ROOT/out" 'не подписан ключом nuxk Horizon')" "1"
+check "no signature: says why" "$(has "$ROOT/out" 'не подписан ключом GP Horizon')" "1"
 check "no signature: agent as it was" "$(agent)" "0.3.1"
 
 # 8. the latest release is older than what runs: nothing to do

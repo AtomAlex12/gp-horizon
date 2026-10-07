@@ -1,18 +1,18 @@
 #!/bin/sh
-# nuxk Horizon — the DEVELOPMENT stack on a Raspberry Pi, built from source
+# GP Horizon — the DEVELOPMENT stack on a Raspberry Pi, built from source
 # (the real-engine stand and the controller). People install with
 # install/nuxk-full.sh instead: prebuilt, nothing compiled on the Pi.
 # Safe to re-run: it checks, fixes what's missing, updates the checkout and
 # restarts the stack.
 #
-#   git clone https://github.com/AtomAlex12/nuxk-horizon.git ~/nuxk-horizon
+#   git clone https://github.com/AtomAlex12/gp-horizon.git ~/nuxk-horizon
 #   cd ~/nuxk-horizon && sh deploy/pi/bootstrap.sh
 #
 # Env: NUXK_REF (branch/tag, default main), NUXK_DIR (checkout, default: the
 # one this script lives in, else ~/nuxk-horizon), NUXK_REPO (clone URL).
 set -eu
 
-REPO="${NUXK_REPO:-git@github.com:AtomAlex12/nuxk-horizon.git}"
+REPO="${NUXK_REPO:-git@github.com:AtomAlex12/gp-horizon.git}"
 REF="${NUXK_REF:-main}"
 HERE=$(cd "$(dirname "$0")/../.." 2>/dev/null && pwd || true)
 if [ -z "${NUXK_DIR:-}" ] && [ -f "$HERE/deploy/pi/docker-compose.yml" ]; then DIR="$HERE"; else DIR="${NUXK_DIR:-$HOME/nuxk-horizon}"; fi

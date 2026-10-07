@@ -1,4 +1,4 @@
-# nuxk Horizon — dev stack (nuxk-core + nuxk-web + usque/xray mocks in one box).
+# GP Horizon — dev stack (nuxk-core + nuxk-web + usque/xray mocks in one box).
 #
 #   docker compose -f deploy/dev/docker-compose.yml up --build
 #   http://localhost:4141        dashboard

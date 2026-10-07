@@ -1,6 +1,6 @@
 # nuxk-core
 
-The nuxk Horizon control daemon. Go, stdlib-only, one static binary per arch.
+The GP Horizon control daemon. Go, stdlib-only, one static binary per arch.
 
 > **0.1.0-alpha.1.** Implemented: config, `/api/v1` (healthz/version/status/
 > engines*, apply, config), adapters for **usque, nfqws2, xray**, the

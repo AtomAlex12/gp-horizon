@@ -1,4 +1,4 @@
-// Package release checks that a release's SHA256SUMS comes from nuxk Horizon:
+// Package release checks that a release's SHA256SUMS comes from GP Horizon:
 // the release workflow signs it with the release key (an SSH signature,
 // `ssh-keygen -Y sign -n nuxk-release`), and the agent already on the router
 // checks it before an update touches anything. A new agent can't vouch for
@@ -58,7 +58,7 @@ func Keys() []Key {
 var (
 	ErrNoSignature  = errors.New("нет подписи")
 	ErrBadSignature = errors.New("подпись не сходится")
-	ErrUnknownKey   = errors.New("подписано не ключом nuxk Horizon")
+	ErrUnknownKey   = errors.New("подписано не ключом GP Horizon")
 )
 
 // Verify checks msg against an armored SSH signature, with the built-in keys.

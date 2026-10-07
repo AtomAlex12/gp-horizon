@@ -1,4 +1,4 @@
-# nuxk Horizon — the development stack for a Raspberry Pi, built from source.
+# GP Horizon — the development stack for a Raspberry Pi, built from source.
 # People install with install/nuxk-full.sh (prebuilt image from the release).
 #
 #   nuxk        real-engine prototype (usque + nfqws2) from deploy/proto — :4242

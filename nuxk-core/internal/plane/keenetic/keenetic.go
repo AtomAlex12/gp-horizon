@@ -236,6 +236,7 @@ func (b *Backend) Apply(ctx context.Context, op plane.Op) error {
 			return err
 		}
 		// cosmetic, and not verified on every firmware: never fails the op
+		// the old name on purpose: the groups already on routers carry it
 		_ = b.post(ctx, fqdn(op.Group, map[string]any{"description": "nuxk Horizon — managed, do not edit"}))
 		return nil
 	case plane.OpAddDomains:

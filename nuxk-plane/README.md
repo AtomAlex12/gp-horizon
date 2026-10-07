@@ -1,7 +1,7 @@
 # nuxk-plane
 
 The routing plane — **fork of [Ground-Zerro/HydraRoute](https://github.com/Ground-Zerro/HydraRoute)**
-(Neo), adapted for nuxk Horizon.
+(Neo), adapted for GP Horizon.
 
 ## Why fork, not just drive
 

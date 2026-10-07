@@ -1,4 +1,4 @@
-# nuxk Horizon — dev / e2e image.
+# GP Horizon — dev / e2e image.
 #
 # Builds nuxk-core + nuxk-web and runs them together against the usque + xray mocks,
 # so the full stack (reconcile loop, /api/v1, dashboard) can be exercised without

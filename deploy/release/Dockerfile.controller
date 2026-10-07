@@ -19,8 +19,8 @@ COPY plugins/ /usr/share/nuxk/plugins/
 RUN chmod 755 /usr/bin/nuxk-controller \
     && mkdir -p /var/lib/nuxk-controller && chown 65534:65534 /var/lib/nuxk-controller && chmod 711 /var/lib/nuxk-controller
 ENV WEB_ROOT=/usr/share/nuxk-web DATA_DIR=/var/lib/nuxk-controller LISTEN=:4200
-LABEL org.opencontainers.image.source="https://github.com/AtomAlex12/nuxk-horizon" \
-      org.opencontainers.image.description="nuxk Horizon controller: the full web UI, history and plugins for nuxk on a Keenetic router" \
+LABEL org.opencontainers.image.source="https://github.com/AtomAlex12/gp-horizon" \
+      org.opencontainers.image.description="GP Horizon controller: the full web UI, history and plugins for nuxk on a Keenetic router" \
       org.opencontainers.image.licenses="MIT"
 EXPOSE 4200
 ENTRYPOINT ["/usr/bin/nuxk-controller"]

@@ -1,4 +1,4 @@
-// Package update: is there a newer nuxk Horizon release, and the router
+// Package update: is there a newer GP Horizon release, and the router
 // updated to it from the panel.
 //
 // The agent only looks (GitHub's list of releases, once a day) and starts the
@@ -29,7 +29,7 @@ import (
 )
 
 // DefaultRepo is where releases come from (UPDATE_REPO in nuxk.conf).
-const DefaultRepo = "AtomAlex12/nuxk-horizon"
+const DefaultRepo = "AtomAlex12/gp-horizon"
 
 const (
 	ChannelStable = "stable" // releases only
