@@ -1,16 +1,8 @@
 # GP Horizon
 
-**GP Horizon** — это два проекта под одним именем:
-
-- **Horizon** (этот репозиторий) — обход блокировок на роутере Keenetic: агент `nuxk`,
-  туннели WARP и VLESS, защищённый DNS, панель, обновления кнопкой; контроллер на Pi;
-- **GP** — подбор стратегий nfqws2 / zapret2 через blockcheck2:
-  [balbomush/GP-access-control-plane](https://github.com/balbomush/GP-access-control-plane).
-  В полной версии GP встроен в контроллер плагином: «Прогоны», «Результаты», «Стратегии».
-
-Технические имена остались прежними — команда `nuxk` на роутере, `nuxk-pi` на Pi, объекты
-`nuxk-*` в Keenetic, пути `/opt/etc/nuxk` и `~/nuxk`: их переименование на работающих
-роутерах ничего не даёт, а риск сбоя есть.
+> Раньше проект назывался **nuxk Horizon**. Технические имена остались прежними — команда
+> `nuxk` на роутере, `nuxk-pi` на Pi, объекты `nuxk-*` в Keenetic, пути `/opt/etc/nuxk` и
+> `~/nuxk`: их переименование на работающих роутерах ничего не даёт, а риск сбоя есть.
 
 Обход блокировок на роутерах **Keenetic + Entware**: у каждого сайта свой путь —
 **DPI** (nfqws2), **WARP** (Cloudflare) или **ваш VLESS-сервер** (xray), — и одна
@@ -236,10 +228,3 @@ make check                                                   # всё, что г
 ## Лицензия
 
 MIT. См. [`LICENSE`](LICENSE).
-
-## Авторы
-
-- Horizon — [AtomAlex12](https://github.com/AtomAlex12);
-- GP — [balbomush](https://github.com/balbomush).
-
-Оба проекта — под лицензией MIT.

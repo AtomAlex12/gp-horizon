@@ -12,9 +12,7 @@
 
 ## [0.5.0-beta.9] — 2026-10-07
 
-**nuxk Horizon теперь называется GP Horizon** — вместе с проектом GP
-([balbomush/GP-access-control-plane](https://github.com/balbomush/GP-access-control-plane)),
-который уже работает в контроллере плагином подбора стратегий. Репозиторий —
+**nuxk Horizon теперь называется GP Horizon.** Репозиторий —
 [AtomAlex12/gp-horizon](https://github.com/AtomAlex12/gp-horizon); старые адреса GitHub
 перенаправляет, установленные роутеры и Pi находят обновления как раньше. Команды (`nuxk`,
 `nuxk-pi`), пути и объекты в Keenetic не меняются.

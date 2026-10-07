@@ -1,8 +1,7 @@
 # CLAUDE.md — GP Horizon
 
-Платформа управления обходом блокировок на роутерах Keenetic + Entware. **GP Horizon** —
-общее имя двух проектов: Horizon (этот репозиторий, `AtomAlex12/gp-horizon`) и GP
-(подбор стратегий, `balbomush/GP-access-control-plane`, встроен в контроллер плагином `gp`).
+Платформа управления обходом блокировок на роутерах Keenetic + Entware. Проект называется
+**GP Horizon** (до 07.10.2026 — nuxk Horizon), репозиторий `AtomAlex12/gp-horizon`.
 
 **Имена.** Людям — «GP Horizon». Технические имена **не переименовывать**: команды `nuxk`,
 `nuxk-pi`, бинарники `nuxk-core`/`nuxk-controller`, объекты Keenetic `nuxk-*` и их описание,
