@@ -144,6 +144,28 @@
 
   const active = $derived(!!progress && ['queued', 'running', 'saving', 'stopping'].includes(progress.status));
 
+  // How far the run is. GP's current-run-progress may carry only the stage
+  // and the times; the counters are in the run's own progress, with the log.
+  const live = $derived.by(() => {
+    const p = progress;
+    const lp = (log?.progress ?? {}) as Record<string, unknown>;
+    const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
+    const pair = (done: unknown, total: unknown): [number, number] | null => (num(total) ? [num(done) ?? 0, num(total)!] : null);
+    return {
+      domains: p?.domains_total ? pair(p.domains_processed, p.domains_total) : null,
+      attempts: p?.attempts_total ? pair(p.attempts_processed, p.attempts_total) : pair(lp.attempted, lp.attempt_total),
+      inSet: p?.strategies_total
+        ? pair(p.strategies_processed, p.strategies_total)
+        : pair(lp.current_script_strategy_checked, lp.current_script_strategy_total),
+      sets: pair(lp.script_index, lp.script_total),
+      set: typeof lp.current_script === 'string' ? lp.current_script : '',
+      ok: num(lp.successful),
+      stage: (typeof lp.phase_label === 'string' && lp.phase_label) || p?.stage || '',
+      eta: p?.eta_seconds || num(lp.eta_seconds) || 0,
+      perAttempt: p?.avg_attempt_seconds || (num(lp.eta_ms_per_attempt) ?? 0) / 1000,
+    };
+  });
+
   // The newest run, and why it failed if it did. GP reports «idle» once a run
   // has ended, so a run that dies in seconds would otherwise just drop the
   // page back to this form without a word.
@@ -289,33 +311,36 @@
         {#if progress.run_id}<span class="hint mono">{progress.run_id.slice(0, 8)}</span>{/if}
       </div>
       <div class="bars">
-        {#if progress.domains_total}
+        {#if live.domains}
           <div class="r">
-            <span>Домены</span><span class="v">{n(progress.domains_processed)} из {n(progress.domains_total)}</span>
-            <div class="bar"><div class="bar-fill" style="width:{pct(progress.domains_processed, progress.domains_total)}%"></div></div>
+            <span>Домены</span><span class="v">{n(live.domains[0])} из {n(live.domains[1])}</span>
+            <div class="bar"><div class="bar-fill" style="width:{pct(live.domains[0], live.domains[1])}%"></div></div>
           </div>
-        {:else}
+        {/if}
+        {#if live.attempts}
+          <div class="r">
+            <span>Проверки</span><span class="v">{n(live.attempts[0])} из {n(live.attempts[1])}</span>
+            <div class="bar"><div class="bar-fill" style="width:{pct(live.attempts[0], live.attempts[1])}%"></div></div>
+          </div>
+        {/if}
+        {#if live.inSet}
+          <div class="r">
+            <span>Стратегии текущего набора</span><span class="v">{n(live.inSet[0])} из {n(live.inSet[1])}</span>
+            <div class="bar"><div class="bar-fill" style="width:{pct(live.inSet[0], live.inSet[1])}%"></div></div>
+          </div>
+        {/if}
+        {#if !live.domains && !live.attempts}
           <p class="hint">Готовлю проверку: DNS, адреса, обход без стратегии…</p>
-        {/if}
-        {#if progress.attempts_total}
-          <div class="r">
-            <span>Попытки</span><span class="v">{n(progress.attempts_processed)} из {n(progress.attempts_total)}</span>
-            <div class="bar"><div class="bar-fill" style="width:{pct(progress.attempts_processed, progress.attempts_total)}%"></div></div>
-          </div>
-        {/if}
-        {#if progress.strategies_total}
-          <div class="r">
-            <span>Стратегии текущего домена</span><span class="v">{n(progress.strategies_processed)} из {n(progress.strategies_total)}</span>
-            <div class="bar"><div class="bar-fill" style="width:{pct(progress.strategies_processed, progress.strategies_total)}%"></div></div>
-          </div>
         {/if}
       </div>
       <dl class="kv top">
-        {#if progress.stage}<dt>этап</dt><dd>{progress.stage}</dd>{/if}
+        {#if live.stage}<dt>этап</dt><dd>{live.stage}</dd>{/if}
+        {#if live.sets}<dt>набор стратегий</dt><dd>{live.sets[0]} из {live.sets[1]}{#if live.set}&nbsp;· <span class="mono">{live.set}</span>{/if}</dd>{/if}
+        {#if live.ok !== undefined}<dt>удачных проверок</dt><dd>{n(live.ok)}</dd>{/if}
         {#if progress.current_file}<dt>сейчас</dt><dd class="mono">{progress.current_file}</dd>{/if}
         <dt>прошло</dt><dd>{progress.elapsed_seconds ? fmtDur(progress.elapsed_seconds) : '—'}</dd>
-        <dt>осталось</dt><dd>{progress.eta_seconds ? '≈ ' + fmtDur(progress.eta_seconds) : '—'}</dd>
-        {#if progress.avg_attempt_seconds}<dt>в среднем на попытку</dt><dd>{progress.avg_attempt_seconds.toFixed(1)} с</dd>{/if}
+        <dt>осталось</dt><dd>{live.eta ? '≈ ' + fmtDur(live.eta) : '—'}</dd>
+        {#if live.perAttempt}<dt>в среднем на проверку</dt><dd>{live.perAttempt.toLocaleString('ru-RU', { maximumFractionDigits: 1 })} с</dd>{/if}
       </dl>
       <div class="row top">
         <button class="warn" onclick={stop} disabled={busy || progress.status === 'stopping'}>Остановить</button>
@@ -683,16 +708,6 @@
   .term.small {
     height: auto;
     max-height: 160px;
-  }
-  .linkbtn {
-    display: inline;
-    background: none;
-    border: 0;
-    padding: 0;
-    color: var(--accent);
-    font-size: inherit;
-    text-decoration: underline;
-    cursor: pointer;
   }
   dd input[type='number'] {
     width: 70px;

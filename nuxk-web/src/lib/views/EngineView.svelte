@@ -311,15 +311,6 @@
     max-width: 760px;
     margin-top: 8px;
   }
-  .linkbtn {
-    display: inline;
-    background: none;
-    border: 0;
-    padding: 0;
-    color: var(--accent);
-    font-size: inherit;
-    text-decoration: underline;
-  }
   .raw summary {
     cursor: pointer;
     font-weight: 600;
