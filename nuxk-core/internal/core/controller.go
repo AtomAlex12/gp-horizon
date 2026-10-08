@@ -565,6 +565,14 @@ func (c *Controller) observe(ctx context.Context, k engine.Kind, doProbe bool) E
 		if p, err := e.Probe(ctx, c.probeSites(k, st.Detail["items"]).Targets); err != nil {
 			slog.Warn("reconcile probe", "engine", k, "err", err)
 		} else {
+			failed := 0
+			for _, ch := range p.Checks {
+				if !ch.OK {
+					failed++
+				}
+			}
+			slog.Debug("probe", "engine", k, "ok", p.OK, "rtt_ms", p.RTTms, "egress", p.EgressIP,
+				"checks", len(p.Checks), "failed", failed, "reason", p.Reason)
 			st.Probe = &p
 			st.ProbeAt = time.Now().Unix()
 		}

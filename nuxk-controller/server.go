@@ -13,7 +13,7 @@ import (
 // NewServer: /api/v1/* is proxied to the agent (the browser's session
 // checked, the agent's token swapped in), /ctl/v1/* is the controller's own
 // API (setup, login, history), / is the web UI.
-func NewServer(a *Agent, st *Store, ses *Sessions, ph *PluginHost, vl *Vless, su *SelfUpdater, webRoot, version string) http.Handler {
+func NewServer(a *Agent, st *Store, ses *Sessions, ph *PluginHost, vl *Vless, su *SelfUpdater, lg *Logs, webRoot, version string) http.Handler {
 	proxy := &httputil.ReverseProxy{
 		Rewrite: func(r *httputil.ProxyRequest) {
 			base, tok := a.Ref()
@@ -56,6 +56,9 @@ func NewServer(a *Agent, st *Store, ses *Sessions, ph *PluginHost, vl *Vless, su
 	if su != nil {
 		su.routes(authed)
 	}
+	if lg != nil {
+		lg.routes(authed)
+	}
 	authed.HandleFunc("/ctl/v1/gp/{path...}", NewGPClient("", st, ph).handle)
 	// the agent's own login is for its own page, not through the controller
 	authed.HandleFunc("/api/v1/auth/", http.NotFound)
@@ -72,7 +75,7 @@ func NewServer(a *Agent, st *Store, ses *Sessions, ph *PluginHost, vl *Vless, su
 	if webRoot != "" {
 		mux.Handle("/", spa(webRoot))
 	}
-	return secure(mux)
+	return secure(logRequests(mux))
 }
 
 // auth lets in a logged-in browser; its writes only from this very page.

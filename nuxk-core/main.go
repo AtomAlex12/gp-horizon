@@ -77,10 +77,7 @@ func main() {
 		return
 	}
 
-	lvl := slog.LevelInfo
-	if *debug {
-		lvl = slog.LevelDebug
-	}
+	dbg := logbuf.NewDebug(*debug) // the panel's «Отладка» switches it for a while
 	var logOut io.Writer = os.Stderr
 	if *logPath != "" {
 		lf, err := logbuf.OpenFile(*logPath, 512<<10)
@@ -90,8 +87,8 @@ func main() {
 		}
 		logOut = lf
 	}
-	logs := logbuf.NewRing(500) // GET /api/v1/logs
-	slog.SetDefault(slog.New(logbuf.NewHandler(logOut, logs, lvl)))
+	logs := logbuf.NewRing(2000) // GET /api/v1/logs; debug fills it fast
+	slog.SetDefault(slog.New(logbuf.NewHandler(logOut, logs, dbg.FileLevel(), dbg)))
 	slog.Info("nuxk-core starting", "version", version, "commit", commit)
 
 	cfg, err := config.Load(*cfgPath)
@@ -266,7 +263,7 @@ func main() {
 		Addr: cfg.Listen,
 		Handler: api.NewRouter(api.Deps{
 			Version: version, Commit: commit, Engines: reg, Hub: hub, Ctl: ctl, Plane: pm,
-			WebRoot: cfg.WebRoot, Token: cfg.APIToken, Auth: guard, Logs: logs,
+			WebRoot: cfg.WebRoot, Token: cfg.APIToken, Auth: guard, Logs: logs, Debug: dbg,
 			Node:   node.New(cfg.NodeRole, cfg.Plane.RCI, version, commit),
 			Update: upd, DNS: dnsSvc,
 		}),

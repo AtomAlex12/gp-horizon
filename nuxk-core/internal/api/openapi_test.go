@@ -69,6 +69,8 @@ func TestOpenAPISchemasCoverJSONFields(t *testing.T) {
 		"IfaceCounters":  node.Iface{},
 		"NFQueue":        node.Queue{},
 		"LogEntry":       logbuf.Entry{},
+		"LogDebug":       logbuf.DebugState{},
+		"LogDebugSet":    logDebugReq{},
 		"EngineInfo":     engine.Info{},
 		"Probe":          engine.Probe{},
 		"ProbeCheck":     engine.ProbeCheck{},

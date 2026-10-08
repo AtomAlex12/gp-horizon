@@ -25,12 +25,13 @@ func logging(next http.Handler) http.Handler {
 		start := time.Now()
 		rec := &statusRecorder{ResponseWriter: w, code: http.StatusOK}
 		next.ServeHTTP(rec, r)
-		if r.URL.Path == "/api/v1/healthz" {
-			return // don't spam logs with liveness checks
+		// debug: what changes something, fails or drags — not the reads the
+		// panel and the controller poll every few seconds
+		took := time.Since(start)
+		if r.Method == http.MethodGet && rec.code < 400 && took < time.Second {
+			return
 		}
-		slog.Debug("http",
-			"method", r.Method, "path", r.URL.Path,
-			"code", rec.code, "dur", time.Since(start).Round(time.Millisecond))
+		slog.Debug("http", "method", r.Method, "path", r.URL.Path, "code", rec.code, "dur", took.Round(time.Millisecond))
 	})
 }
 

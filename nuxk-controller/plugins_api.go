@@ -67,6 +67,30 @@ func (h *PluginHost) call(req supReq) (supResp, error) {
 	return resp, nil
 }
 
+// LogsSince is the host's own log after its seq.
+func (h *PluginHost) LogsSince(after uint64) ([]LogEntry, error) {
+	r, err := h.call(supReq{Op: "logs", After: after})
+	return r.Logs, err
+}
+
+// Debug reads the host's debug switch; SetDebug switches it.
+func (h *PluginHost) Debug() (LogDebugState, error) { return h.debug(supReq{Op: "debug"}) }
+
+func (h *PluginHost) SetDebug(on bool, minutes int) (LogDebugState, error) {
+	return h.debug(supReq{Op: "debug", Set: true, On: on, Minutes: minutes})
+}
+
+func (h *PluginHost) debug(req supReq) (LogDebugState, error) {
+	r, err := h.call(req)
+	if err != nil {
+		return LogDebugState{}, err
+	}
+	if r.Debug == nil {
+		return LogDebugState{}, errors.New("хост плагинов не знает отладки")
+	}
+	return *r.Debug, nil
+}
+
 // List returns the plugins, or nil when there is no host.
 func (h *PluginHost) List() ([]PluginInfo, error) {
 	r, err := h.call(supReq{Op: "list"})

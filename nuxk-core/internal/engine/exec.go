@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -41,14 +42,33 @@ func (e Exec) run(ctx context.Context, stdin string, args ...string) (string, st
 	// A daemon started by the script may inherit stdout/stderr and keep the
 	// pipes open for its whole life: without a bound, Run would wait for it.
 	cmd.WaitDelay = 3 * time.Second
+	start := time.Now()
 	err := cmd.Run()
 	if errors.Is(err, exec.ErrWaitDelay) {
 		err = nil // the script itself exited 0; only a child still holds the pipe
 	}
+	debugRun(e.Script, args, start, err, stdout.String(), stderr.String())
 	if err != nil {
 		err = &ScriptError{Script: e.Script, Args: args, Err: err, Output: tail(stderr.String()+stdout.String(), 400)}
 	}
 	return stdout.String(), stderr.String(), err
+}
+
+// debugRun logs a script call at debug: all but the routine «info» that
+// answers (every 5 s per engine). Never stdin (a config with keys in it),
+// and stdout only when the call failed: what scripts print on success can be
+// a config too.
+func debugRun(script string, args []string, start time.Time, err error, stdout, stderr string) {
+	if err == nil && len(args) > 0 && args[0] == "info" {
+		return
+	}
+	attrs := []any{"script", filepath.Base(script), "args", strings.Join(args, " "), "took", time.Since(start).Round(time.Millisecond)}
+	if err != nil {
+		attrs = append(attrs, "err", err.Error(), "out", tail(stderr+stdout, 300))
+	} else if s := tail(stderr, 200); s != "" {
+		attrs = append(attrs, "stderr", s)
+	}
+	slog.Debug("engine script", attrs...)
 }
 
 // ScriptError is a failed init-script call with the tail of what it printed.

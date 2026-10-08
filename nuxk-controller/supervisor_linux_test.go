@@ -103,6 +103,17 @@ func TestSupervisorLifecycle(t *testing.T) {
 	if p, _ := h.Get("demo"); p.Phase != "absent" {
 		t.Fatalf("fresh: %+v", p)
 	}
+	// the host's debug switch and its log, over the socket
+	if st, err := h.SetDebug(true, 5); err != nil || !st.On || st.Until == 0 {
+		t.Fatalf("debug on: %+v %v", st, err)
+	}
+	procRing.add(LogEntry{Level: "debug", Msg: "from the host"})
+	if es, err := h.LogsSince(0); err != nil || len(es) == 0 || es[len(es)-1].Msg != "from the host" {
+		t.Fatalf("host logs: %+v %v", es, err)
+	}
+	if st, err := h.SetDebug(false, 0); err != nil || st.On {
+		t.Fatalf("debug off: %+v %v", st, err)
+	}
 	if _, err := h.call(supReq{Op: "install", Name: "demo"}); err != nil {
 		t.Fatal(err)
 	}

@@ -126,6 +126,7 @@ func (s *Supervisor) Run(ctx context.Context) error {
 	}
 	defer ln.Close()
 	go s.serveSocket(ctx, ln)
+	go s.tailPluginOutput(ctx)
 
 	var wg sync.WaitGroup
 	if s.ServeArgs != nil {
@@ -378,6 +379,8 @@ func (s *Supervisor) runOnce(p *pluginProc, stop chan struct{}) error {
 	if err := cmd.Start(); err != nil {
 		return err
 	}
+	slog.Debug("plugin started", "plugin", p.m.Name, "version", version, "pid", cmd.Process.Pid,
+		"argv", strings.Join(argv, " "), "caps", strings.Join(p.m.Caps, ","), "tmpdir", s.pluginTmp(p.m.Name))
 	exited := make(chan error, 1)
 	go func() { exited <- cmd.Wait() }()
 	go s.watchHealth(p, stop)
@@ -390,9 +393,58 @@ func (s *Supervisor) runOnce(p *pluginProc, stop chan struct{}) error {
 	}
 }
 
+// tailPluginOutput: while debug is on, what the plugins print (run.log —
+// GP's own errors, a Python traceback) also goes into the host's log, a line
+// each. Only what comes after the switch: the file's past stays in «Плагины».
+func (s *Supervisor) tailPluginOutput(ctx context.Context) {
+	seen := map[string]int64{}
+	t := time.NewTicker(2 * time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+		for name := range s.recipes {
+			path := filepath.Join(s.pluginDir(name), "run.log")
+			st, err := os.Stat(path)
+			if err != nil {
+				continue
+			}
+			off, known := seen[path]
+			if !known || st.Size() < off || procDebug.Level() > slog.LevelDebug {
+				seen[path] = st.Size() // switched off, rotated or new: from here on
+				continue
+			}
+			if st.Size() == off {
+				continue
+			}
+			f, err := os.Open(path)
+			if err != nil {
+				continue
+			}
+			f.Seek(off, io.SeekStart)
+			b, _ := io.ReadAll(io.LimitReader(f, 64<<10))
+			f.Close()
+			end := strings.LastIndexByte(string(b), '\n') + 1 // whole lines; a partial one waits
+			if end == 0 && len(b) == 64<<10 {
+				end = len(b) // one huge line: take it as is
+			}
+			for _, line := range strings.Split(string(b[:end]), "\n") {
+				if line = strings.TrimSpace(line); line != "" {
+					slog.Debug("plugin output", "plugin", name, "line", line)
+				}
+			}
+			seen[path] = off + int64(end)
+		}
+	}
+}
+
 // watchHealth marks the plugin running once its health path answers.
 func (s *Supervisor) watchHealth(p *pluginProc, stop chan struct{}) {
 	deadline := time.Now().Add(s.HealthTimeout)
+	var last string
 	for time.Now().Before(deadline) {
 		select {
 		case <-stop:
@@ -400,8 +452,11 @@ func (s *Supervisor) watchHealth(p *pluginProc, stop chan struct{}) {
 		case <-time.After(s.HealthTimeout / 45):
 		}
 		resp, err := s.http.Get("http://" + p.m.Listen + p.m.Health)
-		if err == nil {
+		if err != nil {
+			last = err.Error()
+		} else {
 			resp.Body.Close()
+			last = resp.Status
 			if resp.StatusCode == http.StatusOK {
 				s.mu.Lock()
 				if p.phase == "starting" {
@@ -417,6 +472,7 @@ func (s *Supervisor) watchHealth(p *pluginProc, stop chan struct{}) {
 	s.mu.Lock()
 	if p.phase == "starting" {
 		p.lastErr = "не отвечает на " + p.m.Health + " за " + s.HealthTimeout.String()
+		slog.Debug("plugin health: no answer", "plugin", p.m.Name, "url", "http://"+p.m.Listen+p.m.Health, "last", last)
 	}
 	s.mu.Unlock()
 }
@@ -706,8 +762,17 @@ func (s *Supervisor) handleConn(c net.Conn) {
 }
 
 func (s *Supervisor) handle(req supReq) supResp {
-	if req.Op == "list" {
+	switch req.Op {
+	case "list":
 		return supResp{OK: true, Plugins: s.list()}
+	case "logs":
+		return supResp{OK: true, Logs: procRing.Since(req.After, logRingSize)}
+	case "debug":
+		if req.Set {
+			procDebug.Set(req.On, time.Duration(req.Minutes)*time.Minute)
+		}
+		st := procDebug.State()
+		return supResp{OK: true, Debug: &st}
 	}
 	s.mu.Lock()
 	p := s.procs[req.Name]

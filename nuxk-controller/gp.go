@@ -89,6 +89,7 @@ func (g *GPClient) Token(ctx context.Context) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("GP не отвечает: %w", err)
 		}
+		slog.Debug("gp: login", "code", code) // never the token
 		if code == http.StatusOK {
 			return g.keep(b), nil
 		}

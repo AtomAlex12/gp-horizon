@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"time"
@@ -28,6 +29,37 @@ func (d Deps) handleMetrics(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, d.Node.Metrics())
 }
 
+// logDebugReq turns the debug switch on for Minutes (default 30), or off.
+type logDebugReq struct {
+	On      bool `json:"on"`
+	Minutes int  `json:"minutes,omitempty"`
+}
+
+func (d Deps) handleLogsDebug(w http.ResponseWriter, r *http.Request) {
+	if d.Debug == nil {
+		writeErr(w, http.StatusNotFound, "not_wired", "the debug switch is not wired")
+		return
+	}
+	writeJSON(w, http.StatusOK, d.Debug.State())
+}
+
+func (d Deps) handleSetLogsDebug(w http.ResponseWriter, r *http.Request) {
+	if d.Debug == nil {
+		writeErr(w, http.StatusNotFound, "not_wired", "the debug switch is not wired")
+		return
+	}
+	var in logDebugReq
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<10)).Decode(&in); err != nil ||
+		in.Minutes < 0 || time.Duration(in.Minutes)*time.Minute > logbuf.MaxDebug {
+		writeErr(w, http.StatusBadRequest, "bad_body", `want {"on":true,"minutes":30} (minutes 1–240)`)
+		return
+	}
+	if in.Minutes == 0 {
+		in.Minutes = 30
+	}
+	writeJSON(w, http.StatusOK, d.Debug.Set(in.On, time.Duration(in.Minutes)*time.Minute))
+}
+
 // handleLogs: ?after=<seq> returns only newer entries; ?limit caps the count.
 func (d Deps) handleLogs(w http.ResponseWriter, r *http.Request) {
 	if d.Logs == nil {
@@ -36,7 +68,7 @@ func (d Deps) handleLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	after, _ := strconv.ParseUint(r.URL.Query().Get("after"), 10, 64)
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	if limit <= 0 || limit > 500 {
+	if limit <= 0 || limit > 2000 {
 		limit = 200
 	}
 	writeJSON(w, http.StatusOK, d.Logs.Since(after, limit))

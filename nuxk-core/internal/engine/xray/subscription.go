@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -67,15 +68,19 @@ func Subscription(ctx context.Context, client *http.Client, link string) (Sub, e
 	if err != nil {
 		return Sub{}, bad("подписка — непонятная ссылка")
 	}
+	start := time.Now()
 	resp, err := client.Do(req)
 	if err != nil {
 		var ue *url.Error
 		if errors.As(err, &ue) {
 			err = ue.Err
 		}
+		slog.Debug("xray: subscription", "host", u.Host, "took", time.Since(start).Round(time.Millisecond), "err", err)
 		return Sub{}, fmt.Errorf("подписка не скачалась: %w", err)
 	}
 	defer resp.Body.Close()
+	// the host only: the path and query are the subscription's secret
+	slog.Debug("xray: subscription", "host", u.Host, "code", resp.StatusCode, "took", time.Since(start).Round(time.Millisecond))
 	if resp.StatusCode != http.StatusOK {
 		return Sub{}, fmt.Errorf("подписка не скачалась: HTTP %d", resp.StatusCode)
 	}
