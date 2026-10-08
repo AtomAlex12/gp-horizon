@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -58,22 +59,51 @@ func (a *Agent) history() *History {
 }
 
 func (a *Agent) get(ctx context.Context, path string, v any) error {
+	return a.send(ctx, http.MethodGet, path, nil, v)
+}
+
+// agentHTTPError is the agent's answer when it isn't 2xx.
+type agentHTTPError struct {
+	Path string
+	Code int
+	Body string
+}
+
+func (e *agentHTTPError) Error() string { return fmt.Sprintf("%s: HTTP %d %s", e.Path, e.Code, e.Body) }
+
+// send calls the agent's API with the controller's token: in as the JSON
+// body (nil = none), the answer into out (nil = ignored).
+func (a *Agent) send(ctx context.Context, method, path string, in, out any) error {
 	url, token := a.Ref()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url+path, nil)
+	var body io.Reader
+	if in != nil {
+		b, err := json.Marshal(in)
+		if err != nil {
+			return err
+		}
+		body = bytes.NewReader(b)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, url+path, body)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
+	if in != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	resp, err := a.HTTP.Do(req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("%s: HTTP %d %s", path, resp.StatusCode, strings.TrimSpace(string(body)))
+	ans, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if resp.StatusCode/100 != 2 {
+		return &agentHTTPError{Path: path, Code: resp.StatusCode, Body: strings.TrimSpace(string(ans))}
 	}
-	return json.Unmarshal(body, v)
+	if out == nil {
+		return nil
+	}
+	return json.Unmarshal(ans, out)
 }
 
 // Run samples the agent's counters every period; node info every minute.

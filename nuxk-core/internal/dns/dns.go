@@ -647,6 +647,7 @@ func (s *Service) resolve(ctx context.Context, q []byte) ([]byte, string, error)
 				return resp, p.Name, nil
 			}
 			last = fmt.Errorf("%s через %s: %w", r.Name, pathTitle(p.Name), err)
+			slog.Debug("dns: resolver failed, trying the next", "resolver", r.Name, "path", p.Name, "err", err)
 			if ctx.Err() != nil {
 				return nil, "", last
 			}

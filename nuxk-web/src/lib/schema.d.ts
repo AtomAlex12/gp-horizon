@@ -155,9 +155,30 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** The agent's recent log (last 500 entries kept in memory) */
+        /** The agent's recent log (last 2000 entries kept in memory) */
         get: operations["logs"];
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/logs/debug": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The debug switch of the in-memory log */
+        get: operations["logsDebug"];
+        /**
+         * Debug logging on for a while (it turns itself off), or off
+         * @description While on, debug entries — engine script calls, RCI requests, commands, DNS failures — reach the in-memory log (/logs, /events). The log file on the router's flash keeps info and up. The agent started with -debug is on for good ("forced").
+         */
+        put: operations["setLogsDebug"];
         post?: never;
         delete?: never;
         options?: never;
@@ -717,6 +738,21 @@ export interface components {
             level: "debug" | "info" | "warn" | "error";
             msg: string;
             attrs?: string;
+        };
+        LogDebug: {
+            on: boolean;
+            /**
+             * Format: int64
+             * @description unix milliseconds when it turns itself off
+             */
+            until?: number;
+            /** @description started with -debug: on for the process' life */
+            forced?: boolean;
+        };
+        LogDebugSet: {
+            on: boolean;
+            /** @description how long (default 30) */
+            minutes?: number;
         };
         Status: {
             version: string;
@@ -1356,7 +1392,7 @@ export interface operations {
             query?: {
                 /** @description only entries with a larger seq */
                 after?: number;
-                /** @description at most this many, newest (default 200, max 500) */
+                /** @description at most this many, newest (default 200, max 2000) */
                 limit?: number;
             };
             header?: never;
@@ -1375,6 +1411,55 @@ export interface operations {
                 };
             };
             401: components["responses"]["Error"];
+        };
+    };
+    logsDebug: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description the switch */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LogDebug"];
+                };
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    setLogsDebug: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["LogDebugSet"];
+            };
+        };
+        responses: {
+            /** @description the switch after the change */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LogDebug"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
         };
     };
     events: {

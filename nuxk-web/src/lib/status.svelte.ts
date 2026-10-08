@@ -68,7 +68,7 @@ export function setSpan(ms: number) {
 export const chartSpan = () => (node.via === 'controller' ? chart.span : SPANS[0].ms);
 export const logs = $state<{ items: LogEntry[] }>({ items: [] });
 
-const LOG_KEEP = 1000;
+const LOG_KEEP = 3000; // debug fills it fast
 const LOCAL_POINTS = 120; // agent mode: 10 min at 5 s — the controller keeps 1 h
 
 let started = false;
@@ -90,10 +90,15 @@ export async function refresh() {
   }
 }
 
+export const logKey = (e: LogEntry) => `${e.seq}:${e.ts}`;
+
 function addLogs(items: LogEntry[]) {
   if (!items.length) return;
-  const last = logs.items.length ? logs.items[logs.items.length - 1].seq : 0;
-  const fresh = items.filter((e) => e.seq > last);
+  const last = logs.items[logs.items.length - 1];
+  const have = new Set(logs.items.map(logKey));
+  // seq only grows within one life of the agent; after a restart (an update)
+  // it starts over — then what is newer by time is new too
+  const fresh = items.filter((e) => !have.has(logKey(e)) && (!last || e.seq > last.seq || e.ts > last.ts));
   if (!fresh.length) return;
   const all = logs.items.concat(fresh);
   logs.items = all.length > LOG_KEEP ? all.slice(all.length - LOG_KEEP) : all;
@@ -139,8 +144,10 @@ async function detect(): Promise<'ok' | 'gate'> {
 // --- SSE with a polling fallback -------------------------------------------
 
 async function streamLoop() {
-  for (;;) {
+  for (let again = false; ; again = true) {
     abort = new AbortController();
+    // back after a drop (the agent restarted?): what it logged meanwhile
+    if (again) addLogs(await api.logs(0).catch(() => []));
     try {
       await streamEvents(abort.signal, (event, data) => {
         if (event === 'status') {

@@ -3,6 +3,7 @@ package api
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -26,7 +27,7 @@ func agentRouter(t *testing.T) (http.Handler, *logbuf.Ring) {
 	ring := logbuf.NewRing(10)
 	return NewRouter(Deps{
 		Version: "t", Engines: reg, Hub: hub, Ctl: core.NewController(reg, st, hub, "t"),
-		Token: "tok", Logs: ring, Node: node.New("stand", "", "t", "c"),
+		Token: "tok", Logs: ring, Debug: logbuf.NewDebug(false), Node: node.New("stand", "", "t", "c"),
 	}), ring
 }
 
@@ -42,7 +43,7 @@ func TestAgentInfoMetricsLogs(t *testing.T) {
 	if w := do(h, "GET", "/api/v1/metrics", "", lan, "tok"); w.Code != 200 || !strings.Contains(w.Body.String(), `"ifaces"`) {
 		t.Fatalf("metrics -> %d %s", w.Code, w.Body)
 	}
-	log := slog.New(logbuf.NewHandler(io.Discard, ring, slog.LevelInfo))
+	log := slog.New(logbuf.NewHandler(io.Discard, ring, slog.LevelInfo, slog.LevelInfo))
 	log.Info("one")
 	log.Warn("two")
 	if w := do(h, "GET", "/api/v1/logs?after=1", "", lan, "tok"); !strings.Contains(w.Body.String(), `"msg":"two"`) || strings.Contains(w.Body.String(), `"one"`) {
@@ -99,8 +100,34 @@ func TestEventsStream(t *testing.T) {
 		t.Fatalf("first event %q", ev)
 	}
 	time.Sleep(500 * time.Millisecond) // past WriteTimeout
-	slog.New(logbuf.NewHandler(io.Discard, ring, slog.LevelInfo)).Info("hello")
+	slog.New(logbuf.NewHandler(io.Discard, ring, slog.LevelInfo, slog.LevelInfo)).Info("hello")
 	if ev := next(); ev != "log" {
 		t.Fatalf("second event %q", ev)
+	}
+}
+
+func TestLogsDebugSwitch(t *testing.T) {
+	h, _ := agentRouter(t)
+	lan := "192.168.2.20:5000"
+	if w := do(h, "GET", "/api/v1/logs/debug", "", lan, "tok"); w.Code != 200 || strings.TrimSpace(w.Body.String()) != `{"on":false}` {
+		t.Fatalf("off -> %d %s", w.Code, w.Body)
+	}
+	w := do(h, "PUT", "/api/v1/logs/debug", `{"on":true,"minutes":15}`, lan, "tok")
+	var st logbuf.DebugState
+	json.Unmarshal(w.Body.Bytes(), &st)
+	left := time.Until(time.UnixMilli(st.Until))
+	if w.Code != 200 || !st.On || left < 14*time.Minute || left > 15*time.Minute {
+		t.Fatalf("on 15 min -> %d %s", w.Code, w.Body)
+	}
+	for _, bad := range []string{`{"on":true,"minutes":241}`, `{"on":true,"minutes":-1}`, `nope`} {
+		if w := do(h, "PUT", "/api/v1/logs/debug", bad, lan, "tok"); w.Code != 400 {
+			t.Errorf("%s -> %d", bad, w.Code)
+		}
+	}
+	if w := do(h, "PUT", "/api/v1/logs/debug", `{"on":false}`, lan, "tok"); w.Code != 200 || strings.TrimSpace(w.Body.String()) != `{"on":false}` {
+		t.Fatalf("off again -> %d %s", w.Code, w.Body)
+	}
+	if w := do(h, "PUT", "/api/v1/logs/debug", `{"on":true}`, lan, ""); w.Code != 401 {
+		t.Fatalf("without token -> %d", w.Code)
 	}
 }

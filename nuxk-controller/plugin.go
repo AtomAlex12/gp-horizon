@@ -168,15 +168,21 @@ func sortedInfos(m map[string]PluginInfo) []PluginInfo {
 // --- supervisor socket protocol: one JSON request, one JSON answer ----------
 
 type supReq struct {
-	Op      string `json:"op"` // list | install | enable | disable | restart | rollback | log
+	Op      string `json:"op"` // list | install | enable | disable | restart | rollback | log | logs | debug
 	Name    string `json:"name,omitempty"`
 	Version string `json:"version,omitempty"`
 	Which   string `json:"which,omitempty"` // log: install | run
+	After   uint64 `json:"after,omitempty"` // logs: the host's own entries after this seq
+	Set     bool   `json:"set,omitempty"`   // debug: switch it (On, Minutes); else just read
+	On      bool   `json:"on,omitempty"`
+	Minutes int    `json:"minutes,omitempty"`
 }
 
 type supResp struct {
-	OK      bool         `json:"ok"`
-	Error   string       `json:"error,omitempty"`
-	Plugins []PluginInfo `json:"plugins,omitempty"`
-	Log     string       `json:"log,omitempty"`
+	OK      bool           `json:"ok"`
+	Error   string         `json:"error,omitempty"`
+	Plugins []PluginInfo   `json:"plugins,omitempty"`
+	Log     string         `json:"log,omitempty"`
+	Logs    []LogEntry     `json:"logs,omitempty"`
+	Debug   *LogDebugState `json:"debug,omitempty"`
 }

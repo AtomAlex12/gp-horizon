@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"os/exec"
@@ -32,8 +33,24 @@ import (
 type Runner func(ctx context.Context, name string, args ...string) (string, error)
 
 func execRunner(ctx context.Context, name string, args ...string) (string, error) {
+	start := time.Now()
 	out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
+	if err != nil {
+		slog.Debug("plane: command", "cmd", name+" "+strings.Join(args, " "), "took", time.Since(start).Round(time.Millisecond),
+			"err", err, "out", short(string(out), 300))
+	} else {
+		slog.Debug("plane: command", "cmd", name+" "+strings.Join(args, " "), "took", time.Since(start).Round(time.Millisecond))
+	}
 	return string(out), err
+}
+
+// short flattens s to one line of at most n bytes, for the debug log.
+func short(s string, n int) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if len(s) > n {
+		s = s[:n] + "…"
+	}
+	return s
 }
 
 // Backend is the Keenetic plane backend.
@@ -61,12 +78,16 @@ func (b *Backend) get(ctx context.Context, path string, v any) error {
 	if err != nil {
 		return err
 	}
+	start := time.Now()
 	resp, err := b.HTTP.Do(req)
 	if err != nil {
+		slog.Debug("rci", "method", "GET", "path", path, "took", time.Since(start).Round(time.Millisecond), "err", err)
 		return fmt.Errorf("RCI %s: %w", path, err)
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+	// the answer itself stays out of the log: it is the router's config
+	slog.Debug("rci", "method", "GET", "path", path, "code", resp.StatusCode, "bytes", len(body), "took", time.Since(start).Round(time.Millisecond))
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("RCI %s: HTTP %d", path, resp.StatusCode)
 	}
@@ -87,12 +108,17 @@ func (b *Backend) post(ctx context.Context, body any) error {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	start := time.Now()
 	resp, err := b.HTTP.Do(req)
 	if err != nil {
+		slog.Debug("rci", "method", "POST", "body", short(string(raw), 300), "took", time.Since(start).Round(time.Millisecond), "err", err)
 		return fmt.Errorf("RCI POST: %w", err)
 	}
 	defer resp.Body.Close()
 	ans, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	// nuxk posts only its own objects (nuxk-* groups, routes, its OpkgTun)
+	slog.Debug("rci", "method", "POST", "body", short(string(raw), 300), "code", resp.StatusCode,
+		"took", time.Since(start).Round(time.Millisecond), "answer", short(string(ans), 300))
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("RCI POST: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(ans)))
 	}

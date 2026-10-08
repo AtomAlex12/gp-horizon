@@ -257,6 +257,8 @@ func (m *Manager) Reconcile(ctx context.Context) {
 	}
 	ops, conflicts := Plan(want, obs, m.Cfg.V6Deny)
 	st.Groups, st.Conflicts, st.Foreign = want, conflicts, foreign(obs)
+	slog.Debug("plane: plan", "lists", len(d.Lists), "groups", len(want), "ops", len(ops), "changes", Changes(ops),
+		"conflicts", len(conflicts), "apply", m.Cfg.Apply)
 
 	if !m.Cfg.Apply {
 		st.Pending = pendingOnly(ops)

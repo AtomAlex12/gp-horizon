@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -59,6 +60,22 @@ func fakeAgent(t *testing.T, token string) (*httptest.Server, *atomic.Int64) {
 			return
 		}
 		fmt.Fprintf(w, `{"token":%q}`, token)
+	})
+	var debugOn atomic.Bool
+	mux.HandleFunc("GET /api/v1/logs/debug", func(w http.ResponseWriter, r *http.Request) {
+		if check(w, r) {
+			fmt.Fprintf(w, `{"on":%v}`, debugOn.Load())
+		}
+	})
+	mux.HandleFunc("PUT /api/v1/logs/debug", func(w http.ResponseWriter, r *http.Request) {
+		var in struct {
+			On      bool `json:"on"`
+			Minutes int  `json:"minutes"`
+		}
+		if check(w, r) && json.NewDecoder(r.Body).Decode(&in) == nil && in.Minutes > 0 {
+			debugOn.Store(in.On)
+			fmt.Fprintf(w, `{"on":%v}`, in.On)
+		}
 	})
 	mux.HandleFunc("GET /api/v1/events", func(w http.ResponseWriter, r *http.Request) {
 		if !check(w, r) {
@@ -142,7 +159,7 @@ func newCtl(t *testing.T, dir, agentURL, token, adminPw string) *httptest.Server
 		a.poll(context.Background())
 		a.poll(context.Background())
 	}
-	srv := httptest.NewServer(NewServer(a, st, NewSessions(), NewPluginHost(""), NewVless(st, a), nil, "", "t"))
+	srv := httptest.NewServer(NewServer(a, st, NewSessions(), NewPluginHost(""), NewVless(st, a), nil, NewLogs(NewLogRing(100), &LogDebug{}, NewPluginHost(""), a), "", "t"))
 	t.Cleanup(srv.Close)
 	return srv
 }
@@ -317,7 +334,7 @@ func TestAgentDownIsReported(t *testing.T) {
 	}
 	st, _ := OpenStore(t.TempDir())
 	st.SetAdmin("correct horse")
-	srv := httptest.NewServer(NewServer(a, st, NewSessions(), NewPluginHost(""), NewVless(st, a), nil, "", "t"))
+	srv := httptest.NewServer(NewServer(a, st, NewSessions(), NewPluginHost(""), NewVless(st, a), nil, NewLogs(NewLogRing(100), &LogDebug{}, NewPluginHost(""), a), "", "t"))
 	defer srv.Close()
 	b := newClient(t, srv)
 	b.login()
@@ -349,5 +366,44 @@ func TestAgentBase(t *testing.T) {
 		if _, err := agentBase(bad); err == nil {
 			t.Errorf("agentBase(%q) must fail", bad)
 		}
+	}
+}
+
+// «Отладка» switches the controller and the router's agent at once, and the
+// controller's own log reaches the panel with its debug lines.
+func TestDebugSwitchesAll(t *testing.T) {
+	ag, _ := fakeAgent(t, "agent-secret")
+	defer ag.Close()
+	ring, dbg := NewLogRing(100), &LogDebug{}
+	a := NewAgent(ag.URL, "agent-secret")
+	st, _ := OpenStore(t.TempDir())
+	st.SetAdmin("correct horse")
+	srv := httptest.NewServer(NewServer(a, st, NewSessions(), NewPluginHost(""), NewVless(st, a), nil, NewLogs(ring, dbg, NewPluginHost(""), a), "", "t"))
+	defer srv.Close()
+	b := newClient(t, srv)
+	b.login()
+	log := slog.New(newLogHandler(io.Discard, ring, dbg, "controller"))
+
+	if _, body := b.do("GET", "/ctl/v1/debug", "", ""); !strings.Contains(body, `"controller":{"on":false}`) || !strings.Contains(body, `"agent":{"on":false}`) {
+		t.Fatalf("off = %s", body)
+	}
+	log.Debug("hidden")
+	if code, body := b.do("PUT", "/ctl/v1/debug", `{"on":true,"minutes":20}`, ""); code != 200 ||
+		!strings.Contains(body, `"controller":{"on":true,"until":`) || !strings.Contains(body, `"agent":{"on":true}`) {
+		t.Fatalf("on -> %d %s", code, body)
+	}
+	if code, _ := b.do("PUT", "/ctl/v1/debug", `{"on":true,"minutes":500}`, ""); code != 400 {
+		t.Errorf("500 minutes -> %d", code)
+	}
+	log.Debug("proxy", "path", "/api/v1/plane/lists")
+	_, body := b.do("GET", "/ctl/v1/logs", "", "")
+	if strings.Contains(body, "hidden") || !strings.Contains(body, `"level":"debug","msg":"proxy"`) || !strings.Contains(body, `"src":"controller"`) {
+		t.Fatalf("logs = %s", body)
+	}
+	if _, body := b.do("PUT", "/ctl/v1/debug", `{"on":false}`, ""); !strings.Contains(body, `"controller":{"on":false}`) || !strings.Contains(body, `"agent":{"on":false}`) {
+		t.Fatalf("off again = %s", body)
+	}
+	if code, _ := newClient(t, srv).do("GET", "/ctl/v1/logs", "", ""); code != 401 {
+		t.Errorf("logs without a login -> %d", code)
 	}
 }

@@ -164,10 +164,10 @@ paths:
     get:
       tags: [agent]
       operationId: logs
-      summary: The agent's recent log (last 500 entries kept in memory)
+      summary: The agent's recent log (last 2000 entries kept in memory)
       parameters:
         - { name: after, in: query, description: only entries with a larger seq, schema: { type: integer, minimum: 0 } }
-        - { name: limit, in: query, description: "at most this many, newest (default 200, max 500)", schema: { type: integer, minimum: 1, maximum: 500 } }
+        - { name: limit, in: query, description: "at most this many, newest (default 200, max 2000)", schema: { type: integer, minimum: 1, maximum: 2000 } }
       responses:
         "200":
           description: entries, oldest first
@@ -175,6 +175,37 @@ paths:
             application/json:
               schema: { type: array, items: { $ref: "#/components/schemas/LogEntry" } }
         "401": { $ref: "#/components/responses/Error" }
+
+  /api/v1/logs/debug:
+    get:
+      tags: [agent]
+      operationId: logsDebug
+      summary: The debug switch of the in-memory log
+      responses:
+        "200":
+          description: the switch
+          content: { application/json: { schema: { $ref: "#/components/schemas/LogDebug" } } }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+    put:
+      tags: [agent]
+      operationId: setLogsDebug
+      summary: Debug logging on for a while (it turns itself off), or off
+      description: >
+        While on, debug entries — engine script calls, RCI requests, commands,
+        DNS failures — reach the in-memory log (/logs, /events). The log file on
+        the router's flash keeps info and up. The agent started with -debug is
+        on for good ("forced").
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/LogDebugSet" } } }
+      responses:
+        "200":
+          description: the switch after the change
+          content: { application/json: { schema: { $ref: "#/components/schemas/LogDebug" } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
 
   /api/v1/events:
     get:
@@ -831,6 +862,21 @@ components:
         level: { type: string, enum: [debug, info, warn, error] }
         msg: { type: string }
         attrs: { type: string }
+
+    LogDebug:
+      type: object
+      required: [on]
+      properties:
+        on: { type: boolean }
+        until: { type: integer, format: int64, description: unix milliseconds when it turns itself off }
+        forced: { type: boolean, description: "started with -debug: on for the process' life" }
+
+    LogDebugSet:
+      type: object
+      required: [on]
+      properties:
+        on: { type: boolean }
+        minutes: { type: integer, minimum: 1, maximum: 240, description: how long (default 30) }
 
     Status:
       type: object

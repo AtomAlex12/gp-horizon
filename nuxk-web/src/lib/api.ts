@@ -27,6 +27,7 @@ export type Routing = S['Routing'];
 export type NodeInfo = S['NodeInfo'];
 export type Metrics = S['Metrics'];
 export type LogEntry = S['LogEntry'];
+export type LogDebug = S['LogDebug'];
 export type PlaneStatus = S['PlaneStatus'];
 export type PlaneDesired = S['PlaneDesired'];
 export type PlaneList = S['PlaneList'];
@@ -70,6 +71,16 @@ export type DNSStats = S['DNSStats'];
 export type DNSQuery = S['DNSQuery'];
 
 // nuxk-controller's own API (not part of the agent contract).
+// GET /ctl/v1/logs — the controller's log (src: its web/API, or the plugin host)
+export type CtlLogEntry = LogEntry & { src: 'controller' | 'plugins' };
+// GET|PUT /ctl/v1/debug — «Отладка» for everything; a part that can't be
+// switched says why in errors
+export type DebugAll = {
+  controller: LogDebug;
+  plugins?: LogDebug;
+  agent?: LogDebug;
+  errors?: { plugins?: string; agent?: string };
+};
 export interface AgentState {
   url: string;
   reachable: boolean;
@@ -144,7 +155,9 @@ export const api = {
   status: () => req<Status>('GET', v1('/status')),
   info: () => req<NodeInfo>('GET', v1('/info')),
   metrics: () => req<Metrics>('GET', v1('/metrics')),
-  logs: (after = 0) => req<LogEntry[]>('GET', v1(`/logs?after=${after}&limit=500`)),
+  logs: (after = 0) => req<LogEntry[]>('GET', v1(`/logs?after=${after}&limit=2000`)),
+  logsDebug: () => req<LogDebug>('GET', v1('/logs/debug')),
+  setLogsDebug: (on: boolean, minutes = 30) => req<LogDebug>('PUT', v1('/logs/debug'), { on, minutes }),
 
   engineAction: (k: EngineKind, action: 'start' | 'stop' | 'restart') =>
     req<S['Ok']>('POST', v1(`/engines/${k}/${action}`)),
@@ -181,6 +194,9 @@ export const api = {
   // controller only (404 when the UI is served by the agent itself)
   agent: () => req<AgentState>('GET', '/ctl/v1/agent'),
   history: () => req<History>('GET', '/ctl/v1/history'),
+  ctlLogs: (after = 0) => req<{ boot: number; items: CtlLogEntry[] }>('GET', `/ctl/v1/logs?after=${after}`),
+  debugAll: () => req<DebugAll>('GET', '/ctl/v1/debug'),
+  setDebugAll: (on: boolean, minutes = 30) => req<DebugAll>('PUT', '/ctl/v1/debug', { on, minutes }),
   ctlUpdate: () => req<SelfUpdate>('GET', '/ctl/v1/update'),
   ctlUpdateStart: (version: string) => req<SelfUpdate>('POST', '/ctl/v1/update', { version }),
   updateAll: (version: string) => req<SelfUpdate>('POST', '/ctl/v1/update/all', { version }),

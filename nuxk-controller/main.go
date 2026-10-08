@@ -58,10 +58,9 @@ func main() {
 		fmt.Printf("nuxk-controller %s %s\n", version, commit)
 		return
 	}
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, nil)))
-
 	switch flag.Arg(0) {
 	case "supervise":
+		setupLog("plugins")
 		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		defer stop()
 		if err := runSupervisor(ctx); err != nil {
@@ -70,6 +69,7 @@ func main() {
 		}
 		return
 	case "", "serve":
+		setupLog("controller")
 	default:
 		fmt.Fprintln(os.Stderr, "usage: nuxk-controller [serve | supervise | -version]")
 		os.Exit(2)
@@ -116,10 +116,11 @@ func serve() {
 	}
 	su := NewSelfUpdater(env("UPDATE_DIR", "/var/lib/nuxk-update"), data, version, ag, ses)
 	su.Resume()
+	host := NewPluginHost(os.Getenv("SUPERVISOR_SOCK"))
 
 	srv := &http.Server{
 		Addr:              env("LISTEN", ":4200"),
-		Handler:           NewServer(ag, st, ses, NewPluginHost(os.Getenv("SUPERVISOR_SOCK")), vl, su, env("WEB_ROOT", ""), version),
+		Handler:           NewServer(ag, st, ses, host, vl, su, NewLogs(procRing, procDebug, host, ag), env("WEB_ROOT", ""), version),
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		// no WriteTimeout: /api/v1/events is a long-lived stream

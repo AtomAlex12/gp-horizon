@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"os"
 	"os/exec"
@@ -189,10 +190,13 @@ func (d *smartDNS) run(ctx context.Context, stdin string, args ...string) (strin
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	cmd.WaitDelay = 3 * time.Second // SmartDNS daemonizes, its pipes may linger
+	start := time.Now()
 	err := cmd.Run()
 	if errors.Is(err, exec.ErrWaitDelay) {
 		err = nil
 	}
+	// never stdin: it is SmartDNS's config
+	slog.Debug("dns: smartdns script", "args", strings.Join(args, " "), "took", time.Since(start).Round(time.Millisecond), "err", err)
 	if err != nil {
 		msg := strings.Join(strings.Fields(errb.String()+" "+out.String()), " ")
 		if len(msg) > 400 {

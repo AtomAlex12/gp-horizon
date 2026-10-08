@@ -36,6 +36,7 @@ type Deps struct {
 	Auth    *auth.Guard      // browser login with the box's root account; nil = off
 	Node    *node.Node       // /info, /metrics
 	Logs    *logbuf.Ring     // /logs, log events on /events
+	Debug   *logbuf.Debug    // /logs/debug: debug entries in Logs for a while; nil = off
 	Update  *update.Updater  // /update: new releases, the router updated from the panel; nil = off
 	DNS     *dns.Service     // /dns: protected DNS through the tunnels; nil = off
 }
@@ -62,6 +63,8 @@ var Routes = []Route{
 	{"GET /api/v1/status", false, func(d Deps) http.HandlerFunc { return d.handleStatus }},
 	{"GET /api/v1/metrics", false, func(d Deps) http.HandlerFunc { return d.handleMetrics }},
 	{"GET /api/v1/logs", false, func(d Deps) http.HandlerFunc { return d.handleLogs }},
+	{"GET /api/v1/logs/debug", false, func(d Deps) http.HandlerFunc { return d.handleLogsDebug }},
+	{"PUT /api/v1/logs/debug", false, func(d Deps) http.HandlerFunc { return d.handleSetLogsDebug }},
 	{"GET /api/v1/events", false, func(d Deps) http.HandlerFunc { return d.handleEvents }},
 	{"GET /api/v1/engines", false, func(d Deps) http.HandlerFunc { return d.handleEngines }},
 	{"GET /api/v1/engines/{kind}", false, func(d Deps) http.HandlerFunc { return d.handleEngine }},
