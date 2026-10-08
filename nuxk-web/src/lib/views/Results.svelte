@@ -1,7 +1,8 @@
 <script lang="ts">
-  // «Результаты»: GP's run history, newest first. A row opens the run: its
-  // log, its settings, and «Повторить» — the same domains back in «Прогоны».
-  import { gp, RUN_STATUS_LABEL, RUN_STATUS_CHIP, RUN_MODE_LABEL, type RunHistoryItem, type RunLogTail, type RunSettingsPatch } from '../gp';
+  // «Результаты»: GP's run history, newest first. A row opens the run: why it
+  // ended, its log, its settings, and «Повторить» — the same domains back in
+  // «Прогоны».
+  import { gp, runVerdict, RUN_STATUS_LABEL, RUN_STATUS_CHIP, RUN_MODE_LABEL, type RunHistoryItem, type RunLogTail, type RunSettingsPatch } from '../gp';
   import { runDraft } from '../gpdraft.svelte';
   import { fmtDur } from '../ui';
 
@@ -56,6 +57,7 @@
       .map(([k, v]) => `${k}: ${v === true ? 'да' : v === false ? 'нет' : v}`)
       .join(' · ');
   const tail = (s: string | undefined, n: number) => (s ?? '').split('\n').slice(-n).join('\n');
+  const failed = (r: RunHistoryItem) => r.status === 'failed' || r.status === 'timeout';
 </script>
 
 {#if err}<div class="banner warn">{err}</div>{/if}
@@ -106,8 +108,21 @@
                     {:else if !runLog}
                       <p class="muted">Журнал загружается…</p>
                     {:else}
-                      <pre class="log">{tail(runLog.stdout_tail, 60) || 'журнал пуст'}</pre>
-                      {#if runLog.stderr_tail}<details><summary class="hint">ошибки</summary><pre class="log">{tail(runLog.stderr_tail, 40)}</pre></details>{/if}
+                      {@const v = runVerdict(r.status, runLog)}
+                      {#each v.causes as c, i (i)}
+                        <div class="banner {c.level} cause">
+                          <div>
+                            <b>{c.title}</b>
+                            {#if c.hint}<div>{c.hint}</div>{/if}
+                            {#if c.line}<code class="line">{c.line}</code>{/if}
+                          </div>
+                        </div>
+                      {/each}
+                      {#if v.facts.length}<p class="hint">{v.facts.join(' · ')}</p>{/if}
+                      <pre class="log">{tail(runLog.stdout_tail, 60) || (failed(r) ? 'blockcheck2 не успел ничего записать — причина выше.' : 'журнал пуст')}</pre>
+                      {#if runLog.stderr_tail}
+                        <details open={failed(r)}><summary class="hint">ошибки GP (stderr)</summary><pre class="log">{tail(runLog.stderr_tail, 40)}</pre></details>
+                      {/if}
                     {/if}
                   </div>
                 </td>
@@ -138,6 +153,14 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
+  }
+  .cause .line {
+    display: block;
+    margin-top: 6px;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: var(--muted);
+    word-break: break-word;
   }
   .log {
     margin: 0;

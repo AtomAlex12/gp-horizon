@@ -138,6 +138,8 @@ root / nuxk-dev), на контроллере — admin из мастера. `AP
   (профиль в `NFQWS_ARGS_CUSTOM`, копия конфига, откат при сбое).
 - Тесты хоста плагинов — Linux-only (`supervisor_linux_test.go`); на Windows их
   собирают `GOOS=linux go test -c` и гоняют на Pi из `~` (`/tmp` там noexec).
+- `/tmp` контейнера — noexec: плагин получает свой `TMPDIR` (`plugins/<name>/tmp`, очищается
+  при каждом запуске), там запускать можно.
 
 ## Безопасность роутера
 

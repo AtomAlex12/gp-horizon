@@ -224,7 +224,7 @@
         {:else if tab === 'lists'}
           <Lists />
         {:else if tab === 'logs'}
-          <Logs />
+          <Logs {go} />
         {:else if !__LITE__ && tab === 'plugins'}
           <Plugins />
         {:else if !__LITE__ && tab === 'runs'}

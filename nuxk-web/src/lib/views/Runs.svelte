@@ -6,6 +6,7 @@
   import { status } from '../status.svelte';
   import {
     gp,
+    runVerdict,
     RUN_STATUS_LABEL,
     LIST_KIND,
     type DomainList,
@@ -143,10 +144,37 @@
 
   const active = $derived(!!progress && ['queued', 'running', 'saving', 'stopping'].includes(progress.status));
 
+  // The newest run, and why it failed if it did. GP reports «idle» once a run
+  // has ended, so a run that dies in seconds would otherwise just drop the
+  // page back to this form without a word.
+  const lastRun = $derived(history.reduce<RunHistoryItem | null>((a, r) => (!a || r.started_at > a.started_at ? r : a), null));
+  let lastLog = $state<RunLogTail | null>(null);
+  $effect(() => {
+    const r = lastRun;
+    lastLog = null;
+    if (r && (r.status === 'failed' || r.status === 'timeout'))
+      gp.runLog(r.run_id).then(
+        (l) => (lastLog = l),
+        () => {},
+      );
+  });
+  const lastWhy = $derived(lastRun && lastLog ? runVerdict(lastRun.status, lastLog).causes.find((c) => c.level === 'warn') : undefined);
+
+  const loadHistory = () =>
+    gp.history().then(
+      (r) => (history = r.runs),
+      () => {},
+    );
+  let watching = false; // a run we started or saw going: when it ends, its result is in the history
   async function poll() {
     try {
       progress = await gp.progress();
       if (progress && progress.status !== 'idle') log = await gp.log();
+      if (active) watching = true;
+      else if (watching) {
+        watching = false;
+        void loadHistory();
+      }
       err = '';
     } catch (e) {
       err = e instanceof Error ? e.message : String(e);
@@ -157,10 +185,7 @@
       (p) => (preflight = p),
       (e) => (err = e instanceof Error ? e.message : String(e)),
     );
-    gp.history().then(
-      (r) => (history = r.runs),
-      () => {},
-    );
+    void loadHistory();
     gp.domainLists().then(
       (r) => (gpLists = r.lists),
       () => {},
@@ -197,6 +222,7 @@
           skip_dnscheck: skipDns,
         },
       });
+      watching = true;
       await poll();
     } catch (e) {
       err = e instanceof Error ? e.message : String(e);
@@ -234,6 +260,16 @@
 </script>
 
 {#if err}<div class="banner warn">{err}</div>{/if}
+
+{#if !active && lastRun && lastWhy}
+  <div class="banner warn">
+    <div>
+      <b>Последний прогон ({new Date(lastRun.started_at).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' })}) завершился с ошибкой: {lastWhy.title}.</b>
+      {#if lastWhy.hint}{lastWhy.hint}{/if}
+      Подробнее — <button class="linkbtn" onclick={() => go('results')}>«Результаты»</button>.
+    </div>
+  </div>
+{/if}
 
 <div class="banner deg">
   <div>
