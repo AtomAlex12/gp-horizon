@@ -107,12 +107,12 @@
     paused = !paused;
     if (paused) frozen = merged.slice();
   }
-  // follow the tail unless the reader scrolled up
+  // the newest at the bottom, followed — until the reader scrolls up
+  let follow = true;
+  const onScroll = () => box && (follow = box.scrollHeight - box.scrollTop - box.clientHeight < 60);
   $effect(() => {
     void shown.length;
-    if (!box) return;
-    const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
-    if (atBottom) queueMicrotask(() => box && (box.scrollTop = box.scrollHeight));
+    if (box && follow) queueMicrotask(() => box && (box.scrollTop = box.scrollHeight));
   });
   const clock = (ms: number) => new Date(ms).toTimeString().slice(0, 8);
   const hm = (ms: number) => new Date(ms).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
@@ -189,7 +189,7 @@
 
   <!-- a scrollable region must be reachable by keyboard -->
   <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-  <div class="log" class:srcs={viaCtl} bind:this={box} tabindex="0" role="log" aria-label="Журнал">
+  <div class="log" class:srcs={viaCtl} bind:this={box} onscroll={onScroll} tabindex="0" role="log" aria-label="Журнал">
     {#each shown as e (e.key)}
       <div class="line">
         <span class="muted">{clock(e.ts)}</span>

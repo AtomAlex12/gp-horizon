@@ -218,7 +218,7 @@ export function runVerdict(status: string | null | undefined, log: RunLogTail | 
     total = num(p.attempt_total);
   if (total) facts.push(`проверено ${fmt(done)} из ${fmt(total)} вариантов`);
   const found = num(p.successful);
-  if (found !== undefined && total) facts.push(`найдено ${fmt(found)}`);
+  if (found !== undefined && total) facts.push(`удачных проверок ${fmt(found)}`);
   // the whole plan at the speed GP measured in this very run
   const ms = num(p.eta_ms_per_attempt),
     par = num(p.eta_parallelism) || 1;
