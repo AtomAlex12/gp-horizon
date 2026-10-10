@@ -242,6 +242,7 @@ func (m *Manager) Reconcile(ctx context.Context) {
 		st.Desync = []string{}
 	}
 	want := Build(d, m.Cfg.Ifaces)
+	st.Warnings = append(st.Warnings, InfraWarnings(d)...)
 	if obs.Interfaces != nil {
 		// a route to a missing interface fails the whole pass: skip that mode
 		// (its tunnel isn't installed yet) and say so

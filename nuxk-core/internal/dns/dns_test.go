@@ -398,6 +398,59 @@ func TestSuspendAndResume(t *testing.T) {
 	}
 }
 
+// The agent starts after a reboot: the firmware asks nuxk already (its name
+// server was saved with the startup config), but there's no internet yet. The
+// first failed check hands DNS back — the firmware's internet check needs
+// names, and nothing would come up otherwise; it's added back once nuxk
+// answers. Started with the internet up, it's attached anew at once.
+func TestStartHandsBackAtOnce(t *testing.T) {
+	srv, _ := dohServer(t)
+	var down, dead atomic.Bool
+	h := &fakeHook{}
+	addr := freeAddr(t)
+	proxy := fakeProxy(t, addr, &dead)
+	s := newService(t, srv, Options{Listen: addr, Hook: h, RouterDNS: proxy, Transport: func(Path) http.RoundTripper {
+		return rtFunc(func(r *http.Request) (*http.Response, error) {
+			if down.Load() {
+				return nil, errors.New("network is unreachable")
+			}
+			return srv.Client().Transport.RoundTrip(r)
+		})
+	}})
+	s.set.Enabled = true // saved settings
+	ctx := context.Background()
+	down.Store(true)
+	s.resume()
+	if st := s.Status(); !st.Attached || !st.Running {
+		t.Fatalf("after start: %+v", st)
+	}
+	s.tick(ctx)
+	if st := s.Status(); st.Attached || !st.Suspended || h.log() != "detach "+addr {
+		t.Fatalf("first failed check: %+v, hook %q", st, h.log())
+	}
+	down.Store(false)
+	s.tick(ctx)
+	if st := s.Status(); !st.Attached || st.Suspended || st.Error != "" {
+		t.Fatalf("answers: %+v", st)
+	}
+	// from now on one failure is not enough
+	down.Store(true)
+	s.tick(ctx)
+	if st := s.Status(); !st.Attached {
+		t.Fatalf("one failure after a good start: %+v", st)
+	}
+
+	h2 := &fakeHook{}
+	addr2 := freeAddr(t)
+	s2 := newService(t, srv, Options{Listen: addr2, Hook: h2, RouterDNS: fakeProxy(t, addr2, &dead)})
+	s2.set.Enabled = true
+	s2.resume()
+	s2.tick(ctx)
+	if st := s2.Status(); !st.Attached || !st.Consulted || h2.log() != "attach "+addr2 {
+		t.Fatalf("started with the internet: %+v, hook %q", st, h2.log())
+	}
+}
+
 type rtFunc func(*http.Request) (*http.Response, error)
 
 func (f rtFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }

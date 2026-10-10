@@ -154,7 +154,8 @@ type Service struct {
 	tcp       net.Listener
 	attached  bool
 	suspended bool
-	fails     int // health checks failed in a row
+	fails     int  // health checks failed in a row
+	answered  bool // a check has passed since the agent started
 	// smartRestart: when a badly answering SmartDNS was last restarted
 	smartRestart time.Time
 	lastErr      string
@@ -788,11 +789,7 @@ func doh(ctx context.Context, c *http.Client, r Resolver, q []byte) ([]byte, err
 // times running: taken back from the DNS proxy until one does again. Every
 // 5 s names in use about to expire are refreshed.
 func (s *Service) Run(ctx context.Context) {
-	if s.Settings().Enabled {
-		if err := s.start(); err != nil {
-			s.setErr(err.Error())
-		}
-	}
+	s.resume()
 	t := time.NewTimer(5 * time.Second)
 	defer t.Stop()
 	r := time.NewTicker(5 * time.Second)
@@ -815,6 +812,27 @@ func (s *Service) Run(ctx context.Context) {
 		}
 		s.tick(ctx)
 		t.Reset(30 * time.Second)
+	}
+}
+
+// resume: the agent has just started with protection on. The router may be
+// asking nuxk already — the agent leaves the attachment when it stops, and
+// the firmware saves its running config, nuxk's name server too, whenever a
+// setting is changed in its web interface — so after a reboot the DNS proxy
+// asks nuxk before the agent runs. Until a check passes, one failed check
+// hands DNS back: on 10.10.2026 after a reboot the firmware's internet check,
+// which pings names, waited for DNS; DNS (nuxk) waited for the internet.
+func (s *Service) resume() {
+	if !s.Settings().Enabled {
+		return
+	}
+	if err := s.start(); err != nil {
+		s.setErr(err.Error())
+	}
+	if s.o.Hook != nil {
+		s.mu.Lock()
+		s.attached = true
+		s.mu.Unlock()
 	}
 }
 
@@ -860,10 +878,12 @@ func (s *Service) tick(ctx context.Context) {
 		err = s.reviveSmart(cctx, err, again)
 	}
 	s.mu.Lock()
+	first := !s.answered // nothing has passed since the agent started
 	if err != nil {
 		s.fails++
 	} else {
 		s.fails = 0
+		s.answered = true
 	}
 	fails, attached, suspended := s.fails, s.attached, s.suspended
 	s.mu.Unlock()
@@ -871,14 +891,16 @@ func (s *Service) tick(ctx context.Context) {
 		slog.Warn("dns: answers badly", "engine", s.engine(), "err", err)
 	}
 	switch {
-	case err != nil && fails >= 3 && attached:
+	case err != nil && attached && (fails >= 3 || first):
 		s.detach(ctx)
 		s.mu.Lock()
 		s.suspended = true
 		s.lastErr = "nuxk отвечает плохо или не отвечает — DNS роутера пока работает без nuxk: " + err.Error()
 		s.mu.Unlock()
 		slog.Warn("dns: handed back to the router's own DNS until nuxk answers well again", "err", err)
-	case err == nil && (!attached || suspended) && s.o.Hook != nil:
+	// first: attached anew, as the agent always did on start — the proxy is
+	// asked the test question again
+	case err == nil && (!attached || suspended || first) && s.o.Hook != nil:
 		if aerr := s.attach(ctx); aerr != nil {
 			s.setErr(aerr.Error())
 		} else {
@@ -1188,6 +1210,7 @@ func (s *Service) enable(ctx context.Context) error {
 	}
 	s.mu.Lock()
 	s.set.Enabled, s.suspended, s.fails, s.lastErr = true, false, 0, ""
+	s.answered = true
 	s.mu.Unlock()
 	return nil
 }
