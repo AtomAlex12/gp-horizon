@@ -565,7 +565,7 @@ export interface paths {
         get?: never;
         /**
          * Turn protected DNS on or off; the way out; the resolvers
-         * @description Turning on changes the router's DNS settings: the forwarder must answer through some way out first, then it's added to the DNS proxy ("ip name-server <LAN address>:53053", running config only, never saved) and the router must still answer — otherwise it's taken back and nothing changed. Turning off takes it back. A field left out (or an empty `via`, `resolvers`) keeps what's set; turning off — protection or the cache — forgets the cache.
+         * @description Turning on changes the router's DNS settings: the forwarder must answer through some way out first, then it's added to the DNS proxy ("ip name-server <LAN address>:53053"; the agent never saves the config, but the firmware does on any change in its web interface, so it may outlive a reboot — after starting the agent takes it back unless a check passes) and the router must still answer — otherwise it's taken back and nothing changed. Turning off takes it back. A field left out (or an empty `via`, `resolvers`) keeps what's set; turning off — protection or the cache — forgets the cache.
          */
         put: operations["setDNSSettings"];
         post?: never;
@@ -700,6 +700,10 @@ export interface components {
             core_since: number;
             version: string;
             commit: string;
+            /** @description the box's clock minus a reference (the Date of http://1.1.1.1, no DNS or TLS needed), seconds; absent when right to the second or not yet measured. Off by minutes, TLS, VLESS Reality and WireGuard may fail. */
+            clock_skew_s?: number;
+            /** @description unix seconds of the last measurement */
+            clock_checked?: number;
         };
         Metrics: {
             /** @description unix milliseconds */

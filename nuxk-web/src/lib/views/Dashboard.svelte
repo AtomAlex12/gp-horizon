@@ -81,6 +81,15 @@
       out.push({ sev: 'warn', text: `Роутер не отвечает: ${node.agent.last_error ?? ''}`, tab: 'system' });
     if (node.info?.role === 'stand')
       out.push({ sev: 'deg', text: 'Это тестовый стенд на Pi, а не роутер: маршрутизация здесь не работает.', tab: 'system' });
+    const skew = node.info?.clock_skew_s ?? 0;
+    if (node.info?.clock_checked && Math.abs(skew) > 120)
+      out.push({
+        sev: 'warn',
+        text:
+          `Часы роутера ${skew > 0 ? 'спешат' : 'отстают'} на ${fmtDur(Math.abs(skew))}: при неверном времени не работают DoH, ` +
+          'подписки, VLESS Reality и WireGuard. Keenetic: «Управление» → «Параметры системы» → «Дата и время» — сервер NTP.',
+        tab: 'system',
+      });
     for (const e of engines) {
       const name = ENGINE_LABEL[e.kind] ?? e.kind;
       if (e.last_error) out.push({ sev: 'warn', text: `${name}: ${e.last_error}`, tab: e.kind });

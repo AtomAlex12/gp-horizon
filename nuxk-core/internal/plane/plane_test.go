@@ -2,6 +2,7 @@ package plane
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -110,5 +111,28 @@ func TestPlanUpdatesInPlace(t *testing.T) {
 	ops2, _ := Plan(want, obs2, true)
 	if Changes(ops2) != 0 {
 		t.Errorf("converged plan = %v", kinds(ops2))
+	}
+}
+
+// A WARP/VLESS entry that covers the router's own time server or DoH is
+// warned about: «cloudflare.com» in VLESS took time.cloudflare.com along.
+func TestInfraWarnings(t *testing.T) {
+	d := Desired{Lists: []List{
+		{Name: "VLESS", Mode: ModeVless, Domains: []string{"cloudflare.com", "instagram.com"}},
+		{Name: "DPI", Mode: ModeDesync, Domains: []string{"dns.google"}}, // straight anyway
+		{Name: "WARP", Mode: ModeWarp, Domains: []string{"Google.com."}},
+	}}
+	w := InfraWarnings(d)
+	if len(w) != 2 {
+		t.Fatalf("warnings %q", w)
+	}
+	if !strings.Contains(w[0], "«cloudflare.com» в списке VLESS") || !strings.Contains(w[0], "time.cloudflare.com (сервер времени)") {
+		t.Errorf("vless: %q", w[0])
+	}
+	if !strings.Contains(w[1], "«google.com» в списке WARP") || !strings.Contains(w[1], "time.google.com") {
+		t.Errorf("warp: %q", w[1])
+	}
+	if InfraWarnings(Desired{Lists: []List{{Mode: ModeVless, Domains: []string{"instagram.com"}}}}) != nil {
+		t.Error("a harmless list warned")
 	}
 }

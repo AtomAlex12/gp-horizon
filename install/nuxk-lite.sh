@@ -1001,8 +1001,9 @@ mode_uninstall() {
     [ "$XRAY_READY" = 1 ] && STEPS=3
     step "nuxk-core"
     [ -x "$R$P_INIT" ] && "$R$P_INIT" stop >/dev/null 2>&1
-    # nuxk's routing objects live only in the running config (never saved):
-    # dropped here, and gone after a reboot anyway
+    # nuxk never saves its routing objects, but the firmware saves the whole
+    # running config on any change in its web interface: dropped here from
+    # the running config, they leave the saved one with the next save
     for g in "nuxk-warp:$(conf_get PLANE_IFACE_WARP)" "nuxk-vless:$(conf_get PLANE_IFACE_VLESS)"; do
         grp=${g%%:*} ifc=${g#*:}
         [ -n "$ifc" ] && curl -fsS -m 5 -X POST http://127.0.0.1:79/rci/ -d "{\"dns-proxy\":{\"route\":{\"group\":\"$grp\",\"interface\":\"$ifc\",\"no\":true}}}" >/dev/null 2>&1
@@ -1025,6 +1026,7 @@ mode_uninstall() {
     fi
     rm -rf "$R$P_BIN" "$R$P_BIN.prev" "$R$P_PREV" "$R$P_INIT" "$R$P_WEB" "$R$P_LOG"* "$R/opt/var/log/nuxk-core.crash"
     ok "агент, веб, SmartDNS и объекты nuxk-* убраны; конфиг и списки — /opt/etc/nuxk.removed"
+    say "Keenetic мог сохранить объекты nuxk-* и DNS nuxk в свою конфигурацию — они уйдут оттуда при следующем сохранении настроек (любое изменение в веб-интерфейсе) или командой: ndmc -c \"system configuration save\""
     if [ "$XRAY_READY" = 1 ]; then
         step "xray (VLESS)"
         tun=$(conf_get PLANE_IFACE_VLESS)

@@ -27,6 +27,9 @@ type Agent struct {
 	infoAt  time.Time
 	lastOK  time.Time
 	lastErr string
+	// downSince: since when the agent hasn't answered; downSaid: the last
+	// time the log said so
+	downSince, downSaid time.Time
 }
 
 func NewAgent(url, token string) *Agent {
@@ -41,7 +44,7 @@ func (a *Agent) Configure(url, token string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.url, a.token = strings.TrimRight(url, "/"), token
-	a.info, a.infoAt, a.lastOK, a.lastErr = nil, time.Time{}, time.Time{}, ""
+	a.info, a.infoAt, a.lastOK, a.lastErr, a.downSince = nil, time.Time{}, time.Time{}, "", time.Time{}
 	a.Hist = NewHistory(720) // 1 h at 5 s
 }
 
@@ -148,17 +151,28 @@ func (a *Agent) poll(ctx context.Context) {
 	if url != a.url {
 		return // reconfigured while this poll ran
 	}
+	now := time.Now()
 	if err != nil {
-		if err.Error() != a.lastErr {
+		// once when it goes, then a reminder every 10 min — not on every poll:
+		// a router that hangs alternates "no route" and timeouts, and logged
+		// each change, 3 hours down made 715 lines
+		switch {
+		case a.downSince.IsZero():
+			a.downSince, a.downSaid = now, now
 			slog.Warn("agent unreachable", "url", url, "err", err)
+		case now.Sub(a.downSaid) >= 10*time.Minute:
+			a.downSaid = now
+			slog.Warn("agent still unreachable", "url", url, "for", now.Sub(a.downSince).Round(time.Second).String(), "err", err)
+		default:
+			slog.Debug("agent unreachable", "url", url, "err", err)
 		}
 		a.lastErr = err.Error()
 		return
 	}
-	if a.lastErr != "" {
-		slog.Info("agent reachable again", "url", url)
+	if !a.downSince.IsZero() {
+		slog.Info("agent reachable again", "url", url, "after", now.Sub(a.downSince).Round(time.Second).String())
 	}
-	a.lastErr, a.lastOK = "", time.Now()
+	a.lastErr, a.lastOK, a.downSince = "", now, time.Time{}
 }
 
 // AgentState is GET /ctl/v1/agent.

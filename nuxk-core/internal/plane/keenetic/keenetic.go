@@ -354,8 +354,10 @@ func (b *Backend) ensureV6Deny(ctx context.Context, groups []string) error {
 // NameServer adds (on) or takes back one server of the firmware's DNS proxy
 // through RCI's command parser — only nuxk's own forwarder, on an address of
 // this very router (KeeneticOS refuses loopback ones: the LAN address, in
-// practice), never anyone else's. It lives in the running config: never
-// saved, a reboot drops it and the agent adds it again.
+// practice), never anyone else's. The agent never saves it, but the firmware
+// saves the whole running config whenever a setting is changed in its web
+// interface — so after a reboot it may be there before the agent runs (the
+// dns service takes it back if nuxk doesn't answer).
 func (b *Backend) NameServer(ctx context.Context, addr string, on bool) error {
 	host, port, err := net.SplitHostPort(addr)
 	ip := net.ParseIP(host)

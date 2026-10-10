@@ -41,6 +41,9 @@ type Info struct {
 	CoreSince int64  `json:"core_since"` // unix seconds nuxk-core started
 	Version   string `json:"version"`
 	Commit    string `json:"commit"`
+	// the box's clock against a reference (Clock); absent until measured
+	ClockSkewS   int64 `json:"clock_skew_s,omitempty"`
+	ClockChecked int64 `json:"clock_checked,omitempty"`
 }
 
 // Node answers Info and Metrics.
@@ -48,6 +51,7 @@ type Node struct {
 	Root    string // "" in production
 	RoleCfg string // NODE_ROLE from nuxk.conf; "" = detect
 	RCI     string // KeeneticOS RCI base for model/firmware
+	Clock   *Clock // nil = not checked
 	Version string
 	Commit  string
 
@@ -85,6 +89,11 @@ func (n *Node) Info(ctx context.Context) Info {
 	if f := strings.Fields(readFile(n.p("/proc/uptime"))); len(f) > 0 {
 		v, _ := strconv.ParseFloat(f[0], 64)
 		in.UptimeSec = int64(v)
+	}
+	if n.Clock != nil {
+		if skew, at, ok := n.Clock.Skew(); ok {
+			in.ClockSkewS, in.ClockChecked = int64(skew/time.Second), at.Unix()
+		}
 	}
 	if in.Role == RoleRouter {
 		in.Model, in.Firmware = n.keenetic(ctx)

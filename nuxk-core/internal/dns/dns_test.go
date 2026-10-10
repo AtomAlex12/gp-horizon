@@ -398,6 +398,59 @@ func TestSuspendAndResume(t *testing.T) {
 	}
 }
 
+// The agent starts after a reboot: the firmware asks nuxk already (its name
+// server was saved with the startup config), but there's no internet yet. The
+// first failed check hands DNS back — the firmware's internet check needs
+// names, and nothing would come up otherwise; it's added back once nuxk
+// answers. Started with the internet up, it's attached anew at once.
+func TestStartHandsBackAtOnce(t *testing.T) {
+	srv, _ := dohServer(t)
+	var down, dead atomic.Bool
+	h := &fakeHook{}
+	addr := freeAddr(t)
+	proxy := fakeProxy(t, addr, &dead)
+	s := newService(t, srv, Options{Listen: addr, Hook: h, RouterDNS: proxy, Transport: func(Path) http.RoundTripper {
+		return rtFunc(func(r *http.Request) (*http.Response, error) {
+			if down.Load() {
+				return nil, errors.New("network is unreachable")
+			}
+			return srv.Client().Transport.RoundTrip(r)
+		})
+	}})
+	s.set.Enabled = true // saved settings
+	ctx := context.Background()
+	down.Store(true)
+	s.resume()
+	if st := s.Status(); !st.Attached || !st.Running {
+		t.Fatalf("after start: %+v", st)
+	}
+	s.tick(ctx)
+	if st := s.Status(); st.Attached || !st.Suspended || h.log() != "detach "+addr {
+		t.Fatalf("first failed check: %+v, hook %q", st, h.log())
+	}
+	down.Store(false)
+	s.tick(ctx)
+	if st := s.Status(); !st.Attached || st.Suspended || st.Error != "" {
+		t.Fatalf("answers: %+v", st)
+	}
+	// from now on one failure is not enough
+	down.Store(true)
+	s.tick(ctx)
+	if st := s.Status(); !st.Attached {
+		t.Fatalf("one failure after a good start: %+v", st)
+	}
+
+	h2 := &fakeHook{}
+	addr2 := freeAddr(t)
+	s2 := newService(t, srv, Options{Listen: addr2, Hook: h2, RouterDNS: fakeProxy(t, addr2, &dead)})
+	s2.set.Enabled = true
+	s2.resume()
+	s2.tick(ctx)
+	if st := s2.Status(); !st.Attached || !st.Consulted || h2.log() != "attach "+addr2 {
+		t.Fatalf("started with the internet: %+v, hook %q", st, h2.log())
+	}
+}
+
 type rtFunc func(*http.Request) (*http.Response, error)
 
 func (f rtFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
@@ -467,5 +520,42 @@ func TestAllowed(t *testing.T) {
 	}
 	if !New(Options{Listen: "0.0.0.0:53053"}, nil).Allowed(net.ParseIP("192.168.2.37")) {
 		t.Error("listening everywhere is the person's choice: everyone may ask")
+	}
+}
+
+// Answers that come too late count as none: three such checks hand DNS back
+// to the router's own, and it's asked again once answers are in time.
+func TestSlowAnswersHandBack(t *testing.T) {
+	old := slowAnswer
+	slowAnswer = 100 * time.Millisecond
+	t.Cleanup(func() { slowAnswer = old })
+	srv, _ := dohServer(t)
+	var slow, dead atomic.Bool
+	h := &fakeHook{}
+	addr := freeAddr(t)
+	proxy := fakeProxy(t, addr, &dead)
+	s := newService(t, srv, Options{Listen: addr, Hook: h, RouterDNS: proxy, Transport: func(Path) http.RoundTripper {
+		return rtFunc(func(r *http.Request) (*http.Response, error) {
+			if slow.Load() {
+				time.Sleep(200 * time.Millisecond)
+			}
+			return srv.Client().Transport.RoundTrip(r)
+		})
+	}})
+	ctx := context.Background()
+	if _, err := s.SetSettings(ctx, Settings{Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	slow.Store(true)
+	for i := 0; i < 3; i++ {
+		s.tick(ctx)
+	}
+	if st := s.Status(); st.Attached || !st.Suspended || !strings.Contains(st.Error, "столько не ждут") {
+		t.Fatalf("slow: %+v", st)
+	}
+	slow.Store(false)
+	s.tick(ctx)
+	if st := s.Status(); !st.Attached || st.Suspended {
+		t.Fatalf("resumed: %+v", st)
 	}
 }

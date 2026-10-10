@@ -114,6 +114,7 @@ type smartFake struct {
 	opts  *SmartDNSOptions
 	calls func() string
 	conf  func() string
+	slow  atomic.Bool // answers late
 }
 
 func newSmartFake(t *testing.T, addr string, refuse bool) *smartFake {
@@ -159,6 +160,9 @@ func (f *smartFake) serve(t *testing.T, addr string) {
 			}
 			if _, err := os.Stat(filepath.Join(f.dir, "up")); err != nil {
 				continue
+			}
+			if f.slow.Load() {
+				time.Sleep(200 * time.Millisecond)
 			}
 			q := append([]byte{}, buf[:n]...)
 			_, _ = pc.WriteTo(respond(q, zone[QName(q)]...), from)
@@ -302,4 +306,74 @@ func listenUDP(t *testing.T, addr string) net.PacketConn {
 	}
 	t.Cleanup(func() { pc.Close() })
 	return pc
+}
+
+// A SmartDNS that answers too late is restarted — once, not on every check
+// — and handed back to the router's own DNS when that doesn't help; it is
+// asked again once it answers in time.
+func TestSmartDNSSlowRestartedThenHandedBack(t *testing.T) {
+	old := slowAnswer
+	slowAnswer = 100 * time.Millisecond
+	t.Cleanup(func() { slowAnswer = old })
+	srv, _ := dohServer(t)
+	var dead atomic.Bool
+	h := &fakeHook{}
+	addr := freeAddr(t)
+	proxy := fakeProxy(t, addr, &dead)
+	f := newSmartFake(t, addr, false)
+	f.serve(t, addr)
+	s := newService(t, srv, Options{Listen: addr, Hook: h, RouterDNS: proxy, SmartDNS: f.opts})
+	s.o.Resolvers[0].IPs = []string{"192.0.2.53"}
+	s.warm = 500 * time.Millisecond
+	ctx := context.Background()
+	if _, err := s.SetSettings(ctx, Settings{Enabled: true, Engine: EngineSmartDNS}); err != nil {
+		t.Fatal(err)
+	}
+	f.slow.Store(true)
+	for i := 0; i < 3; i++ {
+		s.tick(ctx)
+	}
+	if n := strings.Count(f.calls(), "restart"); n != 1 {
+		t.Fatalf("restarts %d: %q", n, f.calls())
+	}
+	if st := s.Status(); st.Attached || !st.Suspended || !strings.Contains(st.Error, "столько не ждут") {
+		t.Fatalf("slow: %+v", st)
+	}
+	f.slow.Store(false)
+	s.tick(ctx)
+	if st := s.Status(); !st.Attached || st.Suspended || st.Error != "" {
+		t.Fatalf("back: %+v", st)
+	}
+}
+
+// After the agent starts, SmartDNS gets its configuration again: the one the
+// init script started it with at boot may be bound to a WARP that isn't up.
+func TestSmartDNSConfiguredAfterStart(t *testing.T) {
+	srv, _ := dohServer(t)
+	var dead atomic.Bool
+	addr := freeAddr(t)
+	proxy := fakeProxy(t, addr, &dead)
+	f := newSmartFake(t, addr, false)
+	f.serve(t, addr)
+	warp := ""
+	f.opts.WarpIface = func() string { return warp }
+	s := newService(t, srv, Options{Listen: addr, Hook: &fakeHook{}, RouterDNS: proxy, SmartDNS: f.opts})
+	s.o.Resolvers[0].IPs = []string{"192.0.2.53"}
+	s.mu.Lock()
+	s.set.Enabled, s.set.Engine, s.set.Via = true, EngineSmartDNS, ViaWarp
+	s.mu.Unlock()
+
+	s.tick(context.Background()) // WARP not connected yet: straight
+	if !strings.HasPrefix(f.calls(), "set-config") || strings.Contains(f.conf(), "-interface") {
+		t.Fatalf("calls %q conf\n%s", f.calls(), f.conf())
+	}
+	warp = "opkgtun0" // connected: through it
+	s.tick(context.Background())
+	if strings.Count(f.calls(), "set-config") != 2 || !strings.Contains(f.conf(), "-interface opkgtun0") {
+		t.Fatalf("calls %q conf\n%s", f.calls(), f.conf())
+	}
+	s.tick(context.Background()) // nothing changed: left alone
+	if strings.Count(f.calls(), "set-config") != 2 {
+		t.Fatalf("calls %q", f.calls())
+	}
 }
