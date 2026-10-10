@@ -469,3 +469,40 @@ func TestAllowed(t *testing.T) {
 		t.Error("listening everywhere is the person's choice: everyone may ask")
 	}
 }
+
+// Answers that come too late count as none: three such checks hand DNS back
+// to the router's own, and it's asked again once answers are in time.
+func TestSlowAnswersHandBack(t *testing.T) {
+	old := slowAnswer
+	slowAnswer = 100 * time.Millisecond
+	t.Cleanup(func() { slowAnswer = old })
+	srv, _ := dohServer(t)
+	var slow, dead atomic.Bool
+	h := &fakeHook{}
+	addr := freeAddr(t)
+	proxy := fakeProxy(t, addr, &dead)
+	s := newService(t, srv, Options{Listen: addr, Hook: h, RouterDNS: proxy, Transport: func(Path) http.RoundTripper {
+		return rtFunc(func(r *http.Request) (*http.Response, error) {
+			if slow.Load() {
+				time.Sleep(200 * time.Millisecond)
+			}
+			return srv.Client().Transport.RoundTrip(r)
+		})
+	}})
+	ctx := context.Background()
+	if _, err := s.SetSettings(ctx, Settings{Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	slow.Store(true)
+	for i := 0; i < 3; i++ {
+		s.tick(ctx)
+	}
+	if st := s.Status(); st.Attached || !st.Suspended || !strings.Contains(st.Error, "столько не ждут") {
+		t.Fatalf("slow: %+v", st)
+	}
+	slow.Store(false)
+	s.tick(ctx)
+	if st := s.Status(); !st.Attached || st.Suspended {
+		t.Fatalf("resumed: %+v", st)
+	}
+}

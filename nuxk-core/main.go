@@ -259,12 +259,17 @@ func main() {
 	dnsSvc = dns.New(dopt, st)
 	go dnsSvc.Run(ctx)
 
+	// the router's clock against 1.1.1.1's: a wrong one is said aloud
+	nd := node.New(cfg.NodeRole, cfg.Plane.RCI, version, commit)
+	nd.Clock = node.NewClock()
+	go nd.Clock.Run(ctx)
+
 	srv := &http.Server{
 		Addr: cfg.Listen,
 		Handler: api.NewRouter(api.Deps{
 			Version: version, Commit: commit, Engines: reg, Hub: hub, Ctl: ctl, Plane: pm,
 			WebRoot: cfg.WebRoot, Token: cfg.APIToken, Auth: guard, Logs: logs, Debug: dbg,
-			Node:   node.New(cfg.NodeRole, cfg.Plane.RCI, version, commit),
+			Node:   nd,
 			Update: upd, DNS: dnsSvc,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
@@ -334,14 +339,35 @@ func presence(id string, snap core.Snapshot, d *dns.Service, pm *plane.Manager, 
 // told once and falls back straight while it's down.
 func warpIface(snap core.Snapshot, cfg config.Config) string {
 	for _, e := range snap.Engines {
-		if e.Kind == engine.KindUsque && e.Iface != "" {
+		if e.Kind != engine.KindUsque {
+			continue
+		}
+		// SmartDNS bound to a WARP that isn't connected waits out every
+		// question before its straight fallback: 1.8 s a name after a reboot,
+		// devices asking again, a storm. Straight while WARP is down.
+		if !tunnelUp(e) {
+			return ""
+		}
+		if e.Iface != "" {
 			return strings.ToLower(e.Iface)
 		}
+		return strings.ToLower(cfg.Plane.IfaceWarp)
 	}
-	if _, ok := snapEngine(snap, engine.KindUsque); !ok && cfg.Engines.Usque == "" {
-		return ""
+	return "" // not wired, or not seen yet (the agent just started): straight
+}
+
+// tunnelUp: the engine runs and its tunnel is connected — or its script
+// can't tell. A tunnel that says it's down carries nothing, whatever its
+// interface shows.
+func tunnelUp(e core.EngineState) bool {
+	if !e.Running || e.Health == engine.HealthDown {
+		return false
 	}
-	return strings.ToLower(cfg.Plane.IfaceWarp)
+	switch e.Detail["tunnel_state"] {
+	case "", "connected", "unknown":
+		return true
+	}
+	return false
 }
 
 func snapEngine(snap core.Snapshot, k engine.Kind) (int, bool) {
@@ -354,7 +380,7 @@ func snapEngine(snap core.Snapshot, k engine.Kind) (int, bool) {
 }
 
 // dnsPaths: the tunnels DNS can go through right now — VLESS first, then WARP
-// — each only while its engine runs and its interface exists.
+// — each only while its tunnel is connected and its interface exists.
 func dnsPaths(snap core.Snapshot, cfg config.Config) []dns.Path {
 	var ps []dns.Path
 	for _, w := range []struct {
@@ -366,7 +392,7 @@ func dnsPaths(snap core.Snapshot, cfg config.Config) []dns.Path {
 		{engine.KindUsque, "warp", strings.ToLower(cfg.Plane.IfaceWarp)},
 	} {
 		for _, e := range snap.Engines {
-			if e.Kind != w.kind || !e.Running || e.Health == engine.HealthDown {
+			if e.Kind != w.kind || !tunnelUp(e) {
 				continue
 			}
 			iface := w.iface

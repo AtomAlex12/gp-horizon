@@ -700,6 +700,10 @@ export interface components {
             core_since: number;
             version: string;
             commit: string;
+            /** @description the box's clock minus a reference (the Date of http://1.1.1.1, no DNS or TLS needed), seconds; absent when right to the second or not yet measured. Off by minutes, TLS, VLESS Reality and WireGuard may fail. */
+            clock_skew_s?: number;
+            /** @description unix seconds of the last measurement */
+            clock_checked?: number;
         };
         Metrics: {
             /** @description unix milliseconds */

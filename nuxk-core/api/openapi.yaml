@@ -819,6 +819,13 @@ components:
         core_since: { type: integer, description: unix seconds nuxk-core started }
         version: { type: string }
         commit: { type: string }
+        clock_skew_s:
+          type: integer
+          description: >
+            the box's clock minus a reference (the Date of http://1.1.1.1, no DNS
+            or TLS needed), seconds; absent when right to the second or not yet
+            measured. Off by minutes, TLS, VLESS Reality and WireGuard may fail.
+        clock_checked: { type: integer, description: unix seconds of the last measurement }
 
     Metrics:
       type: object

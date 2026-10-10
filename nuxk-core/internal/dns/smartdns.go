@@ -232,11 +232,14 @@ func (d *smartDNS) apply(ctx context.Context, conf string) error {
 	return nil
 }
 
-// outdated: SmartDNS runs with another configuration than conf.
+// outdated: SmartDNS may run with another configuration than conf — or the
+// agent has just started and doesn't know what it runs with: at boot the
+// init script starts it with the last one, bound to a WARP that may not be
+// up. Applying the same configuration to a running SmartDNS changes nothing.
 func (d *smartDNS) outdated(conf string) bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	return d.applied != "" && d.applied != conf
+	return d.applied != conf
 }
 
 func (d *smartDNS) stop(ctx context.Context) error {

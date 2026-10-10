@@ -155,13 +155,15 @@ type Service struct {
 	attached  bool
 	suspended bool
 	fails     int // health checks failed in a row
-	lastErr   string
-	consulted bool
-	probe     string // the test question now in flight
-	clients   map[Path]*http.Client
-	stats     map[string]*PathStat
-	lastPath  string
-	resolver  int // index into the resolver order that answered last
+	// smartRestart: when a badly answering SmartDNS was last restarted
+	smartRestart time.Time
+	lastErr      string
+	consulted    bool
+	probe        string // the test question now in flight
+	clients      map[Path]*http.Client
+	stats        map[string]*PathStat
+	lastPath     string
+	resolver     int // index into the resolver order that answered last
 
 	cache     *cache
 	fmu       sync.Mutex
@@ -816,16 +818,30 @@ func (s *Service) Run(ctx context.Context) {
 	}
 }
 
+// slowAnswer: an answer later than this is as good as none. Devices give up
+// after a second or two and ask again, so a slow resolver turns into a storm
+// of retries — as after a reboot with WARP still connecting: 1.8 s a name,
+// 1900 questions a minute, no internet.
+var slowAnswer = 1500 * time.Millisecond
+
+// smartRestartGap: a running SmartDNS that answers badly is restarted at most
+// this often.
+const smartRestartGap = 5 * time.Minute
+
 func (s *Service) tick(ctx context.Context) {
 	if !s.Settings().Enabled {
 		return
 	}
 	smart := s.engine() == EngineSmartDNS
-	// SmartDNS runs on its own: started again only when it doesn't answer —
-	// or with a new configuration when WARP's interface came or changed
+	// SmartDNS runs on its own: given its configuration again when that
+	// differs from what it runs with — WARP came up or went down — or when
+	// the agent has just started and doesn't know (the script leaves a
+	// SmartDNS running with the same configuration alone)
 	if smart && s.sd.outdated(s.smartConf()) {
 		if err := s.startSmart(ctx); err != nil {
 			s.setErr(err.Error())
+		} else {
+			slog.Info("dns: SmartDNS configuration", "through", smartWay(s.sd.o.WarpIface()))
 		}
 	}
 	if !smart {
@@ -836,13 +852,12 @@ func (s *Service) tick(ctx context.Context) {
 	}
 	cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	_, err := s.lookup(cctx, "cloudflare.com")
+	err := s.healthy(cctx)
 	if err != nil && smart {
-		if serr := s.start(); serr != nil {
-			s.setErr(serr.Error())
-		} else {
-			_, err = s.lookupWarm(cctx)
-		}
+		s.mu.Lock()
+		again := s.fails > 0 // the second bad check in a row
+		s.mu.Unlock()
+		err = s.reviveSmart(cctx, err, again)
 	}
 	s.mu.Lock()
 	if err != nil {
@@ -852,14 +867,17 @@ func (s *Service) tick(ctx context.Context) {
 	}
 	fails, attached, suspended := s.fails, s.attached, s.suspended
 	s.mu.Unlock()
+	if err != nil && fails == 1 {
+		slog.Warn("dns: answers badly", "engine", s.engine(), "err", err)
+	}
 	switch {
 	case err != nil && fails >= 3 && attached:
 		s.detach(ctx)
 		s.mu.Lock()
 		s.suspended = true
-		s.lastErr = "ни один путь до DoH-серверов не отвечает — DNS роутера пока работает без nuxk: " + err.Error()
+		s.lastErr = "nuxk отвечает плохо или не отвечает — DNS роутера пока работает без nuxk: " + err.Error()
 		s.mu.Unlock()
-		slog.Warn("dns: forwarder taken back from the DNS proxy", "err", err)
+		slog.Warn("dns: handed back to the router's own DNS until nuxk answers well again", "err", err)
 	case err == nil && (!attached || suspended) && s.o.Hook != nil:
 		if aerr := s.attach(ctx); aerr != nil {
 			s.setErr(aerr.Error())
@@ -868,8 +886,66 @@ func (s *Service) tick(ctx context.Context) {
 			s.suspended = false
 			s.lastErr = ""
 			s.mu.Unlock()
+			if suspended {
+				slog.Info("dns: answers well again — the router asks nuxk again")
+			}
 		}
 	}
+}
+
+func smartWay(iface string) string {
+	if iface == "" {
+		return "straight"
+	}
+	return iface
+}
+
+// healthy: the engine answers a name nobody has asked yet — so not out of a
+// cache — with an answer, and in time. An error answer or a slow one counts
+// as none: the check cloudflare.com alone passed while every other name took
+// 1.8 s.
+func (s *Service) healthy(ctx context.Context) error {
+	start := time.Now()
+	a, err := s.lookup(ctx, fmt.Sprintf("n%08x.nuxk-check.example.com", randID32()))
+	took := time.Since(start)
+	switch {
+	case err != nil:
+		return err
+	case a.Rcode != 0 && a.Rcode != 3: // NOERROR, NXDOMAIN: the resolvers answered
+		err = fmt.Errorf("ответ с ошибкой (код %d)", a.Rcode)
+	case took > slowAnswer:
+		err = fmt.Errorf("ответ через %s — устройства столько не ждут", took.Round(100*time.Millisecond))
+	default:
+		return nil
+	}
+	if s.engine() == EngineSmartDNS {
+		s.sd.note(false, "SmartDNS: "+err.Error())
+	}
+	return err
+}
+
+// reviveSmart: a SmartDNS that answers badly comes back up if it died; one
+// that answers badly twice in a row is restarted — at most every
+// smartRestartGap: a restart empties its cache — and asked again once it has
+// had a few seconds.
+func (s *Service) reviveSmart(ctx context.Context, cause error, again bool) error {
+	s.mu.Lock()
+	restart := again && (s.smartRestart.IsZero() || s.clock().Sub(s.smartRestart) >= smartRestartGap)
+	if restart {
+		s.smartRestart = s.clock()
+	}
+	s.mu.Unlock()
+	if restart {
+		slog.Warn("dns: SmartDNS answers badly — restarting it", "err", cause)
+		if err := s.sd.restart(ctx); err != nil {
+			s.setErr("SmartDNS не перезапустился: " + err.Error())
+			return cause
+		}
+	} else if err := s.start(); err != nil {
+		s.setErr(err.Error())
+		return cause
+	}
+	return s.lookupWarm(ctx)
 }
 
 func (s *Service) setErr(e string) {
@@ -901,10 +977,9 @@ func (s *Service) lookup(ctx context.Context, name string) (Answer, error) {
 	return Parse(resp)
 }
 
-// lookupWarm: the engine answers — given a few seconds, as a SmartDNS just
-// started opens its first connections through the tunnel.
-func (s *Service) lookupWarm(ctx context.Context) (Answer, error) {
-	var a Answer
+// lookupWarm: the engine answers well — given a few seconds, as a SmartDNS
+// just started opens its first connections through the tunnel.
+func (s *Service) lookupWarm(ctx context.Context) error {
 	var err error
 	tries := 1
 	if s.engine() == EngineSmartDNS {
@@ -914,11 +989,11 @@ func (s *Service) lookupWarm(ctx context.Context) (Answer, error) {
 		defer cancel()
 	}
 	for i := 0; i < tries; i++ {
-		if a, err = s.lookup(ctx, "cloudflare.com"); err == nil || ctx.Err() != nil {
+		if err = s.healthy(ctx); err == nil || ctx.Err() != nil {
 			break
 		}
 	}
-	return a, err
+	return err
 }
 
 // attach adds the forwarder to the DNS proxy and makes sure the router still
@@ -937,6 +1012,7 @@ func (s *Service) attach(ctx context.Context) error {
 		s.detach(ctx)
 		return fmt.Errorf("после подключения DNS роутера не ответил (%v) — отключил обратно, всё как было", err)
 	}
+	slog.Info("dns: the router asks nuxk", "addr", s.o.Listen, "engine", s.engine())
 	// does the proxy pass questions on to nuxk? a name only nuxk would see
 	probe := fmt.Sprintf("n%08x.nuxk-check.example.com", randID32())
 	s.mu.Lock()
@@ -954,8 +1030,12 @@ func (s *Service) detach(ctx context.Context) {
 		slog.Warn("dns: detach", "err", err)
 	}
 	s.mu.Lock()
+	was := s.attached
 	s.attached = false
 	s.mu.Unlock()
+	if was {
+		slog.Info("dns: the router no longer asks nuxk", "addr", s.o.Listen)
+	}
 }
 
 // routerLookup asks the DNS proxy — what every device on the network gets.
@@ -1078,6 +1158,12 @@ func (s *Service) SetSettings(ctx context.Context, set Settings) (Status, error)
 	if serr := s.save(); err == nil {
 		err = serr
 	}
+	now := s.Settings()
+	if err != nil {
+		slog.Warn("dns: settings", "enabled", now.Enabled, "engine", now.Engine, "via", now.Via, "err", err)
+	} else {
+		slog.Info("dns: settings", "enabled", now.Enabled, "engine", now.Engine, "via", now.Via, "cache", now.Cache)
+	}
 	return s.Status(), err
 }
 
@@ -1088,7 +1174,7 @@ func (s *Service) enable(ctx context.Context) error {
 	if err := s.start(); err != nil {
 		return err
 	}
-	if _, err := s.lookupWarm(ctx); err != nil {
+	if err := s.lookupWarm(ctx); err != nil {
 		s.stopAll(ctx)
 		if s.engine() == EngineSmartDNS {
 			return fmt.Errorf("SmartDNS запустился, но не отвечает — роутер не трогаю: %w", err)
@@ -1115,7 +1201,7 @@ func (s *Service) switchEngine(ctx context.Context, old string) error {
 	s.rec.reset()
 	err := s.start()
 	if err == nil {
-		_, err = s.lookupWarm(ctx)
+		err = s.lookupWarm(ctx)
 	}
 	if err == nil {
 		slog.Info("dns: engine switched", "from", old, "to", now)
