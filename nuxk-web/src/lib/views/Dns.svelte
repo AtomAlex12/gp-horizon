@@ -290,7 +290,7 @@
   <section class="card">
     <div class="card-head"><h2>Последний час</h2><span class="spacer"></span>{#if stats?.since}<span class="hint">считаем с {clock(stats.since)}</span>{/if}</div>
     {#if !stats && statsErr === 'old'}
-      <p class="hint">Графики DNS появятся, когда агент на роутере обновится до 0.5.0-beta.4 или новее («Система» → обновление).</p>
+      <p class="hint">Графики DNS появятся, когда агент на роутере обновится до 0.5.0 или новее («Система» → обновление).</p>
     {:else if !stats}
       <p class="muted">{statsErr || 'Загрузка…'}</p>
     {:else}
@@ -424,7 +424,7 @@
           <span>
             <b>SmartDNS <span class="chip deg">бета</span></b>
             <small>
-              {#if !sd}не предлагается: нужен роутер Keenetic с агентом 0.5.0-beta.4 или новее
+              {#if !sd}не предлагается: нужен роутер Keenetic с агентом 0.5.0 или новее
               {:else if !sd.installed}не установлен — на роутере по SSH: <code>nuxk dns</code>
               {:else}через WARP, при сбое — напрямую; кэш, предзагрузка частых имён{sd.version ? ` · ${sd.version}` : ''}{/if}
             </small>

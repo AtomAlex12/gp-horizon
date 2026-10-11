@@ -1,5 +1,12 @@
 # nuxk-plane
 
+> **Not used — a plan that was set aside.** The routing plane GP Horizon ships
+> is [`nuxk-core/internal/plane`](../nuxk-core/internal/plane): it drives the
+> firmware's own domain routing (object-group fqdn + dns-proxy route) through
+> RCI, with no marks or rules of its own. What follows is the earlier idea of a
+> HydraRoute fork, kept for the mark constraints it records (the stand's
+> `deploy/proto/routing-glue.sh` still follows them).
+
 The routing plane — **fork of [Ground-Zerro/HydraRoute](https://github.com/Ground-Zerro/HydraRoute)**
 (Neo), adapted for GP Horizon.
 

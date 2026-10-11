@@ -2,10 +2,11 @@
 
 The GP Horizon control daemon. Go, stdlib-only, one static binary per arch.
 
-> **0.1.0-alpha.1.** Implemented: config, `/api/v1` (healthz/version/status/
-> engines*, apply, config), adapters for **usque, nfqws2, xray**, the
-> **desired-state controller** + hub. Stubbed (`TODO`): nuxk-plane driver,
-> discovery, lists/decisions endpoints, SSE.
+Engines (**nfqws2, usque, xray**, SmartDNS) through their init scripts, the
+**desired-state controller**, the routing plane on Keenetic, protected DNS,
+`/api/v1` (contract: `api/openapi.yaml`) with SSE `/events`, browser login,
+signed self-update and the lite web. Every config key is in
+[`docs/configuration.md`](../docs/configuration.md).
 
 ## Run against the mock (no router needed)
 
@@ -51,8 +52,14 @@ make cross     # → dist/nuxk-core-{mips,mipsel,aarch64,x86_64}  (CGO off, GOMI
 | `internal/engine/{usque,nfqws2,xray}` | adapters — shell to `S51usque` / `S51nfqws2` / `S52xray` |
 | `internal/core` | `Controller` (desired state → engines: Info 5s, Probe 60s, auto-restart, restore, endpoint hardening) + `Hub` (latest snapshot) |
 | `internal/state` | flat-file store: `engines/<kind>.json` (desired state, 0600), `decisions.json`, `lists/*.list` |
+| `internal/plane` | lists → the firmware's `nuxk-*` objects through RCI (below); `infra.go` warns when a list routes the router's own infrastructure |
+| `internal/dns` | protected DNS: the built-in DoH forwarder or SmartDNS, health checks, attaching to the firmware's DNS proxy |
+| `internal/node` | `/proc` metrics, node info, the clock check |
+| `internal/auth` | browser login with the box's account, sessions, lockout |
+| `internal/update` · `internal/release` | new releases, the panel's update; the release signature check (`-verify`) |
+| `internal/logbuf` | the log: memory ring, file, debug switch |
 | `fs/` | package payload: `S99nuxk-core` init + default `nuxk.conf` |
-| `api/openapi.yaml` | draft v1 contract |
+| `api/openapi.yaml` | the v1 contract (CI checks it against the routes) |
 
 ## Routing plane (`internal/plane`)
 

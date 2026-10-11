@@ -441,9 +441,10 @@ keep_prev() {
 
 prev_ver() { "$R$P_PREV/nuxk-core" -version 2>/dev/null | awk '{ print $2 }'; }
 
-# dns_detach — nuxk's DNS forwarder out of the router's DNS proxy (it lives in
-# the running config only). When nuxk goes, and before an older agent comes
-# back that may not know it; one that does adds it again within seconds.
+# dns_detach — nuxk's DNS forwarder out of the router's DNS proxy (nuxk never
+# saves it, though the firmware may have with a save of its own). When nuxk
+# goes, and before an older agent comes back that may not know it; one that
+# does adds it again within seconds.
 dns_detach() {
     # where the agent put it: DNS_LISTEN, else LISTEN's address on port 53053
     a=$(conf_get DNS_LISTEN)

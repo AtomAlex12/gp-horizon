@@ -93,12 +93,10 @@ func (a *Adapter) Probe(ctx context.Context, _ []string) (engine.Probe, error) {
 	return p, nil
 }
 
-// ApplyRouting is a no-op for usque until nuxk-plane lands (MVP-2): the plane
-// owns the fwmark rule that steers matched destinations into opkgtun0. Here we
-// only record the target set so Info/probe context is available.
+// ApplyRouting is a no-op for usque: what goes into opkgtun0 is the routing
+// plane's business (internal/plane — the firmware's domain routing to the
+// nuxk-warp group), not the engine's.
 func (a *Adapter) ApplyRouting(ctx context.Context, r engine.Routing) error {
-	// TODO(MVP-2): hand r.Domains / r.CIDRs to nuxk-plane; write a hint file for
-	// operators (/opt/etc/usque/routed.list).
 	_ = ctx
 	_ = r
 	return nil
