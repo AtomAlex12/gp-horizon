@@ -37,6 +37,7 @@ tags:
   - { name: plane, description: "routing plane: the DPI / WARP / VLESS lists" }
   - { name: update, description: "new releases; the router updated from the panel" }
   - { name: dns, description: "protected DNS: DoH through the tunnels; substitution check" }
+  - { name: suggest, description: "route suggestions: probe a domain, say why it doesn't open and which way out works" }
 
 paths:
   /api/v1/healthz:
@@ -741,6 +742,92 @@ paths:
           content: { application/json: { schema: { $ref: "#/components/schemas/DNSCheck" } } }
         "401": { $ref: "#/components/responses/Error" }
 
+  /api/v1/suggest:
+    get:
+      tags: [suggest]
+      operationId: suggest
+      summary: Suggestions so far, which ways out can be probed, and how many domains are still being checked
+      responses:
+        "200":
+          description: overview
+          content: { application/json: { schema: { $ref: "#/components/schemas/SuggestOverview" } } }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /api/v1/suggest/check:
+    post:
+      tags: [suggest]
+      operationId: suggestCheck
+      summary: Probe these domains in the background (redoes ones already checked)
+      description: |
+        Each domain is tried directly; only if that doesn't open it are the tunnels tried.
+        Domains already in a nuxk list or in the user's own Keenetic routing are skipped.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [domains]
+              properties:
+                domains: { type: array, items: { type: string }, minItems: 1, maxItems: 20 }
+      responses:
+        "202":
+          description: queued; poll GET /suggest
+          content: { application/json: { schema: { $ref: "#/components/schemas/SuggestQueued" } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /api/v1/suggest/scan:
+    post:
+      tags: [suggest]
+      operationId: suggestScan
+      summary: Probe the built-in list of popular services that refuse Russian addresses
+      description: Leaves alone domains checked within the hour, accepted or dismissed.
+      responses:
+        "202":
+          description: queued; poll GET /suggest
+          content: { application/json: { schema: { $ref: "#/components/schemas/SuggestQueued" } } }
+        "404": { $ref: "#/components/responses/Error" }
+
+  /api/v1/suggest/{domain}/accept:
+    post:
+      tags: [suggest]
+      operationId: suggestAccept
+      summary: Put the domain into the plane's «Подбор» list
+      description: |
+        Nothing changes on the router unless the plane is in apply mode (PLANE_APPLY=1).
+        `mode` may be the suggested one (default) or the verified alternative.
+      parameters:
+        - { name: domain, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                mode: { $ref: "#/components/schemas/ListMode" }
+      responses:
+        "200":
+          description: added to the list
+          content: { application/json: { schema: { $ref: "#/components/schemas/Ok" } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { description: "routing wouldn't help for this domain", content: { application/json: { schema: { $ref: "#/components/schemas/Error" } } } }
+
+  /api/v1/suggest/{domain}:
+    delete:
+      tags: [suggest]
+      operationId: suggestDismiss
+      summary: Dismiss a suggestion; a scan won't bring it back
+      parameters:
+        - { name: domain, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: dismissed
+          content: { application/json: { schema: { $ref: "#/components/schemas/Ok" } } }
+        "404": { $ref: "#/components/responses/Error" }
+
 components:
   securitySchemes:
     bearer: { type: http, scheme: bearer }
@@ -761,6 +848,63 @@ components:
           schema: { $ref: "#/components/schemas/Error" }
 
   schemas:
+    SuggestPath:
+      type: object
+      required: [via, result]
+      properties:
+        via: { type: string, enum: [direct, vless, warp, dns] }
+        result: { type: string, description: "what this way out did, in words for the user" }
+        ms: { type: integer }
+
+    SuggestPathInfo:
+      type: object
+      required: [via, usable]
+      properties:
+        via: { type: string, enum: [direct, vless, warp] }
+        iface: { type: string }
+        usable: { type: boolean, description: can be probed right now }
+        why: { type: string, description: why not, when it can't }
+
+    Suggestion:
+      type: object
+      required: [domain, state, confirmed]
+      properties:
+        domain: { type: string }
+        state: { type: string, enum: [checking, ready, accepted, dismissed] }
+        verdict:
+          type: string
+          enum: [ok, geoblock, sni-block, ip-block, dns-block, unknown]
+          description: "geoblock = the site refuses this country; sni-block / ip-block = the provider cuts it; dns-block = DNS gives a stub"
+        mode: { $ref: "#/components/schemas/ListMode", description: "the list to put the domain in; absent = routing wouldn't help or nothing can be said" }
+        alt: { $ref: "#/components/schemas/ListMode", description: another way that was tried and works }
+        confirmed: { type: boolean, description: "the site really opened through `mode`; false = a conclusion from the evidence, not tried (e.g. DPI)" }
+        reason: { type: string, description: why, in words for the user }
+        paths: { type: array, items: { $ref: "#/components/schemas/SuggestPath" } }
+        checked_at: { type: integer }
+
+    SuggestOverview:
+      type: object
+      required: [items, paths, busy, desync]
+      properties:
+        items: { type: [array, "null"], items: { $ref: "#/components/schemas/Suggestion" } }
+        paths: { type: [array, "null"], items: { $ref: "#/components/schemas/SuggestPathInfo" } }
+        busy: { type: integer, description: domains queued or being probed }
+        desync: { type: boolean, description: nfqws2 is wired, so a DPI list is an option }
+
+    SuggestSkip:
+      type: object
+      required: [domain, reason]
+      properties:
+        domain: { type: string }
+        reason: { type: string }
+
+    SuggestQueued:
+      type: object
+      required: [queued, skipped]
+      properties:
+        queued: { type: array, items: { type: string } }
+        skipped: { type: array, items: { $ref: "#/components/schemas/SuggestSkip" } }
+
     Ok:
       type: object
       required: [status]

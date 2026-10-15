@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -62,6 +63,7 @@ type Manager struct {
 	Cfg   Config
 
 	kick   chan struct{}
+	edit   sync.Mutex // read-modify-write of the desired lists (AddAuto)
 	run    sync.Mutex // one reconcile at a time; guards pushed
 	pushed []string   // last desync list nfqws2 accepted; nil = not pushed yet
 	mu     sync.Mutex // guards st and ifaces: Status never waits for a slow pass
@@ -168,6 +170,76 @@ func (m *Manager) Import(groups []string, mode Mode) (Desired, error) {
 		}
 	}
 	return d, m.SetDesired(d)
+}
+
+// AutoSource marks lists the route-suggestion screen fills ("suggest:<mode>").
+const AutoSource = "suggest"
+
+var autoTitle = map[Mode]string{ModeDesync: "Подбор: DPI", ModeWarp: "Подбор: WARP", ModeVless: "Подбор: VLESS"}
+
+// AddAuto puts one accepted suggestion into the per-mode «Подбор» list (made on
+// first use). The usual plane rules apply: nothing changes on the router unless
+// the plane is in apply mode.
+func (m *Manager) AddAuto(mode Mode, domain string) error {
+	if !mode.Valid() {
+		return ErrBadList
+	}
+	m.edit.Lock()
+	defer m.edit.Unlock()
+	d, err := m.Desired()
+	if err != nil {
+		return err
+	}
+	src := AutoSource + ":" + string(mode)
+	added := false
+	for i := range d.Lists {
+		if d.Lists[i].Source == src {
+			d.Lists[i].Domains = append(d.Lists[i].Domains, domain)
+			added = true
+		}
+	}
+	if !added {
+		d.Lists = append(d.Lists, List{Name: autoTitle[mode], Mode: mode, Domains: []string{domain}, Source: src})
+	}
+	return m.SetDesired(d)
+}
+
+// Covered says where a domain is already routed — one of nuxk's lists, or one
+// of the user's own routed Keenetic groups — or "" when nowhere. A parent
+// domain covers its subdomains (the firmware does).
+func (m *Manager) Covered(domain string) string {
+	domain = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(domain), "."))
+	if d, err := m.Desired(); err == nil {
+		for _, l := range d.Lists {
+			if listCovers(l.Domains, domain) {
+				return "список «" + l.Name + "»"
+			}
+		}
+	}
+	for _, f := range m.Status().Foreign {
+		if listCovers(f.Domains, domain) {
+			return "ваш список Keenetic «" + firstNonEmpty(f.Description, f.Group) + "»"
+		}
+	}
+	return ""
+}
+
+// listCovers: some entry equals domain or is a parent of it.
+func listCovers(entries []string, domain string) bool {
+	set := make(map[string]bool, len(entries))
+	for _, e := range entries {
+		set[strings.TrimPrefix(strings.ToLower(e), "*.")] = true
+	}
+	for h := domain; ; {
+		if set[h] {
+			return true
+		}
+		i := strings.IndexByte(h, '.')
+		if i < 0 || !strings.Contains(h[i+1:], ".") {
+			return false
+		}
+		h = h[i+1:]
+	}
 }
 
 func (m *Manager) Kick() {

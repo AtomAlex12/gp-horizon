@@ -36,8 +36,10 @@ import (
 	"nuxk.dev/horizon/core/internal/node"
 	"nuxk.dev/horizon/core/internal/plane"
 	"nuxk.dev/horizon/core/internal/plane/keenetic"
+	"nuxk.dev/horizon/core/internal/probe"
 	"nuxk.dev/horizon/core/internal/release"
 	"nuxk.dev/horizon/core/internal/state"
+	"nuxk.dev/horizon/core/internal/suggest"
 	"nuxk.dev/horizon/core/internal/update"
 )
 
@@ -264,10 +266,21 @@ func main() {
 	nd.Clock = node.NewClock()
 	go nd.Clock.Run(ctx)
 
+	// Route suggestions: probes on request only — nothing runs in the background
+	// until the user asks (or scans), and nothing changes routing on its own.
+	var rt suggest.Router
+	if pm != nil {
+		rt = pm
+	}
+	sg := suggest.New(&probe.Prober{Ifaces: map[probe.Via]string{
+		probe.ViaVless: strings.ToLower(cfg.Plane.IfaceVless), probe.ViaWarp: strings.ToLower(cfg.Plane.IfaceWarp),
+	}}, st, rt, func() bool { _, ok := reg.Get(engine.KindNfqws2); return ok })
+	go sg.Run(ctx)
+
 	srv := &http.Server{
 		Addr: cfg.Listen,
 		Handler: api.NewRouter(api.Deps{
-			Version: version, Commit: commit, Engines: reg, Hub: hub, Ctl: ctl, Plane: pm,
+			Version: version, Commit: commit, Engines: reg, Hub: hub, Ctl: ctl, Plane: pm, Suggest: sg,
 			WebRoot: cfg.WebRoot, Token: cfg.APIToken, Auth: guard, Logs: logs, Debug: dbg,
 			Node:   nd,
 			Update: upd, DNS: dnsSvc,

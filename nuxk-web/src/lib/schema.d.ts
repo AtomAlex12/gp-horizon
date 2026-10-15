@@ -649,10 +649,158 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/suggest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Suggestions so far, which ways out can be probed, and how many domains are still being checked */
+        get: operations["suggest"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/suggest/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Probe these domains in the background (redoes ones already checked)
+         * @description Each domain is tried directly; only if that doesn't open it are the tunnels tried.
+         *     Domains already in a nuxk list or in the user's own Keenetic routing are skipped.
+         */
+        post: operations["suggestCheck"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/suggest/scan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Probe the built-in list of popular services that refuse Russian addresses
+         * @description Leaves alone domains checked within the hour, accepted or dismissed.
+         */
+        post: operations["suggestScan"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/suggest/{domain}/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Put the domain into the plane's «Подбор» list
+         * @description Nothing changes on the router unless the plane is in apply mode (PLANE_APPLY=1).
+         *     `mode` may be the suggested one (default) or the verified alternative.
+         */
+        post: operations["suggestAccept"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/suggest/{domain}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Dismiss a suggestion; a scan won't bring it back */
+        delete: operations["suggestDismiss"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        SuggestPath: {
+            /** @enum {string} */
+            via: "direct" | "vless" | "warp" | "dns";
+            /** @description what this way out did, in words for the user */
+            result: string;
+            ms?: number;
+        };
+        SuggestPathInfo: {
+            /** @enum {string} */
+            via: "direct" | "vless" | "warp";
+            iface?: string;
+            /** @description can be probed right now */
+            usable: boolean;
+            /** @description why not */
+            why?: string;
+        };
+        Suggestion: {
+            domain: string;
+            /** @enum {string} */
+            state: "checking" | "ready" | "accepted" | "dismissed";
+            /**
+             * @description geoblock = the site refuses this country; sni-block / ip-block = the provider cuts it; dns-block = DNS gives a stub
+             * @enum {string}
+             */
+            verdict?: "ok" | "geoblock" | "sni-block" | "ip-block" | "dns-block" | "unknown";
+            /** @description the list to put the domain in; absent = routing wouldn't help or nothing can be said */
+            mode?: components["schemas"]["ListMode"];
+            /** @description another way that was tried and works */
+            alt?: components["schemas"]["ListMode"];
+            /** @description the site really opened through `mode`; false = a conclusion from the evidence, not tried (e.g. DPI) */
+            confirmed: boolean;
+            /** @description why */
+            reason?: string;
+            paths?: components["schemas"]["SuggestPath"][];
+            checked_at?: number;
+        };
+        SuggestOverview: {
+            items: components["schemas"]["Suggestion"][] | null;
+            paths: components["schemas"]["SuggestPathInfo"][] | null;
+            /** @description domains queued or being probed */
+            busy: number;
+            /** @description nfqws2 is wired */
+            desync: boolean;
+        };
+        SuggestSkip: {
+            domain: string;
+            reason: string;
+        };
+        SuggestQueued: {
+            queued: string[];
+            skipped: components["schemas"]["SuggestSkip"][];
+        };
         Ok: {
             status: string;
         };
@@ -2272,6 +2420,138 @@ export interface operations {
                 };
             };
             401: components["responses"]["Error"];
+        };
+    };
+    suggest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description overview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuggestOverview"];
+                };
+            };
+            404: components["responses"]["Error"];
+        };
+    };
+    suggestCheck: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    domains: string[];
+                };
+            };
+        };
+        responses: {
+            /** @description queued; poll GET /suggest */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuggestQueued"];
+                };
+            };
+            400: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    suggestScan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description queued; poll GET /suggest */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuggestQueued"];
+                };
+            };
+            404: components["responses"]["Error"];
+        };
+    };
+    suggestAccept: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                domain: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    mode?: components["schemas"]["ListMode"];
+                };
+            };
+        };
+        responses: {
+            /** @description added to the list */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Ok"];
+                };
+            };
+            400: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /** @description routing wouldn't help for this domain */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    suggestDismiss: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                domain: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description dismissed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Ok"];
+                };
+            };
+            404: components["responses"]["Error"];
         };
     };
 }
