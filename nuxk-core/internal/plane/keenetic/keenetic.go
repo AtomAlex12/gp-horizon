@@ -382,8 +382,21 @@ func (h DNSHook) Attach(ctx context.Context, addr string) error {
 	return h.B.NameServer(ctx, addr, true)
 }
 
+// Detach takes nuxk's server back. One that isn't there is as good as taken:
+// the firmware refuses with "no such server" (the boot log of 10.10.2026),
+// and the agent, believing itself attached after a reboot, asks exactly that.
+// Any other refusal is an error: the router may still be asking nuxk.
 func (h DNSHook) Detach(ctx context.Context, addr string) error {
-	return h.B.NameServer(ctx, addr, false)
+	err := h.B.NameServer(ctx, addr, false)
+	if err != nil && noSuchServer(err) {
+		return nil
+	}
+	return err
+}
+
+func noSuchServer(err error) bool {
+	m := strings.ToLower(err.Error())
+	return strings.Contains(m, "no such server") || strings.Contains(m, "no such name server")
 }
 
 // local: ip is loopback or one of this box's own addresses.
