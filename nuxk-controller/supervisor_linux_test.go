@@ -152,6 +152,24 @@ func TestSupervisorLifecycle(t *testing.T) {
 		t.Errorf("after a good install: previous %q, notice %q", p.Previous, p.Notice)
 	}
 
+	// state.json can't be written (a full disk): the install fails, says so,
+	// and v2 is back — its link, its state, running
+	stTmp := filepath.Join(data, "plugins", "demo", "state.json.tmp")
+	os.MkdirAll(filepath.Join(stTmp, "x"), 0o755)
+	h.call(supReq{Op: "install", Name: "demo", Version: "v3"})
+	p = waitPhase(t, h, "running", "v2")
+	for i := 0; i < 50 && !strings.Contains(p.Notice, "работает прежняя"); i++ {
+		time.Sleep(100 * time.Millisecond)
+		p, _ = h.Get("demo")
+	}
+	if !strings.Contains(p.Notice, "работает прежняя") || p.Version != "v2" {
+		t.Errorf("a failed state write must put v2 back: %+v", p)
+	}
+	if l, _ := os.Readlink(filepath.Join(data, "plugins", "demo", "current")); l != filepath.Join("versions", "v2") {
+		t.Errorf("current → %q", l)
+	}
+	os.RemoveAll(stTmp)
+
 	// a version that never answers is rolled back by itself
 	if _, err := h.call(supReq{Op: "install", Name: "demo", Version: "dead"}); err != nil {
 		t.Fatal(err)
