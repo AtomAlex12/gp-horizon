@@ -156,6 +156,7 @@ type Service struct {
 	suspended bool
 	fails     int  // health checks failed in a row
 	answered  bool // a check has passed since the agent started
+	owe       bool // Keenetic refused to take nuxk's DNS back: tried again every check
 	// smartRestart: when a badly answering SmartDNS was last restarted
 	smartRestart time.Time
 	lastErr      string
@@ -847,6 +848,27 @@ var slowAnswer = 1500 * time.Millisecond
 const smartRestartGap = 5 * time.Minute
 
 func (s *Service) tick(ctx context.Context) {
+	// a detach Keenetic refused comes first: protection on or off, the
+	// router mustn't keep asking a forwarder that's on its way out
+	if s.owing() {
+		if err := s.detach(ctx); err != nil {
+			s.setErr(err.Error() + " — DNS nuxk продолжает отвечать, повторю через 30 с")
+			return
+		}
+		if !s.Settings().Enabled {
+			s.stopAll(ctx)
+			s.cache.flush()
+			s.setErr("")
+			return
+		}
+		// what the refused detach was for: DNS handed back until nuxk
+		// answers well again
+		s.mu.Lock()
+		s.suspended = true
+		s.lastErr = "nuxk отвечал плохо — DNS роутера пока работает без nuxk"
+		s.mu.Unlock()
+		slog.Warn("dns: handed back to the router's own DNS until nuxk answers well again")
+	}
 	if !s.Settings().Enabled {
 		return
 	}
@@ -862,15 +884,20 @@ func (s *Service) tick(ctx context.Context) {
 			slog.Info("dns: SmartDNS configuration", "through", smartWay(s.sd.o.WarpIface()))
 		}
 	}
-	if !smart {
-		if err := s.start(); err != nil {
-			s.setErr(err.Error())
-			return
-		}
-	}
 	cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
-	err := s.healthy(cctx)
+	var err error
+	// the built-in forwarder that can't listen (its port taken) is a failed
+	// check like any other: the router mustn't keep asking an address
+	// nobody answers on
+	if !smart {
+		if serr := s.start(); serr != nil {
+			err = serr
+		}
+	}
+	if err == nil {
+		err = s.healthy(cctx)
+	}
 	if err != nil && smart {
 		s.mu.Lock()
 		again := s.fails > 0 // the second bad check in a row
@@ -892,7 +919,10 @@ func (s *Service) tick(ctx context.Context) {
 	}
 	switch {
 	case err != nil && attached && (fails >= 3 || first):
-		s.detach(ctx)
+		if derr := s.detach(ctx); derr != nil {
+			s.setErr("nuxk отвечает плохо, а отдать DNS роутеру не удалось — повторю через 30 с: " + derr.Error())
+			break
+		}
 		s.mu.Lock()
 		s.suspended = true
 		s.lastErr = "nuxk отвечает плохо или не отвечает — DNS роутера пока работает без nuxk: " + err.Error()
@@ -1031,7 +1061,9 @@ func (s *Service) attach(ctx context.Context) error {
 	s.attached = true
 	s.mu.Unlock()
 	if _, err := s.routerLookup(ctx, "cloudflare.com"); err != nil {
-		s.detach(ctx)
+		if derr := s.detach(ctx); derr != nil {
+			return fmt.Errorf("после подключения DNS роутера не ответил (%v), а отключить обратно не удалось (%v) — повторю при следующей проверке", err, derr)
+		}
 		return fmt.Errorf("после подключения DNS роутера не ответил (%v) — отключил обратно, всё как было", err)
 	}
 	slog.Info("dns: the router asks nuxk", "addr", s.o.Listen, "engine", s.engine())
@@ -1044,20 +1076,41 @@ func (s *Service) attach(ctx context.Context) error {
 	return nil
 }
 
-func (s *Service) detach(ctx context.Context) {
+// detach takes the forwarder out of the DNS proxy. Only Keenetic's yes counts
+// (the hook takes "no such server" for one): until then the router may still
+// be asking nuxk, so the forwarder stays attached and answering, and every
+// check tries again (owe).
+func (s *Service) detach(ctx context.Context) error {
 	if s.o.Hook == nil {
-		return
+		return nil
 	}
 	if err := s.o.Hook.Detach(ctx, s.o.Listen); err != nil {
-		slog.Warn("dns: detach", "err", err)
+		s.mu.Lock()
+		s.owe = true
+		s.mu.Unlock()
+		slog.Warn("dns: Keenetic didn't take nuxk's DNS back — trying again at the next check", "err", err)
+		return fmt.Errorf("Keenetic не принял отключение DNS nuxk: %w", err)
 	}
 	s.mu.Lock()
 	was := s.attached
-	s.attached = false
+	s.attached, s.owe = false, false
 	s.mu.Unlock()
 	if was {
 		slog.Info("dns: the router no longer asks nuxk", "addr", s.o.Listen)
 	}
+	return nil
+}
+
+func (s *Service) owing() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.owe
+}
+
+func (s *Service) isAttached() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.attached
 }
 
 // routerLookup asks the DNS proxy — what every device on the network gets.
@@ -1167,12 +1220,16 @@ func (s *Service) SetSettings(ctx context.Context, set Settings) (Status, error)
 	case set.Enabled && was.Enabled && set.Engine == EngineSmartDNS:
 		err = s.startSmart(ctx) // the way out, servers or cache changed: a new configuration
 	case !set.Enabled && was.Enabled:
-		s.detach(ctx)
-		s.stopAll(ctx)
-		s.cache.flush()
 		s.mu.Lock()
 		s.set.Enabled, s.suspended, s.lastErr = false, false, ""
 		s.mu.Unlock()
+		if derr := s.detach(ctx); derr != nil {
+			// Keenetic still asks nuxk: the forwarder answers until it lets go
+			err = fmt.Errorf("%v — DNS nuxk продолжает отвечать и отключится при следующей проверке", derr)
+			break
+		}
+		s.stopAll(ctx)
+		s.cache.flush()
 	}
 	if !set.Cache && was.Cache {
 		s.cache.flush()
@@ -1204,7 +1261,11 @@ func (s *Service) enable(ctx context.Context) error {
 		return fmt.Errorf("DoH-серверы не отвечают ни через один путь — роутер не трогаю: %w", err)
 	}
 	if err := s.attach(ctx); err != nil {
-		s.stopAll(ctx)
+		// still asked (Keenetic refused to take it back): keeps answering
+		// until a check gets it out
+		if !s.isAttached() {
+			s.stopAll(ctx)
+		}
 		s.setErr(err.Error())
 		return err
 	}

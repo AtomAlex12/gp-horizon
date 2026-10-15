@@ -129,6 +129,10 @@ root / nuxk-dev), на контроллере — admin из мастера. `AP
 - Один контейнер: `supervise` (root, без сети) → `serve` (nobody, без прав) + плагины
   (uid 0 только с правами из `plugin.json`, без `CAP_DAC_*`/`SYS_PTRACE`). Новых
   контейнеров под плагины не заводим.
+- Плагин стартует через `nuxk-controller plugin-exec` → `setpriv`: seccomp-фильтр
+  (`seccomp_linux.go`) запрещает переход на uid/gid 65534 — владельца `controller.json` и
+  сокета. Без него SETUID (нужен GP: nfqws2 работает от 1:3003) позволял стать `serve` и
+  прочитать токен агента. Тест — `TestIDFilter`, только под root (в контейнере на Pi).
 - Код плагина не лежит в репозитории: `install.sh` скачивает его на устройстве с его
   релизов, с проверкой хешей. Разрешённые права — `allowedCaps` в `plugin.go`.
 - **GP — по его контракту.** `nuxk-controller/plugins/gp/openapi.json` — контракт той версии

@@ -39,6 +39,9 @@ type Supervisor struct {
 	Socket     string
 	// Setpriv drops a plugin's rights (util-linux); "" when not root (tests).
 	Setpriv string
+	// Guard: this binary, whose plugin-exec sets the filter that keeps a
+	// plugin from becoming serveUID before setpriv runs; "" = without it.
+	Guard string
 	// ServeArgs start the web/API child; nil = don't (tests).
 	ServeArgs []string
 	// HealthTimeout: how long a starting plugin may take to answer (90 s).
@@ -101,6 +104,13 @@ func runSupervisor(ctx context.Context) error {
 		return err
 	}
 	s.ServeArgs = []string{self, "serve"}
+	if s.Setpriv != "" {
+		if idFilterSupported {
+			s.Guard = self
+		} else {
+			slog.Warn("plugins start without the uid filter: it isn't built for this architecture")
+		}
+	}
 	return s.Run(ctx)
 }
 
@@ -487,7 +497,11 @@ func (s *Supervisor) command(argv, caps []string) *exec.Cmd {
 			bs += ",+" + strings.ToLower(c)
 		}
 		args := append([]string{"--no-new-privs", "--clear-groups", "--inh-caps=-all", "--bounding-set=" + bs, "--"}, argv...)
-		cmd = exec.Command(s.Setpriv, args...)
+		if s.Guard != "" {
+			cmd = exec.Command(s.Guard, append([]string{"plugin-exec", "--", s.Setpriv}, args...)...)
+		} else {
+			cmd = exec.Command(s.Setpriv, args...)
+		}
 	} else {
 		cmd = exec.Command(argv[0], argv[1:]...)
 	}
@@ -600,27 +614,60 @@ func (s *Supervisor) install(p *pluginProc, version string) {
 	final := filepath.Join(versions, version)
 	s.mu.Lock()
 	old := p.st
+	wasRunning := p.stop != nil
 	s.mu.Unlock()
 	s.stopAndWait(p)
-	if old.Version == version {
+	// any step failing from here puts back what ran: its directory, the
+	// current link and state.json as they were, and starts it again
+	same := old.Version == version
+	putBack := func(err error) {
+		if same {
+			if _, serr := os.Stat(final + ".old"); serr == nil {
+				os.RemoveAll(final)
+				os.Rename(final+".old", final)
+			}
+		}
+		if old.Version != "" {
+			if perr := s.point(name, old.Version); perr != nil {
+				slog.Error("plugin install: the old version's link not restored", "plugin", name, "err", perr)
+			}
+		}
+		msg := "установка не удалась: " + err.Error()
+		if old.Version != "" {
+			msg += " — работает прежняя версия " + old.Version
+		}
+		fail(msg)
+		if wasRunning {
+			s.mu.Lock()
+			s.startLocked(p)
+			s.mu.Unlock()
+		}
+	}
+	if same {
 		os.RemoveAll(final + ".old")
-		os.Rename(final, final+".old")
-		defer os.RemoveAll(final + ".old")
+		if err := os.Rename(final, final+".old"); err != nil {
+			putBack(err)
+			return
+		}
 	}
 	if err := os.Rename(tmp, final); err != nil {
-		fail(err.Error())
+		putBack(err)
 		return
 	}
 	next := PluginState{Enabled: true, Version: version, Previous: old.Previous}
 	if old.Version != "" && old.Version != version {
 		next.Previous = old.Version
 	}
-	if err := s.point(name, version); err == nil {
-		err = s.writeState(name, next)
-	}
-	if err != nil {
-		fail(err.Error())
+	if err := s.point(name, version); err != nil {
+		putBack(err)
 		return
+	}
+	if err := s.writeState(name, next); err != nil {
+		putBack(err)
+		return
+	}
+	if same {
+		os.RemoveAll(final + ".old")
 	}
 	s.pruneVersions(name, next)
 	s.mu.Lock()

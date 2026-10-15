@@ -60,3 +60,34 @@ func TestNameServer(t *testing.T) {
 		t.Fatalf("a refused one reached the router: %q", cmds)
 	}
 }
+
+// Taking back a server that isn't there is done; any other refusal isn't —
+// the router may still be asking nuxk.
+func TestDetachAnswers(t *testing.T) {
+	var answer string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(answer))
+	}))
+	defer srv.Close()
+	b := New(srv.URL)
+	b.Addrs = func() ([]net.Addr, error) {
+		return []net.Addr{&net.IPNet{IP: net.ParseIP("192.168.2.1"), Mask: net.CIDRMask(24, 32)}}, nil
+	}
+	h := DNSHook{B: b}
+	ctx := context.Background()
+	for _, c := range []struct {
+		answer string
+		ok     bool
+	}{
+		{`{"parse":{"status":[{"status":"message","code":"0","message":"ok"}]}}`, true},
+		{`{"parse":{"status":[{"status":"error","code":"7405600","message":"no such server: 192.168.2.1:53053."}]}}`, true},
+		{`{"parse":{"status":[{"status":"error","code":"7405600","message":"no such name server"}]}}`, true},
+		{`{"parse":{"status":[{"status":"error","code":"7208970","message":"system is busy"}]}}`, false},
+		{`not json`, false},
+	} {
+		answer = c.answer
+		if err := h.Detach(ctx, "192.168.2.1:53053"); (err == nil) != c.ok {
+			t.Errorf("%s: err %v", c.answer, err)
+		}
+	}
+}

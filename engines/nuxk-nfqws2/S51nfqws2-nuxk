@@ -164,12 +164,19 @@ custom_current() {
 }
 
 # swap_lists — the staged lists become the live nuxk-sN.list; the old ones
-# wait in .nuxk-old until the change is confirmed (or restore_lists).
+# wait in .nuxk-old until the change is confirmed (or restore_lists). A move
+# that fails stops it: the caller puts the old ones back.
 swap_lists() {
     rm -rf "$OLD"
-    mkdir -p "$OLD"
-    for f in "$LISTS"/nuxk-s*.list; do [ -e "$f" ] && mv "$f" "$OLD/"; done
-    for f in "$STAGE"/nuxk-s*.list; do [ -e "$f" ] && mv "$f" "$LISTS/"; done
+    mkdir -p "$OLD" || return 1
+    for f in "$LISTS"/nuxk-s*.list; do
+        [ -e "$f" ] || continue
+        mv "$f" "$OLD/" || return 1
+    done
+    for f in "$STAGE"/nuxk-s*.list; do
+        [ -e "$f" ] || continue
+        mv "$f" "$LISTS/" || return 1
+    done
     rm -rf "$STAGE"
 }
 
@@ -185,7 +192,9 @@ restore_lists() {
 # Same args, other domains: the lists are swapped and nfqws2 re-reads them
 # (reload). New args: the conf is copied to nfqws2.conf.nuxk-bak (and once,
 # the untouched original to .nuxk-orig), nfqws2 restarts, and if it doesn't
-# come back both the conf and the lists are put back.
+# come back both the conf and the lists are put back. Every step is checked
+# (there's no set -e here): a full flash or a failed reload puts everything
+# back and says so — never "applied" over the old config.
 apply_strategies() {
     MARK="$R/opt/etc/nfqws2/.nuxk-custom"
     STAGE="$LISTS/.nuxk-stage"
@@ -193,7 +202,7 @@ apply_strategies() {
     # die inside $(…) only leaves the subshell: carry its refusal out
     cur_before=$(custom_current) || exit 1
     rm -rf "$STAGE"
-    mkdir -p "$STAGE"
+    mkdir -p "$STAGE" || die "не создался $STAGE (место на флеше?)"
     new=""
     open=""
     cr=$(printf '\r')
@@ -203,7 +212,7 @@ apply_strategies() {
             if [ "$line" = . ]; then
                 open=""
             elif [ -n "$line" ]; then
-                printf '%s\n' "$line" >>"$STAGE/$open"
+                printf '%s\n' "$line" >>"$STAGE/$open" || { rm -rf "$STAGE"; die "список $open не записался (место на флеше?)"; }
             fi
             continue
         fi
@@ -211,7 +220,7 @@ apply_strategies() {
         "list "*)
             open=${line#list }
             case "$open" in nuxk-s[0-9]*.list) ;; *) rm -rf "$STAGE"; die "bad list name: $open" ;; esac
-            : >"$STAGE/$open"
+            : >"$STAGE/$open" || { rm -rf "$STAGE"; die "список $open не записался (место на флеше?)"; }
             ;;
         custom | "custom "*)
             new=${line#custom}
@@ -221,20 +230,46 @@ apply_strategies() {
     done
     [ -z "$open" ] || { rm -rf "$STAGE"; die "list $open: no closing line '.'"; }
 
-    swap_lists
+    swap_lists || {
+        restore_lists
+        rm -rf "$STAGE"
+        die "списки стратегий не встали (место на флеше?) — вернул прежние"
+    }
     if [ "$new" = "$cur_before" ]; then
+        # the old lists stay until nfqws2 has re-read the new ones
+        if is_running && ! "$STOCK" reload >/dev/null 2>&1; then
+            restore_lists
+            die "nfqws2 не перечитал списки — вернул прежние"
+        fi
         rm -rf "$OLD"
-        is_running && "$STOCK" reload >/dev/null 2>&1
         echo "lists updated"
         return 0
     fi
 
-    [ -e "$CONF.nuxk-orig" ] || cp -p "$CONF" "$CONF.nuxk-orig"
-    cp -p "$CONF" "$CONF.nuxk-bak"
-    awk -v v="$new" '/^NFQWS_ARGS_CUSTOM=/ { print "NFQWS_ARGS_CUSTOM=\"" v "\""; next } { print }' "$CONF.nuxk-bak" >"$CONF.nuxk-tmp" &&
-        mv "$CONF.nuxk-tmp" "$CONF"
+    [ -e "$CONF.nuxk-orig" ] || cp -p "$CONF" "$CONF.nuxk-orig" || {
+        restore_lists
+        die "не записалась копия $CONF (место на флеше?) — ничего не менял"
+    }
+    cp -p "$CONF" "$CONF.nuxk-bak" || {
+        restore_lists
+        die "не записалась копия $CONF (место на флеше?) — ничего не менял"
+    }
+    # the new conf replaces the old one only whole: every line there, the new
+    # NFQWS_ARGS_CUSTOM among them
+    if ! awk -v v="$new" '/^NFQWS_ARGS_CUSTOM=/ { print "NFQWS_ARGS_CUSTOM=\"" v "\""; next } { print }' "$CONF.nuxk-bak" >"$CONF.nuxk-tmp" ||
+        [ "$(wc -l <"$CONF.nuxk-tmp")" != "$(wc -l <"$CONF.nuxk-bak")" ] ||
+        ! grep -qxF "NFQWS_ARGS_CUSTOM=\"$new\"" "$CONF.nuxk-tmp" ||
+        ! mv "$CONF.nuxk-tmp" "$CONF"; then
+        rm -rf "$CONF.nuxk-tmp" 2>/dev/null
+        restore_lists
+        die "$CONF не записался (место на флеше?) — ничего не менял"
+    fi
     prev=$(cat "$MARK" 2>/dev/null || true)
-    printf '%s\n' "$new" >"$MARK"
+    printf '%s\n' "$new" >"$MARK" || {
+        cp -p "$CONF.nuxk-bak" "$CONF"
+        restore_lists
+        die "не записалась отметка $MARK (место на флеше?) — вернул прежний $CONF"
+    }
 
     "$STOCK" restart >/dev/null 2>&1 || true
     sleep "${NUXK_SETTLE:-2}"

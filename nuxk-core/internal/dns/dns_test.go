@@ -119,6 +119,8 @@ type fakeHook struct {
 	calls []string
 	err   error
 	onAtt func()
+	// refuse: so many Detach calls fail first, as a busy firmware answers
+	refuse int
 }
 
 func (h *fakeHook) Attach(_ context.Context, addr string) error {
@@ -136,7 +138,29 @@ func (h *fakeHook) Detach(_ context.Context, addr string) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.calls = append(h.calls, "detach "+addr)
+	if h.refuse > 0 {
+		h.refuse--
+		return errors.New("RCI: system is busy (7208970)")
+	}
 	return nil
+}
+
+func (h *fakeHook) setRefuse(n int) {
+	h.mu.Lock()
+	h.refuse = n
+	h.mu.Unlock()
+}
+
+func (h *fakeHook) count(call string) int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	n := 0
+	for _, c := range h.calls {
+		if strings.HasPrefix(c, call) {
+			n++
+		}
+	}
+	return n
 }
 
 func (h *fakeHook) log() string {
@@ -448,6 +472,84 @@ func TestStartHandsBackAtOnce(t *testing.T) {
 	s2.tick(ctx)
 	if st := s2.Status(); !st.Attached || !st.Consulted || h2.log() != "attach "+addr2 {
 		t.Fatalf("started with the internet: %+v, hook %q", st, h2.log())
+	}
+}
+
+// Keenetic refuses to take nuxk's DNS back: nothing pretends it did — the
+// forwarder stays attached and answering, and the next check tries again.
+func TestDetachRefusedIsRetried(t *testing.T) {
+	srv, _ := dohServer(t)
+	var down, dead atomic.Bool
+	h := &fakeHook{}
+	addr := freeAddr(t)
+	proxy := fakeProxy(t, addr, &dead)
+	s := newService(t, srv, Options{Listen: addr, Hook: h, RouterDNS: proxy, Transport: func(Path) http.RoundTripper {
+		return rtFunc(func(r *http.Request) (*http.Response, error) {
+			if down.Load() {
+				return nil, errors.New("down")
+			}
+			return srv.Client().Transport.RoundTrip(r)
+		})
+	}})
+	ctx := context.Background()
+	if _, err := s.SetSettings(ctx, Settings{Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	down.Store(true)
+	h.setRefuse(1)
+	for i := 0; i < 3; i++ {
+		s.tick(ctx)
+	}
+	if st := s.Status(); !st.Attached || st.Suspended || !st.Running || !strings.Contains(st.Error, "не удалось") {
+		t.Fatalf("refused: %+v", st)
+	}
+	s.tick(ctx) // Keenetic answers now
+	if st := s.Status(); st.Attached || !st.Suspended || h.count("detach") != 2 {
+		t.Fatalf("taken back: %+v, %q", st, h.log())
+	}
+}
+
+// The built-in forwarder can't listen (its port is taken): the router isn't
+// left asking an address nobody answers on.
+func TestStartFailureHandsBack(t *testing.T) {
+	srv, _ := dohServer(t)
+	h := &fakeHook{}
+	addr := freeAddr(t)
+	busy, err := net.ListenPacket("udp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer busy.Close()
+	s := newService(t, srv, Options{Listen: addr, Hook: h, RouterDNS: addr})
+	s.set.Enabled = true
+	s.resume() // after a reboot: Keenetic may already be asking
+	s.tick(context.Background())
+	if st := s.Status(); st.Attached || !st.Suspended || h.log() != "detach "+addr {
+		t.Fatalf("port taken: %+v, hook %q", st, h.log())
+	}
+}
+
+// Turned off while Keenetic refuses to let go: the forwarder keeps answering
+// until a check gets it out, then stops.
+func TestDisableWhileRefused(t *testing.T) {
+	srv, _ := dohServer(t)
+	var dead atomic.Bool
+	h := &fakeHook{}
+	addr := freeAddr(t)
+	proxy := fakeProxy(t, addr, &dead)
+	s := newService(t, srv, Options{Listen: addr, Hook: h, RouterDNS: proxy})
+	ctx := context.Background()
+	if _, err := s.SetSettings(ctx, Settings{Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	h.setRefuse(1)
+	st, err := s.SetSettings(ctx, Settings{Enabled: false})
+	if err == nil || st.Settings.Enabled || !st.Running || !st.Attached {
+		t.Fatalf("refused: %v %+v", err, st)
+	}
+	s.tick(ctx)
+	if st := s.Status(); st.Running || st.Attached || st.Error != "" {
+		t.Fatalf("taken back at the next check: %+v", st)
 	}
 }
 
