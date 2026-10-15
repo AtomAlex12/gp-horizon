@@ -11,6 +11,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -30,6 +31,10 @@ type GPClient struct {
 	Store *Store
 	Host  *PluginHost
 	HTTP  *http.Client
+	// Stream: archives, exports and events — no limit on the whole exchange
+	// (a 30 s one cut a slow download short), only on GP starting to answer;
+	// the browser leaving ends it
+	Stream *http.Client
 
 	mu      sync.Mutex
 	token   string
@@ -38,7 +43,18 @@ type GPClient struct {
 
 // NewGPClient: base "" = the plugin's own listen address.
 func NewGPClient(base string, st *Store, host *PluginHost) *GPClient {
-	return &GPClient{Base: base, Store: st, Host: host, HTTP: &http.Client{Timeout: 30 * time.Second}}
+	return &GPClient{Base: base, Store: st, Host: host,
+		HTTP:   &http.Client{Timeout: 30 * time.Second},
+		Stream: &http.Client{Transport: &http.Transport{ResponseHeaderTimeout: 30 * time.Second}},
+	}
+}
+
+// gpStreams: calls whose answer (or request) may be big or long.
+var gpStreams = map[string]bool{
+	"backups/download-archive":   true,
+	"backups/upload":             true,
+	"strategy-candidates/export": true,
+	"events":                     true,
 }
 
 type gpBearer struct {
@@ -94,6 +110,22 @@ func (g *GPClient) Token(ctx context.Context) (string, error) {
 			return g.keep(b), nil
 		}
 	}
+	// a switch cut short — its answer lost, or the store refused the new
+	// password after GP took it: GP may have that one
+	next := g.Store.PluginNext("gp")
+	if next != "" {
+		b, code, err := g.login(ctx, next)
+		if err != nil {
+			return "", fmt.Errorf("GP не отвечает: %w", err)
+		}
+		if code == http.StatusOK {
+			if err := g.Store.SetPluginSecret("gp", next); err != nil {
+				slog.Warn("gp: the new password works but isn't stored yet", "err", err)
+			}
+			slog.Info("gp: password switch completed")
+			return g.keep(b), nil
+		}
+	}
 	// a fresh GP (or its data was reset): take over from the factory password
 	b, code, err := g.login(ctx, "admin")
 	if err != nil {
@@ -102,16 +134,25 @@ func (g *GPClient) Token(ctx context.Context) (string, error) {
 	if code != http.StatusOK {
 		return "", errGPAuth
 	}
-	pw := randomPassword()
+	// the new password is kept before GP is asked to take it: whatever
+	// happens after, the controller knows it
+	pw := next
+	if pw == "" {
+		pw = randomPassword()
+		if err := g.Store.SetPluginNext("gp", pw); err != nil {
+			return "", fmt.Errorf("не сохранил новый пароль GP — заводской не меняю: %w", err)
+		}
+	}
 	var nb gpBearer
 	code, err = g.post(ctx, "/api/auth/change-password", b.Token, map[string]string{"current_password": "admin", "new_password": pw}, &nb)
 	if err != nil || code != http.StatusOK {
 		return "", fmt.Errorf("GP: не удалось сменить заводской пароль (HTTP %d): %v", code, err)
 	}
 	if err := g.Store.SetPluginSecret("gp", pw); err != nil {
-		return "", err
+		slog.Warn("gp: factory password replaced, the new one kept as pending — stored at the next login", "err", err)
+	} else {
+		slog.Info("gp: factory password replaced")
 	}
-	slog.Info("gp: factory password replaced")
 	return g.keep(nb), nil
 }
 
@@ -169,10 +210,17 @@ var gpAllowed = map[string]bool{
 }
 
 const (
-	gpBodyMax   = 1 << 20  // a JSON request
-	gpUploadMax = 32 << 20 // a backup archive (backups/upload); secure() lets it through
-	gpReplyMax  = 64 << 20 // an answer: a backup archive or every candidate as NDJSON
+	gpBodyMax = 1 << 20 // a JSON request
+	// a backup archive (backups/upload; secure() lets it through) — as big
+	// as one that can be downloaded, so whatever comes down goes back up
+	gpUploadMax = 64 << 20
 )
+
+// gpReplyMax: an answer, a backup archive or every candidate as NDJSON (a
+// variable for the tests). Bigger is refused before anything is sent; one
+// that turns out bigger, or breaks off, breaks the browser's download too —
+// never a cut file that looks whole.
+var gpReplyMax int64 = 64 << 20
 
 // handle proxies /ctl/v1/gp/<path> to GP's /api/core/<path> (or /api/<path>
 // for service/…).
@@ -230,7 +278,11 @@ func (g *GPClient) handle(w http.ResponseWriter, r *http.Request) {
 		if len(body) > 0 {
 			req.Header.Set("Content-Type", ctype)
 		}
-		resp, err := g.HTTP.Do(req)
+		hc := g.HTTP
+		if gpStreams[path] && g.Stream != nil {
+			hc = g.Stream
+		}
+		resp, err := hc.Do(req)
 		if err != nil {
 			writeErr(w, http.StatusBadGateway, "gp_unreachable", "GP не отвечает: "+err.Error())
 			return
@@ -241,13 +293,57 @@ func (g *GPClient) handle(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		defer resp.Body.Close()
+		if resp.ContentLength > gpReplyMax {
+			writeErr(w, http.StatusBadGateway, "too_large", fmt.Sprintf("ответ GP больше %d МБ — панель его не передаёт", gpReplyMax>>20))
+			return
+		}
 		w.Header().Set("Content-Type", strings.TrimSpace(resp.Header.Get("Content-Type")))
 		if cd := resp.Header.Get("Content-Disposition"); cd != "" {
 			w.Header().Set("Content-Disposition", cd) // a backup archive, the NDJSON export
 		}
+		if resp.ContentLength >= 0 {
+			// the browser knows how much to expect: a cut answer is a failed download
+			w.Header().Set("Content-Length", strconv.FormatInt(resp.ContentLength, 10))
+		}
 		w.Header().Set("Cache-Control", "no-store")
 		w.WriteHeader(resp.StatusCode)
-		io.Copy(w, io.LimitReader(resp.Body, gpReplyMax))
+		var n int64
+		if path == "events" {
+			n, err = copyFlushing(w, resp.Body)
+		} else {
+			n, err = io.Copy(w, io.LimitReader(resp.Body, gpReplyMax+1))
+		}
+		if err != nil || (path != "events" && n > gpReplyMax) {
+			// the status is gone already: only breaking the connection tells
+			// the browser this answer isn't whole
+			slog.Warn("gp: answer cut short — connection to the browser broken", "path", path, "bytes", n, "err", err)
+			panic(http.ErrAbortHandler)
+		}
 		return
+	}
+}
+
+// copyFlushing passes an event stream on as it comes.
+func copyFlushing(w http.ResponseWriter, r io.Reader) (int64, error) {
+	f, _ := w.(http.Flusher)
+	buf := make([]byte, 4096)
+	var n int64
+	for {
+		k, err := r.Read(buf)
+		if k > 0 {
+			if _, werr := w.Write(buf[:k]); werr != nil {
+				return n, nil // the browser left
+			}
+			n += int64(k)
+			if f != nil {
+				f.Flush()
+			}
+		}
+		if err == io.EOF {
+			return n, nil
+		}
+		if err != nil {
+			return n, err
+		}
 	}
 }

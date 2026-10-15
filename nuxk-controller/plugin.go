@@ -22,7 +22,10 @@ import (
 //	│                           the only one that can read controller.json
 //	└ plugins/<name>/current    uid 0 with a bounding set of just the listed
 //	                            capabilities and no CAP_DAC_* / CAP_SYS_PTRACE:
-//	                            root that can't read files it doesn't own
+//	                            root that can't read files it doesn't own —
+//	                            and, through plugin-exec's seccomp filter,
+//	                            can't become uid/gid 65534 to own them
+//	                            (SETUID alone would allow it: seccomp_linux.go)
 //
 // A plugin ships as a recipe (/usr/share/nuxk/plugins/<name>/plugin.json +
 // install.sh) inside the controller image; installing a version runs the

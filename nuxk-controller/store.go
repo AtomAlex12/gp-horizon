@@ -26,6 +26,10 @@ type Settings struct {
 
 type PluginSecret struct {
 	Password string `json:"password"`
+	// Next: a password the plugin is being switched to, kept before asking
+	// for the switch — if the answer is lost or Password can't be written
+	// after, the next login still knows it
+	Next string `json:"next,omitempty"`
 }
 
 // Admin: PBKDF2-SHA256 (stdlib since Go 1.24) — the password itself is never stored.
@@ -156,6 +160,36 @@ func (st *Store) PluginSecret(name string) string {
 	return st.s.Plugins[name].Password
 }
 
+// PluginNext: the password a cut-short switch was going to (see Next).
+func (st *Store) PluginNext(name string) string {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	return st.s.Plugins[name].Next
+}
+
+// SetPluginNext keeps the password a switch is about to set, beside the
+// current one.
+func (st *Store) SetPluginNext(name, password string) error {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	prev, had := st.s.Plugins[name]
+	if st.s.Plugins == nil {
+		st.s.Plugins = map[string]PluginSecret{}
+	}
+	st.s.Plugins[name] = PluginSecret{Password: prev.Password, Next: password}
+	if err := st.save(); err != nil {
+		if had {
+			st.s.Plugins[name] = prev
+		} else {
+			delete(st.s.Plugins, name)
+		}
+		return err
+	}
+	return nil
+}
+
+// SetPluginSecret stores the password the plugin now has; a switch to it is
+// done, so Next goes.
 func (st *Store) SetPluginSecret(name, password string) error {
 	st.mu.Lock()
 	defer st.mu.Unlock()

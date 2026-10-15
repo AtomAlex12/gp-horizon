@@ -520,13 +520,82 @@ func TestUptimeFromProc(t *testing.T) {
 // strategyEngine is a fakeEngine that takes strategies.
 type strategyEngine struct {
 	*fakeEngine
-	got [][]engine.Strategy
-	err error
+	mu    sync.Mutex
+	got   [][]engine.Strategy
+	err   error
+	delay time.Duration
 }
 
 func (s *strategyEngine) ApplyStrategies(_ context.Context, ss []engine.Strategy) error {
+	time.Sleep(s.delay)
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.got = append(s.got, ss)
 	return s.err
+}
+
+func (s *strategyEngine) last() []engine.Strategy {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.got[len(s.got)-1]
+}
+
+// The flash refuses the write after the router took the new set: the stored
+// one goes back on, so the router and the stored state agree.
+func TestSetStrategiesNotStoredRollsBack(t *testing.T) {
+	dir := t.TempDir()
+	st, err := state.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := &strategyEngine{fakeEngine: &fakeEngine{kind: engine.KindNfqws2, running: true}}
+	reg := engine.NewRegistry()
+	reg.Add(n)
+	c := NewController(reg, st, NewHub("test"), "test")
+	ctx := context.Background()
+	a := engine.Strategy{ID: "a", Protocol: "tls", Domains: []string{"a.com"}, Args: "--lua-desync=multisplit:pos=1"}
+	b := engine.Strategy{ID: "b", Protocol: "tls", Domains: []string{"b.com"}, Args: "--lua-desync=multisplit:pos=2"}
+	if err := c.SetStrategies(ctx, engine.KindNfqws2, []engine.Strategy{a}); err != nil {
+		t.Fatal(err)
+	}
+	// the next write fails: its temp file can't be created
+	if err := os.Mkdir(filepath.Join(dir, "engines", "nfqws2.json.tmp"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	err = c.SetStrategies(ctx, engine.KindNfqws2, []engine.Strategy{b})
+	if err == nil || !strings.Contains(err.Error(), "вернул прежние") {
+		t.Fatalf("err %v", err)
+	}
+	if got := n.last(); len(got) != 1 || got[0].ID != "a" {
+		t.Fatalf("on the router: %+v", got)
+	}
+	if d, _ := st.LoadDesired(engine.KindNfqws2); len(d.Strategies) != 1 || d.Strategies[0].ID != "a" {
+		t.Fatalf("stored: %+v", d.Strategies)
+	}
+}
+
+// Two tabs apply different sets at once: whichever comes last is both on the
+// router and stored.
+func TestSetStrategiesOneAtATime(t *testing.T) {
+	n := &strategyEngine{fakeEngine: &fakeEngine{kind: engine.KindNfqws2, running: true}, delay: 30 * time.Millisecond}
+	c, st := newTestController(t, n)
+	ctx := context.Background()
+	var wg sync.WaitGroup
+	for _, id := range []string{"a", "b", "c", "d"} {
+		wg.Add(1)
+		go func(id string) {
+			defer wg.Done()
+			s := engine.Strategy{ID: id, Protocol: "tls", Domains: []string{id + ".com"}, Args: "--lua-desync=multisplit:pos=1"}
+			if err := c.SetStrategies(ctx, engine.KindNfqws2, []engine.Strategy{s}); err != nil {
+				t.Error(err)
+			}
+		}(id)
+	}
+	wg.Wait()
+	d, _ := st.LoadDesired(engine.KindNfqws2)
+	if got := n.last(); len(d.Strategies) != 1 || got[0].ID != d.Strategies[0].ID {
+		t.Fatalf("router %q, stored %q", got[0].ID, d.Strategies[0].ID)
+	}
 }
 
 func TestSetStrategies(t *testing.T) {

@@ -1,10 +1,15 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -18,6 +23,10 @@ type fakeGP struct {
 	tokens   map[string]bool
 	n        int
 	calls    []string
+	// onChange runs when GP takes a new password; lose: GP takes it but the
+	// answer never arrives whole
+	onChange func()
+	lose     bool
 }
 
 func (f *fakeGP) handler() http.Handler {
@@ -51,10 +60,28 @@ func (f *fakeGP) handler() http.Handler {
 		}
 		f.password = c.New
 		f.tokens = map[string]bool{} // GP rotates tokens on a password change
+		if f.onChange != nil {
+			f.onChange()
+		}
+		if f.lose {
+			w.WriteHeader(502)
+			return
+		}
 		f.n++
 		tok := fmt.Sprintf("tok%d", f.n)
 		f.tokens[tok] = true
 		fmt.Fprintf(w, `{"access_token":%q,"token_type":"bearer","expires_in":86400}`, tok)
+	})
+	// size bytes; chunked: without a length, as a stream
+	mux.HandleFunc("GET /api/core/strategy-candidates/export", func(w http.ResponseWriter, r *http.Request) {
+		n, _ := strconv.Atoi(r.URL.Query().Get("size"))
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		if r.URL.Query().Get("chunked") == "" {
+			w.Header().Set("Content-Length", strconv.Itoa(n))
+		} else {
+			w.(http.Flusher).Flush()
+		}
+		w.Write([]byte(strings.Repeat("x", n)))
 	})
 	mux.HandleFunc("GET /api/core/backups/download-archive", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/zip")
@@ -98,6 +125,98 @@ func readAll(r *http.Request) string {
 		if err != nil {
 			return b.String()
 		}
+	}
+}
+
+func gpRunning(t *testing.T) string {
+	return fakeSupervisor(t, func(r supReq) supResp {
+		return supResp{OK: true, Plugins: []PluginInfo{{Name: "gp", Phase: "running", Listen: "127.0.0.1:1"}}}
+	})
+}
+
+// GP takes the new password, then the store refuses to write it: it was
+// kept as pending first, so the next login (after a restart too) finds it.
+func TestGPPasswordSwitchStoreFails(t *testing.T) {
+	gp := &fakeGP{password: "admin", tokens: map[string]bool{}}
+	srv := httptest.NewServer(gp.handler())
+	defer srv.Close()
+	dir := t.TempDir()
+	st, _ := OpenStore(dir)
+	block := filepath.Join(dir, "controller.json.tmp")
+	gp.onChange = func() { os.MkdirAll(filepath.Join(block, "x"), 0o755) }
+	c := NewGPClient(srv.URL, st, NewPluginHost(gpRunning(t)))
+	if _, err := c.Token(context.Background()); err != nil {
+		t.Fatalf("GP took the password, the token works: %v", err)
+	}
+	if st.PluginSecret("gp") != "" || st.PluginNext("gp") != gp.password {
+		t.Fatalf("pending %q, stored %q, GP has %q", st.PluginNext("gp"), st.PluginSecret("gp"), gp.password)
+	}
+	os.RemoveAll(block)
+	gp.onChange = nil
+	st2, _ := OpenStore(dir) // the controller restarted
+	c2 := NewGPClient(srv.URL, st2, NewPluginHost(gpRunning(t)))
+	if _, err := c2.Token(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if st2.PluginSecret("gp") != gp.password || st2.PluginNext("gp") != "" {
+		t.Fatalf("switch not completed: stored %q, pending %q", st2.PluginSecret("gp"), st2.PluginNext("gp"))
+	}
+}
+
+// GP takes the new password but the answer is lost: the next login uses the
+// kept one instead of locking the controller out.
+func TestGPPasswordSwitchAnswerLost(t *testing.T) {
+	gp := &fakeGP{password: "admin", tokens: map[string]bool{}, lose: true}
+	srv := httptest.NewServer(gp.handler())
+	defer srv.Close()
+	st, _ := OpenStore(t.TempDir())
+	c := NewGPClient(srv.URL, st, NewPluginHost(gpRunning(t)))
+	if _, err := c.Token(context.Background()); err == nil {
+		t.Fatal("a lost answer is an error this time")
+	}
+	gp.mu.Lock()
+	gp.lose = false
+	gp.mu.Unlock()
+	if _, err := c.Token(context.Background()); err != nil {
+		t.Fatalf("locked out: %v", err)
+	}
+	if st.PluginSecret("gp") != gp.password {
+		t.Fatalf("stored %q, GP has %q", st.PluginSecret("gp"), gp.password)
+	}
+}
+
+// An answer bigger than the limit never reaches the browser as a whole-
+// looking file: refused before it's sent, or the connection breaks.
+func TestGPProxyLimits(t *testing.T) {
+	old := gpReplyMax
+	gpReplyMax = 1024
+	t.Cleanup(func() { gpReplyMax = old })
+	gp := &fakeGP{password: "admin", tokens: map[string]bool{}}
+	srv := httptest.NewServer(gp.handler())
+	defer srv.Close()
+	st, _ := OpenStore(t.TempDir())
+	c := NewGPClient(srv.URL, st, NewPluginHost(gpRunning(t)))
+	mux := http.NewServeMux()
+	mux.HandleFunc("/ctl/v1/gp/{path...}", c.handle)
+	front := httptest.NewServer(mux)
+	defer front.Close()
+	get := func(q string) (*http.Response, []byte, error) {
+		resp, err := http.Get(front.URL + "/ctl/v1/gp/strategy-candidates/export?" + q)
+		if err != nil {
+			return nil, nil, err
+		}
+		defer resp.Body.Close()
+		b, err := io.ReadAll(resp.Body)
+		return resp, b, err
+	}
+	if resp, b, err := get("size=1000"); err != nil || resp.StatusCode != 200 || len(b) != 1000 || resp.ContentLength != 1000 {
+		t.Fatalf("within the limit: %v %v %d", err, resp, len(b))
+	}
+	if resp, b, err := get("size=2048"); err != nil || resp.StatusCode != 502 || !strings.Contains(string(b), "больше") {
+		t.Fatalf("known too big: %v %v %s", err, resp, b)
+	}
+	if _, b, err := get("size=2048&chunked=1"); err == nil {
+		t.Fatalf("a stream past the limit must break the download, got %d bytes whole", len(b))
 	}
 }
 
