@@ -61,6 +61,7 @@ echo 'NFQWS_ARGS_CUSTOM=""' >>"$C"
 cat >"$ROOT/opt/etc/init.d/S51nfqws2" <<EOF
 #!/bin/sh
 echo "stock \$1" >>"$ROOT/stock.log"
+if [ "\$1" = reload ] && [ -e "$ROOT/reload-fails" ]; then exit 1; fi
 if [ "\$1" = restart ]; then
   if grep -q 'lua-desync=broken' "$C"; then rm -f "$ROOT/opt/var/run/nfqws2.pid"; else echo "$SLEEPER" >"$ROOT/opt/var/run/nfqws2.pid"; fi
 fi
@@ -79,6 +80,25 @@ check "other lines kept" "$(grep -c '^NFQUEUE_NUM=300' "$C")" "1"
 check "nfqws2 restarted" "$(tail -n 1 "$ROOT/stock.log")" "stock restart"
 check "same args: lists only" "$(printf '%s\n' "$spec" | sh "$SHIM" apply-strategies)" "lists updated"
 check "lists-only change reloads" "$(tail -n 1 "$ROOT/stock.log")" "stock reload"
+
+# nfqws2 didn't re-read the lists: the old ones come back, and it says so
+touch "$ROOT/reload-fails"
+if printf 'list nuxk-s1.list\nother.com\n.\ncustom %s\n' "$good" | sh "$SHIM" apply-strategies 2>"$ROOT/err"; then
+    check "failed reload fails" "exit 0" "exit 1"
+fi
+check "failed reload reported" "$(grep -c 'не перечитал' "$ROOT/err")" "1"
+check "lists back after a failed reload" "$(tr '\n' , <"$L/nuxk-s1.list")" "rutracker.org,browserleaks.com,"
+rm -f "$ROOT/reload-fails"
+
+# the conf can't be written (as on a full flash): nothing changes, and no "applied"
+mkdir "$C.nuxk-tmp"
+if printf 'list nuxk-s1.list\nnew.com\n.\ncustom %s\n' "$good --out-range=-d10" | sh "$SHIM" apply-strategies 2>"$ROOT/err"; then
+    check "unwritable conf fails" "exit 0" "exit 1"
+fi
+check "unwritable conf reported" "$(grep -c 'не записался' "$ROOT/err")" "1"
+check "conf unchanged" "$(grep '^NFQWS_ARGS_CUSTOM=' "$C")" "NFQWS_ARGS_CUSTOM=\"$good\""
+check "lists unchanged" "$(tr '\n' , <"$L/nuxk-s1.list")" "rutracker.org,browserleaks.com,"
+rm -rf "$C.nuxk-tmp"
 
 if printf 'list nuxk-s1.list\na.com\n.\ncustom --lua-desync=broken\n' | sh "$SHIM" apply-strategies 2>"$ROOT/err"; then
     check "broken strategy fails" "exit 0" "exit 1"

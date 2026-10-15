@@ -61,6 +61,10 @@ type Controller struct {
 
 	kick chan struct{}
 
+	// strategies: one SetStrategies at a time — the engine's own lock covers
+	// applying, not "read, apply, store" as a whole (two tabs at once)
+	strategies sync.Mutex
+
 	mu       sync.Mutex
 	last     map[engine.Kind]EngineState
 	backoff  map[string]*backoff
@@ -286,8 +290,12 @@ func (c *Controller) refreshDue(ctx context.Context, now time.Time) {
 // SetStrategies replaces the engine's nuxk strategies (nfqws2: per-domain
 // profiles in NFQWS_ARGS_CUSTOM); an empty set removes them. The engine
 // restarts to take them and restores its old config if it won't start —
-// then the error says so and nothing is stored.
+// then the error says so and nothing is stored. Applied but not stored (the
+// flash refused the write): the stored set goes back on, so the router and
+// what the agent restores after a restart stay the same.
 func (c *Controller) SetStrategies(ctx context.Context, k engine.Kind, ss []engine.Strategy) error {
+	c.strategies.Lock()
+	defer c.strategies.Unlock()
 	e, ok := c.Reg.Get(k)
 	if !ok {
 		return ErrEngineNotFound
@@ -323,9 +331,19 @@ func (c *Controller) SetStrategies(ctx context.Context, k engine.Kind, ss []engi
 	}
 	c.setLastErr(k, nil)
 	slog.Info("strategies applied", "engine", k, "count", len(ss))
-	_, err := c.Store.UpdateDesired(k, func(d *state.Desired) { d.Strategies = ss })
+	if _, err := c.Store.UpdateDesired(k, func(d *state.Desired) { d.Strategies = ss }); err != nil {
+		slog.Warn("strategies applied but not stored — putting the stored ones back", "engine", k, "err", err)
+		if rerr := se.ApplyStrategies(ctx, old.Strategies); rerr != nil {
+			err = fmt.Errorf("стратегии применены, но не сохранились (%v), а вернуть прежние не удалось: %w", err, rerr)
+		} else {
+			err = fmt.Errorf("стратегии не сохранились на флеше (%v) — на роутере вернул прежние", err)
+		}
+		c.setLastErr(k, err)
+		c.Kick()
+		return err
+	}
 	c.Kick()
-	return err
+	return nil
 }
 
 // Strategies returns the engine's stored nuxk strategies.
