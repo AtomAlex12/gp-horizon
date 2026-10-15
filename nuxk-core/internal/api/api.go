@@ -18,6 +18,7 @@ import (
 	"nuxk.dev/horizon/core/internal/logbuf"
 	"nuxk.dev/horizon/core/internal/node"
 	"nuxk.dev/horizon/core/internal/plane"
+	"nuxk.dev/horizon/core/internal/suggest"
 )
 
 type Deps struct {
@@ -27,6 +28,7 @@ type Deps struct {
 	Hub     *core.Hub
 	Ctl     *core.Controller // every state change goes through it — see core.Controller
 	Plane   *plane.Manager   // nil when PLANE is off
+	Suggest *suggest.Service // route suggestions; nil = off
 	WebRoot string           // static nuxk-web build; "" = API only
 	Token   string           // "" = allow localhost only
 	Node    *node.Node       // /info, /metrics
@@ -61,6 +63,11 @@ var Routes = []Route{
 	{"GET /api/v1/plane/lists", false, func(d Deps) http.HandlerFunc { return d.handlePlaneLists }},
 	{"PUT /api/v1/plane/lists", false, func(d Deps) http.HandlerFunc { return d.handlePlaneSetLists }},
 	{"POST /api/v1/plane/import", false, func(d Deps) http.HandlerFunc { return d.handlePlaneImport }},
+	{"GET /api/v1/suggest", false, func(d Deps) http.HandlerFunc { return d.handleSuggest }},
+	{"POST /api/v1/suggest/check", false, func(d Deps) http.HandlerFunc { return d.handleSuggestCheck }},
+	{"POST /api/v1/suggest/scan", false, func(d Deps) http.HandlerFunc { return d.handleSuggestScan }},
+	{"POST /api/v1/suggest/{domain}/accept", false, func(d Deps) http.HandlerFunc { return d.handleSuggestAccept }},
+	{"DELETE /api/v1/suggest/{domain}", false, func(d Deps) http.HandlerFunc { return d.handleSuggestDismiss }},
 }
 
 // maxBody bounds every request body (the largest is a full set of lists).

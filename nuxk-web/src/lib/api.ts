@@ -25,6 +25,9 @@ export type PlaneList = S['PlaneList'];
 export type PlaneOp = S['PlaneOp'];
 export type ListMode = S['ListMode'];
 export type OnDown = S['OnDown'];
+export type Suggestion = S['Suggestion'];
+export type SuggestOverview = S['SuggestOverview'];
+export type SuggestQueued = S['SuggestQueued'];
 
 // nuxk-controller's own API (not part of the agent contract).
 export interface AgentState {
@@ -125,6 +128,13 @@ export const api = {
   planeLists: () => req<PlaneDesired>('GET', v1('/plane/lists')),
   setPlaneLists: (d: PlaneDesired) => req<S['Ok']>('PUT', v1('/plane/lists'), d),
   planeImport: (groups: string[], mode: ListMode) => req<PlaneDesired>('POST', v1('/plane/import'), { groups, mode }),
+
+  suggest: () => req<SuggestOverview>('GET', v1('/suggest')),
+  suggestCheck: (domains: string[]) => req<SuggestQueued>('POST', v1('/suggest/check'), { domains }),
+  suggestScan: () => req<SuggestQueued>('POST', v1('/suggest/scan')),
+  suggestAccept: (domain: string, mode?: ListMode) =>
+    req<S['Ok']>('POST', v1(`/suggest/${encodeURIComponent(domain)}/accept`), mode ? { mode } : undefined),
+  suggestDismiss: (domain: string) => req<S['Ok']>('DELETE', v1(`/suggest/${encodeURIComponent(domain)}`)),
 
   // controller only (404 when the UI is served by the agent itself)
   agent: () => req<AgentState>('GET', '/ctl/v1/agent'),

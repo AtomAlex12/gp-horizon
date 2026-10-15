@@ -6,6 +6,7 @@
   import Connections from './lib/views/Connections.svelte';
   import EngineView from './lib/views/EngineView.svelte';
   import Lists from './lib/views/Lists.svelte';
+  import Decisions from './lib/views/Decisions.svelte';
   import Logs from './lib/views/Logs.svelte';
   import System from './lib/views/System.svelte';
   import Soon from './lib/views/Soon.svelte';
@@ -43,7 +44,6 @@
     runs: 'Прогоны стратегий nfqws2 по вашим доменам: какая стратегия пробивает DPI вашего провайдера.',
     results: 'Результаты прогонов: какие стратегии сработали, с какой задержкой, для каких доменов.',
     strategies: 'Библиотека стратегий nfqws2 (zapret2) с описанием, откуда каждая и когда помогает.',
-    decisions: 'Автоматический выбор пути для домена — десинк, туннель или напрямую — с объяснением, почему.',
     dns: 'DNS на роутере обслуживает сам Keenetic (списки работают через его маршрутизацию по доменам). Экран настроек DNS — позже.',
   };
 
@@ -183,6 +183,8 @@
           <Connections />
         {:else if tab === 'lists'}
           <Lists />
+        {:else if tab === 'decisions'}
+          <Decisions />
         {:else if tab === 'logs'}
           <Logs />
         {:else if tab === 'system'}

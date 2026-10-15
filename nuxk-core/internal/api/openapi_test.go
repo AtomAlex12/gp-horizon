@@ -13,6 +13,7 @@ import (
 	"nuxk.dev/horizon/core/internal/logbuf"
 	"nuxk.dev/horizon/core/internal/node"
 	"nuxk.dev/horizon/core/internal/plane"
+	"nuxk.dev/horizon/core/internal/suggest"
 )
 
 func readSpec(t *testing.T) string {
@@ -59,22 +60,28 @@ func TestOpenAPIMatchesRoutes(t *testing.T) {
 func TestOpenAPISchemasCoverJSONFields(t *testing.T) {
 	spec := readSpec(t)
 	for schema, v := range map[string]any{
-		"NodeInfo":      node.Info{},
-		"Metrics":       node.Metrics{},
-		"IfaceCounters": node.Iface{},
-		"NFQueue":       node.Queue{},
-		"LogEntry":      logbuf.Entry{},
-		"EngineInfo":    engine.Info{},
-		"Probe":         engine.Probe{},
-		"Routing":       engine.Routing{},
-		"PlaneStatus":   plane.Status{},
-		"PlaneDesired":  plane.Desired{},
-		"PlaneList":     plane.List{},
-		"PlaneGroup":    plane.Group{},
-		"PlaneOp":       plane.Op{},
-		"PlaneConflict": plane.Conflict{},
-		"PlaneForeign":  plane.Foreign{},
-		"Status":        core.Snapshot{},
+		"NodeInfo":        node.Info{},
+		"Metrics":         node.Metrics{},
+		"IfaceCounters":   node.Iface{},
+		"NFQueue":         node.Queue{},
+		"LogEntry":        logbuf.Entry{},
+		"EngineInfo":      engine.Info{},
+		"Probe":           engine.Probe{},
+		"Routing":         engine.Routing{},
+		"PlaneStatus":     plane.Status{},
+		"PlaneDesired":    plane.Desired{},
+		"PlaneList":       plane.List{},
+		"PlaneGroup":      plane.Group{},
+		"PlaneOp":         plane.Op{},
+		"PlaneConflict":   plane.Conflict{},
+		"PlaneForeign":    plane.Foreign{},
+		"Status":          core.Snapshot{},
+		"Suggestion":      suggest.Item{},
+		"SuggestPath":     suggest.Path{},
+		"SuggestPathInfo": suggest.PathInfo{},
+		"SuggestOverview": suggest.Overview{},
+		"SuggestSkip":     suggest.Skip{},
+		"SuggestQueued":   suggest.Queued{},
 	} {
 		block := schemaBlock(t, spec, schema)
 		typ := reflect.TypeOf(v)
