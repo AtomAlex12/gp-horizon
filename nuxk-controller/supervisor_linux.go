@@ -39,6 +39,9 @@ type Supervisor struct {
 	Socket     string
 	// Setpriv drops a plugin's rights (util-linux); "" when not root (tests).
 	Setpriv string
+	// Guard: this binary, whose plugin-exec sets the filter that keeps a
+	// plugin from becoming serveUID before setpriv runs; "" = without it.
+	Guard string
 	// ServeArgs start the web/API child; nil = don't (tests).
 	ServeArgs []string
 	// HealthTimeout: how long a starting plugin may take to answer (90 s).
@@ -101,6 +104,13 @@ func runSupervisor(ctx context.Context) error {
 		return err
 	}
 	s.ServeArgs = []string{self, "serve"}
+	if s.Setpriv != "" {
+		if idFilterSupported {
+			s.Guard = self
+		} else {
+			slog.Warn("plugins start without the uid filter: it isn't built for this architecture")
+		}
+	}
 	return s.Run(ctx)
 }
 
@@ -487,7 +497,11 @@ func (s *Supervisor) command(argv, caps []string) *exec.Cmd {
 			bs += ",+" + strings.ToLower(c)
 		}
 		args := append([]string{"--no-new-privs", "--clear-groups", "--inh-caps=-all", "--bounding-set=" + bs, "--"}, argv...)
-		cmd = exec.Command(s.Setpriv, args...)
+		if s.Guard != "" {
+			cmd = exec.Command(s.Guard, append([]string{"plugin-exec", "--", s.Setpriv}, args...)...)
+		} else {
+			cmd = exec.Command(s.Setpriv, args...)
+		}
 	} else {
 		cmd = exec.Command(argv[0], argv[1:]...)
 	}

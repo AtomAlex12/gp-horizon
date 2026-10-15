@@ -12,3 +12,7 @@ import (
 func runSupervisor(context.Context) error {
 	return errors.New("supervise: plugins run only on Linux (the Pi's container)")
 }
+
+func pluginExec([]string) error {
+	return errors.New("plugins run only on Linux (the Pi's container)")
+}

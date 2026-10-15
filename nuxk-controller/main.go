@@ -68,6 +68,11 @@ func main() {
 			os.Exit(1)
 		}
 		return
+	case "plugin-exec":
+		// the supervisor starts a plugin this way: see seccomp_linux.go
+		err := pluginExec(flag.Args()[1:])
+		fmt.Fprintln(os.Stderr, "plugin-exec:", err)
+		os.Exit(1)
 	case "", "serve":
 		setupLog("controller")
 	default:
