@@ -1,95 +1,139 @@
 <script lang="ts">
-  // «Решения»: why a site doesn't open and which way out works. nuxk probes the
-  // domain itself (directly, then through the tunnels) and only suggests —
-  // "Принять" adds the domain to the «Подбор» list, nothing happens on its own.
-  import { api, type ListMode, type SuggestOverview, type Suggestion } from '../api';
+  // «Решения»: why a site doesn't open and which way out works. nuxk measures
+  // the domain itself (directly, then through the tunnels) and only advises —
+  // "Принять" adds the domain to a «Подбор» list; the router changes only when
+  // routing apply is on. A site that refuses Russia needs VLESS; one the
+  // provider cuts gets DPI, then WARP, then a strategy search on the Pi.
+  import { api, HttpError, type ListMode, type SuggestOverview, type Suggestion, type SuggestQueued } from '../api';
   import { status } from '../status.svelte';
   import { planeOf, modeTitle, ago, splitDomains } from '../ui';
+  import SuggestItem from '../decisions/SuggestItem.svelte';
+  import SearchAdvice from '../decisions/SearchAdvice.svelte';
+  import SettingsCard from '../decisions/SettingsCard.svelte';
+  import { verdictOf } from '../decisions/text';
+  import { untrack } from 'svelte';
 
   const plane = $derived(planeOf(status.data));
 
   let ov = $state<SuggestOverview | null>(null);
   let err = $state('');
   let input = $state('');
-  let busyBtn = $state(false);
+  let sending = $state(false);
+  let pending = $state(''); // the domain an accept/dismiss is in flight for
   let msg = $state<{ ok: boolean; text: string } | null>(null);
-  let open = $state<Record<string, boolean>>({});
 
   async function load() {
     try {
       ov = await api.suggest();
       err = '';
     } catch (e) {
-      err = e instanceof Error ? e.message : String(e);
+      err =
+        e instanceof HttpError && e.status === 404
+          ? 'Агент на роутере не знает этого раздела — обновите nuxk-core («Система» → обновление).'
+          : e instanceof Error
+            ? e.message
+            : String(e);
     }
   }
 
-  // quick while something is being probed, lazy otherwise
+  // every 3 s while something is being measured, every 30 s otherwise;
+  // refresh() also restarts the clock after an action
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let alive = false;
+  async function refresh() {
+    clearTimeout(timer);
+    await load();
+    if (!alive) return;
+    clearTimeout(timer);
+    timer = setTimeout(refresh, (ov?.busy ?? 0) > 0 ? 3000 : 30000);
+  }
   $effect(() => {
-    void load();
-    let t: ReturnType<typeof setTimeout>;
-    const tick = async () => {
-      await load();
-      t = setTimeout(tick, ov && ov.busy > 0 ? 1500 : 15000);
+    alive = true;
+    untrack(() => void refresh());
+    return () => {
+      alive = false;
+      clearTimeout(timer);
     };
-    t = setTimeout(tick, 1500);
-    return () => clearTimeout(t);
   });
 
-  function queuedText(q: { queued: string[]; skipped: { domain: string; reason: string }[] }) {
+  function queuedText(q: SuggestQueued) {
     const parts: string[] = [];
     if (q.queued.length) parts.push(`Проверяю: ${q.queued.join(', ')}.`);
     for (const s of q.skipped) parts.push(`${s.domain} — пропущен: ${s.reason}.`);
     return parts.join(' ') || 'Нечего проверять.';
   }
 
-  async function run(f: () => Promise<{ queued: string[]; skipped: { domain: string; reason: string }[] }>) {
-    busyBtn = true;
+  async function queue(f: () => Promise<SuggestQueued>) {
+    sending = true;
     msg = null;
     try {
       const q = await f();
       msg = { ok: q.queued.length > 0, text: queuedText(q) };
-      await load();
+      await refresh();
+      return true;
     } catch (e) {
       msg = { ok: false, text: e instanceof Error ? e.message : String(e) };
+      return false;
     } finally {
-      busyBtn = false;
+      sending = false;
     }
   }
 
-  const check = () => {
+  async function check() {
     const domains = splitDomains(input);
     if (!domains.length) return;
-    void run(() => api.suggestCheck(domains)).then(() => (input = ''));
-  };
+    if (domains.length > 20) {
+      msg = { ok: false, text: `За раз — не больше 20 доменов, а введено ${domains.length}.` };
+      return;
+    }
+    if (await queue(() => api.suggestCheck(domains))) input = '';
+  }
+  const recheck = (d: string) => queue(() => api.suggestCheck([d]));
 
-  async function act(f: () => Promise<unknown>, done: string) {
+  async function act(domain: string, f: () => Promise<unknown>, done: string) {
+    pending = domain;
     msg = null;
     try {
       await f();
       msg = { ok: true, text: done };
     } catch (e) {
       msg = { ok: false, text: e instanceof Error ? e.message : String(e) };
+    } finally {
+      pending = '';
     }
-    await load();
+    await refresh();
   }
 
   const accept = (s: Suggestion, mode: ListMode) =>
-    act(() => api.suggestAccept(s.domain, mode), `${s.domain} добавлен в список «Подбор: ${modeTitle(mode)}».`);
-  const dismiss = (s: Suggestion) => act(() => api.suggestDismiss(s.domain), `${s.domain} скрыт.`);
+    act(
+      s.domain,
+      () => api.suggestAccept(s.domain, mode),
+      `${s.domain} добавлен в список «Подбор: ${modeTitle(mode)}». ` +
+        (plane?.apply
+          ? 'Роутер применит его за пару минут, после этого nuxk проверит, открывается ли сайт.'
+          : 'Роутер не изменится, пока маршрутизация в режиме плана.'),
+    );
+  const dismiss = (s: Suggestion) =>
+    act(
+      s.domain,
+      () => api.suggestDismiss(s.domain),
+      s.state === 'accepted' ? `${s.domain} убран из «Решений»; в списке он остался.` : `${s.domain} скрыт.`,
+    );
 
-  const VERDICT: Record<string, { label: string; cls: string }> = {
-    ok: { label: 'открывается', cls: 'ok' },
-    geoblock: { label: 'отказ по стране', cls: 'deg' },
-    'sni-block': { label: 'DPI по имени (SNI)', cls: 'deg' },
-    'ip-block': { label: 'блокировка по IP', cls: 'deg' },
-    'dns-block': { label: 'подмена DNS', cls: 'deg' },
-    unknown: { label: 'неясно', cls: '' },
-  };
-  const PATH_TITLE: Record<string, string> = { direct: 'напрямую', vless: 'VLESS', warp: 'WARP', dns: 'DNS' };
+  const items = $derived(ov?.items ?? []);
+  // what's being measured first, then what can be acted on, then the rest
+  const rank = (s: Suggestion) => (s.state === 'checking' ? 0 : s.mode ? 1 : 2);
+  const active = $derived(
+    items.filter((i) => i.state === 'checking' || (i.state === 'ready' && !i.hidden)).sort((a, b) => rank(a) - rank(b)),
+  );
+  const accepted = $derived(items.filter((i) => i.state === 'accepted'));
+  const dismissed = $derived(items.filter((i) => i.state === 'dismissed'));
+  const quiet = $derived(items.filter((i) => i.state === 'ready' && i.hidden));
+  const searching = $derived(items.filter((i) => i.next === 'search' && i.state !== 'dismissed'));
 
-  const active = $derived((ov?.items ?? []).filter((i) => i.state !== 'dismissed'));
-  const dismissed = $derived((ov?.items ?? []).filter((i) => i.state === 'dismissed'));
+  const WAY_TITLE: Record<string, string> = { direct: 'напрямую', warp: 'WARP', vless: 'VLESS' };
+  const tunnels = $derived((ov?.paths ?? []).filter((p) => p.via !== 'direct'));
+  const direct = $derived((ov?.paths ?? []).find((p) => p.via === 'direct'));
   const vlessUsable = $derived(ov?.paths?.find((p) => p.via === 'vless')?.usable ?? false);
 </script>
 
@@ -99,12 +143,15 @@
   <p class="muted">Загрузка…</p>
 {:else}
   <section class="card">
-    <div class="card-head"><h2>Почему не открывается сайт</h2></div>
+    <div class="card-head">
+      <h2>Почему не открывается сайт</h2>
+      <span class="spacer"></span>
+      {#if ov.busy > 0}<span class="chip acc"><span class="dot ok pulse"></span>проверяется: {ov.busy}</span>{/if}
+    </div>
     <p class="hint">
-      nuxk заходит на сайт сам: сначала напрямую, и только если не вышло — через туннели. По тому, где именно
-      обрывается связь, он отличает блокировку провайдером (DPI, IP) от отказа самого сайта по стране (например,
-      ChatGPT или Claude). Сам ничего не меняет: вы решаете, принять ли предложение. Домены, которые уже есть в ваших
-      списках, не проверяются.
+      nuxk заходит на сайт сам: сначала напрямую, и только если не вышло — через туннели, по несколько попыток на путь. По
+      тому, где обрывается связь, он отличает блокировку провайдером (DPI, адрес, подмена DNS, заморозка) от отказа самого
+      сайта работать с Россией. Домены, которые уже есть в ваших списках, не проверяются.
     </p>
     <div class="row add">
       <input
@@ -114,187 +161,249 @@
         aria-label="Домены для проверки"
         onkeydown={(e) => e.key === 'Enter' && check()}
       />
-      <button onclick={check} disabled={busyBtn || !input.trim()}>Проверить</button>
-      <button class="ghost" onclick={() => run(api.suggestScan)} disabled={busyBtn} title="ChatGPT, OpenAI, Claude, Anthropic, Perplexity, Netflix, Spotify">
+      <button onclick={check} disabled={sending || !input.trim()}>Проверить</button>
+      <button
+        class="ghost"
+        onclick={() => queue(api.suggestScan)}
+        disabled={sending}
+        title="ChatGPT, OpenAI, Claude, Anthropic, Perplexity, Gemini, Copilot, Netflix, Spotify, Udemy"
+      >
         Проверить популярные сервисы
       </button>
     </div>
     {#if msg}<p class={msg.ok ? 'ok-text' : 'err-text'}>{msg.text}</p>{/if}
-  </section>
 
-  <section class="card">
-    <div class="card-head">
-      <h2>Чем проверяется</h2>
-      <span class="spacer"></span>
-      {#if ov.busy > 0}<span class="chip acc"><span class="dot ok pulse"></span>проверяется: {ov.busy}</span>{/if}
-    </div>
-    <div class="row paths">
-      {#each ov.paths ?? [] as p (p.via)}
-        <span class="chip {p.usable ? 'ok' : 'deg'}" title={p.why ?? ''}>
-          {PATH_TITLE[p.via] ?? p.via}{p.iface ? ` · ${p.iface}` : ''}{p.usable ? '' : ` — ${p.why}`}
+    <p class="advise">
+      <b>Только советует.</b> Сам nuxk ничего не меняет: «Принять» добавляет домен в список «Подбор» (раздел
+      <a href="#lists">«Списки»</a>).
+      {#if !plane}
+        <span class="warnline">Маршрутизация выключена (<span class="mono">PLANE=</span> в nuxk.conf) — предложения можно смотреть, принять нельзя.</span>
+      {:else if !plane.apply}
+        Маршрутизация в режиме плана: роутер не изменится, пока не включено <span class="mono">PLANE_APPLY="1"</span>.
+      {:else}
+        Применение включено: принятый домен попадёт на роутер, и nuxk проверит, открывается ли сайт.
+      {/if}
+    </p>
+
+    <div class="ways" aria-label="Чем проверяется">
+      <span class="lbl">Пути</span>
+      <span class="chip {direct && !direct.usable ? 'deg' : 'ok'}" title={direct?.iface ?? ''}>
+        напрямую{direct && !direct.usable && direct.why ? ` — ${direct.why}` : ''}
+      </span>
+      {#if ov.desync}<span class="chip ok" title="nfqws2 подключён">DPI (nfqws2)</span>{/if}
+      {#each tunnels as p (p.via)}
+        <span class="chip {p.usable ? 'ok' : 'deg'}" title={p.iface ? `интерфейс ${p.iface}` : ''}>
+          {WAY_TITLE[p.via] ?? p.via}{p.usable ? '' : ` — ${p.why ?? 'недоступен'}`}
         </span>
       {/each}
-      <span class="chip {ov.desync ? 'ok' : ''}">DPI (nfqws2): {ov.desync ? 'подключён' : 'нет'}</span>
     </div>
     {#if !vlessUsable}
       <p class="hint warnline">
-        ⚠ VLESS-туннель сейчас недоступен для проверки: вывод «отказ по стране» будет непроверенным — сайт не удалось
-        открыть через туннель для сравнения.
+        VLESS сейчас проверить нельзя: вывод «сайт блокирует Россию» будет непроверенным — открыть сайт через туннель для
+        сравнения нечем.
       </p>
     {/if}
-    {#if !plane}
-      <p class="hint warnline">⚠ Плоскость маршрутизации выключена (<span class="mono">PLANE=</span>): предложения можно смотреть, принять нельзя.</p>
-    {:else if !plane.apply}
-      <p class="hint">
-        Плоскость в режиме плана: «Принять» добавит домен в список, но роутер не изменится, пока не включено
-        <span class="mono">PLANE_APPLY="1"</span>.
-      </p>
-    {/if}
+
+    <div class="ways">
+      <span class="lbl">Поиск по DNS</span>
+      {#if ov.discovering}
+        <span class="chip ok">идёт</span>
+        <span class="hint">nuxk сам проверяет имена, о которых часто спрашивает роутер, и показывает здесь те, с которыми что-то не так.</span>
+      {:else if ov.settings.discover}
+        <span class="chip deg">не работает</span>
+        <span class="hint">Новые сайты находятся по журналу защищённого DNS — включите его в <a href="#dns">«DNS»</a>.</span>
+      {:else}
+        <span class="chip">выключен</span>
+        <span class="hint">включается в «Настройках проверки» ниже</span>
+      {/if}
+    </div>
   </section>
+
+  {#if searching.length > 1}
+    <section class="card">
+      <div class="card-head"><h2>Нужен подбор стратегии</h2><span class="chip mono">{searching.length}</span></div>
+      <p class="hint mono doms">{searching.map((s) => s.domain).join(', ')}</p>
+      <SearchAdvice domains={searching.map((s) => s.domain)} />
+    </section>
+  {/if}
 
   <section class="card">
     <div class="card-head">
       <h2>Предложения</h2>
-      <span class="spacer"></span>
       <span class="chip mono">{active.length}</span>
     </div>
     {#if active.length === 0}
-      <p class="hint">Пока пусто. Введите домен выше или проверьте популярные сервисы — результат появится здесь.</p>
+      <p class="empty">Пока пусто. Введите домен выше или проверьте популярные сервисы — результат появится здесь.</p>
     {:else}
-      <div class="tbl-wrap">
-        <table>
-          <thead><tr><th>домен</th><th>что с ним</th><th>решение</th><th></th></tr></thead>
-          <tbody>
-            {#each active as s (s.domain)}
-              {@const v = VERDICT[s.verdict ?? 'unknown'] ?? VERDICT.unknown}
-              <tr>
-                <td class="mono dom">{s.domain}</td>
-                <td>
-                  {#if s.state === 'checking'}
-                    <span class="chip acc"><span class="dot ok pulse"></span>проверяется…</span>
-                  {:else}
-                    <span class="chip {v.cls}">{v.label}</span>
-                    <p class="reason">{s.reason}</p>
-                    {#if (s.paths ?? []).length}
-                      <button class="linkbtn" onclick={() => (open[s.domain] = !open[s.domain])}>
-                        {open[s.domain] ? 'скрыть подробности' : 'подробности'}
-                      </button>
-                      {#if open[s.domain]}
-                        <ul class="paths-list">
-                          {#each s.paths ?? [] as p}
-                            <li><b>{PATH_TITLE[p.via] ?? p.via}:</b> {p.result}{p.ms ? ` · ${p.ms} мс` : ''}</li>
-                          {/each}
-                        </ul>
-                        <p class="hint">проверено {ago(s.checked_at)}</p>
-                      {/if}
-                    {/if}
-                  {/if}
-                </td>
-                <td>
-                  {#if s.state === 'accepted'}
-                    <span class="chip acc">принято</span>
-                  {:else if s.mode}
-                    <span class="chip mono">{modeTitle(s.mode)}</span>
-                    <span class="hint">{s.confirmed ? 'проверено: сайт открылся' : 'не проверено'}</span>
-                  {:else if s.state === 'ready'}
-                    <span class="hint">маршрут не поможет</span>
-                  {/if}
-                </td>
-                <td class="actions">
-                  {#if s.state === 'ready'}
-                    <div class="row">
-                      {#if s.mode}
-                        <button class="sm" onclick={() => accept(s, s.mode as ListMode)} disabled={!plane}>
-                          Принять · {modeTitle(s.mode)}
-                        </button>
-                      {/if}
-                      {#if s.alt}
-                        <button class="ghost sm" onclick={() => accept(s, s.alt as ListMode)} disabled={!plane}>
-                          {modeTitle(s.alt)} вместо
-                        </button>
-                      {/if}
-                      <button class="ghost sm" onclick={() => dismiss(s)} aria-label="Скрыть предложение для {s.domain}">Скрыть</button>
-                    </div>
-                  {:else if s.state === 'accepted'}
-                    <button class="ghost sm" onclick={() => dismiss(s)} aria-label="Убрать {s.domain} из списка предложений">Убрать</button>
-                  {/if}
-                </td>
-              </tr>
-            {/each}
-          </tbody>
-        </table>
+      <div class="items">
+        {#each active as s (s.domain)}
+          <SuggestItem
+            {s}
+            canAccept={!!plane}
+            pending={pending === s.domain}
+            onaccept={(m) => accept(s, m)}
+            ondismiss={() => dismiss(s)}
+          />
+        {/each}
       </div>
     {/if}
 
-    {#if dismissed.length}
-      <details class="dismissed">
-        <summary>Скрытые ({dismissed.length})</summary>
+    {#if quiet.length}
+      <details class="fold">
+        <summary>Проверено автоматически, всё в порядке: {quiet.length}</summary>
         <p class="hint">
-          Популярные сервисы из проверки не возвращаются сюда сами. Чтобы проверить снова, введите домен выше.
+          Найдены по журналу DNS и открываются напрямую — делать ничего не нужно. Снова проверятся не раньше чем через неделю.
         </p>
-        <p class="mono small">{dismissed.map((d) => d.domain).join(', ')}</p>
+        <ul class="mini">
+          {#each quiet as s (s.domain)}
+            <li><span class="mono">{s.domain}</span><span class="hint">{ago(s.checked_at)}</span></li>
+          {/each}
+        </ul>
+      </details>
+    {/if}
+
+    {#if dismissed.length}
+      <details class="fold">
+        <summary>Скрытые: {dismissed.length}</summary>
+        <p class="hint">Сами сюда не возвращаются и не перепроверяются. Проверить снова — кнопкой рядом с доменом.</p>
+        <ul class="mini">
+          {#each dismissed as s (s.domain)}
+            {@const v = verdictOf(s)}
+            <li>
+              <span class="mono">{s.domain}</span>
+              {#if s.verdict && s.verdict !== 'unknown'}<span class="chip {v.cls}">{v.label}</span>{/if}
+              {#if s.accepted}<span class="hint">был принят: {modeTitle(s.accepted)}</span>{/if}
+              <span class="spacer"></span>
+              <button class="ghost sm" onclick={() => recheck(s.domain)} disabled={sending}>Проверить снова</button>
+            </li>
+          {/each}
+        </ul>
       </details>
     {/if}
   </section>
+
+  {#if accepted.length}
+    <section class="card">
+      <div class="card-head">
+        <h2>Принятые</h2>
+        <span class="chip mono">{accepted.length}</span>
+        <span class="spacer"></span>
+        <span class="hint">проверяются через ~2 мин после применения, потом раз в сутки</span>
+      </div>
+      <div class="items">
+        {#each accepted as s (s.domain)}
+          <SuggestItem
+            {s}
+            canAccept={!!plane}
+            pending={pending === s.domain}
+            onaccept={(m) => accept(s, m)}
+            ondismiss={() => dismiss(s)}
+          />
+        {/each}
+      </div>
+    </section>
+  {/if}
+
+  <SettingsCard
+    settings={ov.settings}
+    reference={ov.reference}
+    discovering={ov.discovering}
+    onsaved={(s) => ov && (ov.settings = s)}
+  />
+
+  {#if err}<p class="err-text">Нет связи с агентом: {err} Показаны последние данные.</p>{/if}
+  <p class="hint legend">
+    Как читать выводы: «сайт блокирует Россию» — отказывает сам
+    сайт, поможет только VLESS (WARP выходит в Москве); «блок по имени», «блок по адресу», «заморозка» — режет провайдер:
+    сначала DPI, потом WARP, потом подбор стратегии; «подмена DNS» — нужен защищённый DNS, маршрут не поможет.
+  </p>
 {/if}
 
 <style>
   .add {
     margin-top: 10px;
-    flex-wrap: wrap;
   }
   .add input {
     flex: 1;
-    min-width: 220px;
+    min-width: 200px;
   }
-  .paths {
-    gap: 6px;
-    flex-wrap: wrap;
-  }
-  .dom {
-    white-space: nowrap;
-    vertical-align: top;
-  }
-  td {
-    vertical-align: top;
-  }
-  .reason {
-    margin: 6px 0 2px;
-    max-width: 520px;
-    color: var(--ink-2);
-    font-size: 13px;
-  }
-  .paths-list {
-    margin: 6px 0 2px;
-    padding-left: 18px;
+  .advise {
+    margin: 12px 0 0;
     font-size: 12.5px;
     color: var(--ink-2);
   }
-  .actions {
-    min-width: 170px;
+  .advise a,
+  .ways a {
+    color: var(--accent);
+  }
+  .ways {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-top: 10px;
+  }
+  /* a way's "why not" can be long: let it wrap on a phone */
+  .ways .chip {
+    white-space: normal;
+  }
+  .lbl {
+    min-width: 92px;
+    color: var(--muted);
+    font-size: 12px;
   }
   .warnline {
     color: var(--degraded);
+  }
+  p.warnline {
     margin-top: 6px;
   }
-  .small {
-    font-size: 11.5px;
-    color: var(--muted);
+  .items {
+    display: flex;
+    flex-direction: column;
   }
-  .linkbtn {
-    background: none;
-    border: 0;
-    padding: 0;
-    color: var(--accent);
-    font-size: 12px;
-    text-decoration: underline;
+  .doms {
+    margin-bottom: 10px;
+    overflow-wrap: anywhere;
   }
-  .dismissed {
+  .fold {
     margin-top: 12px;
+    border-top: 1px solid var(--line);
+    padding-top: 10px;
   }
-  .dismissed summary {
+  .fold summary {
     cursor: pointer;
     font-size: 13px;
     color: var(--muted);
+  }
+  .fold > .hint {
+    margin: 6px 0;
+  }
+  .mini {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .mini li {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    font-size: 13px;
+    padding: 3px 0;
+  }
+  .mini .mono {
+    overflow-wrap: anywhere;
+  }
+  .legend {
+    max-width: 860px;
+  }
+  @media (max-width: 480px) {
+    .lbl {
+      width: 100%;
+    }
   }
 </style>
