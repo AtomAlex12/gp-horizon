@@ -28,6 +28,7 @@ func TestSuggestAPI(t *testing.T) {
 	defer open.Close()
 	p := &probe.Prober{
 		Timeout:  2 * time.Second,
+		NoFreeze: true,
 		LookupIP: func(context.Context, string) ([]net.IP, error) { return []net.IP{net.ParseIP("203.0.113.7")}, nil },
 		Avail:    func(v probe.Via) string { return map[probe.Via]string{probe.ViaWarp: "выключен"}[v] },
 		Dial: func(ctx context.Context, via probe.Via, _ string) (net.Conn, error) {
@@ -64,8 +65,18 @@ func TestSuggestAPI(t *testing.T) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	if len(ov.Items) != 1 || ov.Items[0].Mode != "vless" || !ov.Items[0].Confirmed {
+	if len(ov.Items) != 1 || ov.Items[0].Mode != "vless" || !ov.Items[0].Confirmed || ov.Items[0].Source != suggest.SourceUser {
 		t.Fatalf("overview: %+v", ov)
+	}
+	if ov.Settings != suggest.DefaultSettings() || ov.Reference.Domain != "ya.ru" || ov.Reference.At == 0 {
+		t.Errorf("settings/reference: %+v %+v", ov.Settings, ov.Reference)
+	}
+	if w := do(h, "PUT", "/api/v1/suggest/settings", `{"ttfb_max_ms":10}`, lo, ""); w.Code != 400 || !strings.Contains(w.Body.String(), "bad_settings") {
+		t.Errorf("bad settings -> %d %s", w.Code, w.Body)
+	}
+	if w := do(h, "PUT", "/api/v1/suggest/settings", `{"kbps_share":50,"discover":false}`, lo, ""); w.Code != 200 ||
+		!strings.Contains(w.Body.String(), `"kbps_share":50`) || !strings.Contains(w.Body.String(), `"ttfb_max_ms":5000`) || !strings.Contains(w.Body.String(), `"discover":false`) {
+		t.Errorf("settings -> %d %s", w.Code, w.Body)
 	}
 	if w := do(h, "POST", "/api/v1/suggest/chatgpt.com/accept", `{"mode":"warp"}`, lo, ""); w.Code != 400 {
 		t.Errorf("unverified mode -> %d %s", w.Code, w.Body)

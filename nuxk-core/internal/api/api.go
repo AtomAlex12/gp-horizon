@@ -98,6 +98,7 @@ var Routes = []Route{
 	{"GET /api/v1/suggest", false, func(d Deps) http.HandlerFunc { return d.handleSuggest }},
 	{"POST /api/v1/suggest/check", false, func(d Deps) http.HandlerFunc { return d.handleSuggestCheck }},
 	{"POST /api/v1/suggest/scan", false, func(d Deps) http.HandlerFunc { return d.handleSuggestScan }},
+	{"PUT /api/v1/suggest/settings", false, func(d Deps) http.HandlerFunc { return d.handleSuggestSettings }},
 	{"POST /api/v1/suggest/{domain}/accept", false, func(d Deps) http.HandlerFunc { return d.handleSuggestAccept }},
 	{"DELETE /api/v1/suggest/{domain}", false, func(d Deps) http.HandlerFunc { return d.handleSuggestDismiss }},
 }
