@@ -266,8 +266,11 @@ func main() {
 	nd.Clock = node.NewClock()
 	go nd.Clock.Run(ctx)
 
-	// Route suggestions: probes on request only — nothing runs in the background
-	// until the user asks (or scans), and nothing changes routing on its own.
+	// Route suggestions: advise only — nothing changes routing on its own. In
+	// the background they only measure: an accepted way after acceptance and
+	// daily, and (with protected DNS on) one new site from the router's DNS
+	// questions every few minutes. Probes use the defaults: 5 tries a way,
+	// direct marked past nfqws2 (the provider's path as it is).
 	var rt suggest.Router
 	if pm != nil {
 		rt = pm
@@ -275,6 +278,7 @@ func main() {
 	sg := suggest.New(&probe.Prober{Ifaces: map[probe.Via]string{
 		probe.ViaVless: strings.ToLower(cfg.Plane.IfaceVless), probe.ViaWarp: strings.ToLower(cfg.Plane.IfaceWarp),
 	}}, st, rt, func() bool { _, ok := reg.Get(engine.KindNfqws2); return ok })
+	sg.DNS = dnsSvc
 	go sg.Run(ctx)
 
 	srv := &http.Server{

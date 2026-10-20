@@ -1,13 +1,13 @@
-// Package suggest turns probe results into route suggestions the user accepts
-// or dismisses. It never changes routing on its own: Accept is the only way a
+// Package suggest measures how a domain opens and recommends a way out the
+// user accepts or dismisses. It advises only: Accept is the only way a
 // suggestion reaches the plane, and the plane's own apply switch (PLANE_APPLY)
-// still decides whether the router is touched.
+// still decides whether the router is touched. Rechecks and discovery only
+// measure.
 package suggest
 
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"sort"
 	"sync"
@@ -21,15 +21,26 @@ import (
 // Russian addresses. A list of names to look at, not a claim about any of them.
 var Catalog = []string{
 	"chatgpt.com", "openai.com", "claude.ai", "anthropic.com",
-	"perplexity.ai", "netflix.com", "spotify.com",
+	"perplexity.ai", "gemini.google.com", "copilot.microsoft.com",
+	"netflix.com", "spotify.com", "udemy.com",
 }
 
 const (
 	maxQueue = 20
-	maxItems = 200
+	maxItems = 300
 	stateKey = "suggest"
 	// a scan doesn't redo what was checked recently
 	scanFresh = time.Hour
+	// one domain's whole ladder, every way's samples included
+	probeBudget = 5 * time.Minute
+	// verifyAfter: the plane reconciles an accepted domain within this
+	verifyAfter = 2 * time.Minute
+	// accepted ways are measured again this often
+	reverifyEvery = 24 * time.Hour
+	// verifyWait: how soon to look again while the plane hasn't applied it
+	verifyWait = 10 * time.Minute
+	// the housekeeping tick: due verifications, discovery
+	tickEvery = 30 * time.Second
 )
 
 type State string
@@ -41,24 +52,56 @@ const (
 	StateDismissed State = "dismissed"
 )
 
-// Path is one way out as it was probed, in words for the user.
+// Where a domain came from.
+const (
+	SourceUser = "user" // typed in by the person
+	SourceScan = "scan" // the built-in catalog
+	SourceDNS  = "dns"  // asked often in the router's DNS (discovery)
+)
+
+// NextSearch: DPI with the known strategies didn't help — a strategy search
+// (GP on the Raspberry Pi) is the next step.
+const NextSearch = "search"
+
+// Path is one way out as it was measured, in words for the user.
 type Path struct {
-	Via    string `json:"via"`
-	Result string `json:"result"`
-	Ms     int    `json:"ms,omitempty"`
+	Via        string `json:"via"`
+	Result     string `json:"result"`
+	Ms         int    `json:"ms,omitempty"`
+	Tries      int    `json:"tries"`
+	Opened     int    `json:"opened"`
+	TTFBMs     int    `json:"ttfb_ms,omitempty"` // 0 = unknown
+	Kbps       int    `json:"kbps,omitempty"`    // 0 = not measurable
+	Frozen     bool   `json:"frozen,omitempty"`
+	Acceptable bool   `json:"acceptable"` // good enough by the settings
 }
 
 // Item is one domain's suggestion.
 type Item struct {
 	Domain    string `json:"domain"`
 	State     State  `json:"state"`
+	Source    string `json:"source"` // user | scan | dns
 	Verdict   string `json:"verdict,omitempty"`
 	Mode      string `json:"mode,omitempty"` // desync | warp | vless; empty = nothing to route
-	Alt       string `json:"alt,omitempty"`  // another way that was tried and works
+	Alt       string `json:"alt,omitempty"`  // another way that was measured and is good enough
 	Confirmed bool   `json:"confirmed"`
+	// Interim: the way to use while a strategy search runs (Next = search).
+	Interim   string `json:"interim,omitempty"`
+	Next      string `json:"next,omitempty"` // "search" | ""
 	Reason    string `json:"reason,omitempty"`
 	Paths     []Path `json:"paths,omitempty"`
 	CheckedAt int64  `json:"checked_at,omitempty"`
+	// Hidden: found in DNS and nothing to tell (it opens); kept so it isn't
+	// measured again for a week.
+	Hidden bool `json:"hidden,omitempty"`
+
+	// after acceptance
+	Accepted   string `json:"accepted,omitempty"` // the mode the person put it in (Mode or Alt)
+	AcceptedAt int64  `json:"accepted_at,omitempty"`
+	Verified   bool   `json:"verified"`              // the accepted way was measured good enough
+	VerifiedAt int64  `json:"verified_at,omitempty"` // last measured (unix); 0 = not yet
+	VerifyDue  int64  `json:"verify_due,omitempty"`  // next measurement (unix)
+	VerifyNote string `json:"verify_note,omitempty"` // what it found, for the user
 }
 
 // PathInfo is a way out and whether it can be probed right now.
@@ -71,10 +114,15 @@ type PathInfo struct {
 
 // Overview is GET /suggest.
 type Overview struct {
-	Items  []Item     `json:"items"`
-	Paths  []PathInfo `json:"paths"`
-	Busy   int        `json:"busy"` // domains queued or being probed
-	Desync bool       `json:"desync"`
+	Items     []Item     `json:"items"`
+	Paths     []PathInfo `json:"paths"`
+	Busy      int        `json:"busy"` // domains queued or being probed
+	Desync    bool       `json:"desync"`
+	Settings  Settings   `json:"settings"`
+	Reference Reference  `json:"reference"`
+	// Discovering: discovery is on and sees the router's DNS questions
+	// (protected DNS is on).
+	Discovering bool `json:"discovering"`
 }
 
 // Skip is a domain that was not queued, and why.
@@ -96,7 +144,7 @@ var (
 	ErrNoPlane  = errors.New("routing plane is off")
 )
 
-// Store persists the suggestions (state/suggest.json).
+// Store persists the suggestions and settings (state/suggest.json).
 type Store interface {
 	LoadJSON(name string, v any) error
 	SaveJSON(name string, v any) error
@@ -106,50 +154,88 @@ type Store interface {
 type Router interface {
 	Covered(domain string) string
 	AddAuto(mode plane.Mode, domain string) error
+	Status() plane.Status
+}
+
+// Asked is protected DNS as discovery sees it.
+type Asked interface {
+	Watching() bool                                   // the router's DNS questions reach nuxk
+	Frequent(since time.Duration, least int) []string // names asked at least that often, most asked first
 }
 
 type Service struct {
-	P      *probe.Prober
+	P      Prober
 	Store  Store
 	Router Router
 	Desync func() bool // nfqws2 is wired
+	DNS    Asked       // discovery's source; nil = no discovery
+
+	now func() time.Time
 
 	queue chan string
 	mu    sync.Mutex
 	items map[string]*Item
 	busy  int
+	set   Settings
+	ref   Reference
+
+	// the worker's own (Run's goroutine)
+	lastDiscover time.Time
+	passed       map[string]time.Time // names discovery looked at and passed over
 }
 
 type file struct {
-	Items []Item `json:"items"`
+	Settings Settings `json:"settings"`
+	Items    []Item   `json:"items"`
 }
 
 // New loads the stored suggestions. A domain that was mid-probe when the agent
 // stopped is dropped, not shown as stuck.
-func New(p *probe.Prober, st Store, rt Router, desync func() bool) *Service {
-	s := &Service{P: p, Store: st, Router: rt, Desync: desync, queue: make(chan string, maxQueue), items: map[string]*Item{}}
-	var f file
+func New(p Prober, st Store, rt Router, desync func() bool) *Service {
+	s := &Service{P: p, Store: st, Router: rt, Desync: desync, now: time.Now,
+		queue: make(chan string, maxQueue), items: map[string]*Item{}, passed: map[string]time.Time{}}
+	f := file{Settings: DefaultSettings()} // what the file leaves out keeps its default
 	if err := st.LoadJSON(stateKey, &f); err != nil {
 		slog.Warn("suggest: stored suggestions unreadable, starting empty", "err", err)
 	}
+	if set, err := f.Settings.check(); err == nil {
+		s.set = set
+	} else {
+		s.set = DefaultSettings()
+	}
+	s.ref = Reference{Domain: s.set.Reference}
+	now := s.now()
 	for _, it := range f.Items {
 		if it.State == StateChecking || it.Domain == "" {
 			continue
 		}
 		it := it
+		if it.Source == "" {
+			it.Source = SourceUser
+		}
+		if it.State == StateAccepted && it.VerifyDue == 0 && it.VerifiedAt == 0 {
+			// accepted before verification existed: measure it soon
+			it.Accepted, it.VerifyDue = it.Mode, now.Add(verifyAfter).Unix()
+		}
 		s.items[it.Domain] = &it
 	}
 	return s
 }
 
-// Run probes queued domains one at a time (a router is small) until ctx ends.
+// Run measures queued domains one at a time (a router is small) and, between
+// them, verifies accepted ways and looks for new domains, until ctx ends.
 func (s *Service) Run(ctx context.Context) {
+	t := time.NewTicker(tickEvery)
+	defer t.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case d := <-s.queue:
 			s.process(ctx, d)
+		case <-t.C:
+			s.verifyDue(ctx)
+			s.discover()
 		}
 	}
 }
@@ -167,23 +253,30 @@ func (s *Service) process(ctx context.Context, domain string) {
 		s.mu.Unlock()
 		return
 	}
-	pctx, cancel := context.WithTimeout(ctx, 45*time.Second)
+	pctx, cancel := context.WithTimeout(ctx, probeBudget)
 	defer cancel()
-	rep := s.P.Check(pctx, domain)
-	sug := probe.Classify(rep, probe.Options{Desync: s.desync()})
+	it := decide(pctx, s.P, s.bar(pctx), s.desync(), domain)
+	it.State, it.CheckedAt = StateReady, s.now().Unix()
 
-	it := Item{
-		Domain: domain, State: StateReady, Verdict: string(sug.Verdict), Mode: sug.Mode, Alt: sug.Alt,
-		Confirmed: sug.Confirmed, Reason: sug.Reason, Paths: describe(rep), CheckedAt: time.Now().Unix(),
-	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if old := s.items[domain]; old == nil || old.State != StateChecking {
+	old := s.items[domain]
+	if old == nil || old.State != StateChecking {
 		return // dismissed or removed while probing
+	}
+	it.Source = old.Source
+	if it.Source == SourceDNS && quiet(it) {
+		it.Hidden, it.Paths = true, nil // kept small: only "don't measure again"
 	}
 	s.items[domain] = &it
 	s.saveLocked()
-	slog.Info("suggest: checked", "domain", domain, "verdict", it.Verdict, "mode", it.Mode, "confirmed", it.Confirmed)
+	slog.Info("suggest: checked", "domain", domain, "source", it.Source, "verdict", it.Verdict, "mode", it.Mode, "alt", it.Alt, "confirmed", it.Confirmed)
+}
+
+// quiet: nothing in it for the person — it opens, or nothing can be said and
+// nothing routed. A domain they didn't ask about stays out of sight then.
+func quiet(it Item) bool {
+	return it.Verdict == string(probe.VerdictOK) || it.Mode == "" && it.Verdict == string(probe.VerdictUnknown)
 }
 
 func (s *Service) desync() bool { return s.Desync != nil && s.Desync() }
@@ -195,9 +288,16 @@ func (s *Service) covered(domain string) string {
 	return s.Router.Covered(domain)
 }
 
-// Check queues the given domains. force=false (a scan) leaves alone what was
-// checked recently or already decided; force=true (the user asked) redoes it.
+// Check queues the given domains for the person. force=false leaves alone what
+// was checked recently or already decided; force=true redoes it.
 func (s *Service) Check(domains []string, force bool) Queued {
+	return s.enqueue(domains, force, SourceUser)
+}
+
+// Scan checks the built-in catalog.
+func (s *Service) Scan() Queued { return s.enqueue(Catalog, false, SourceScan) }
+
+func (s *Service) enqueue(domains []string, force bool, source string) Queued {
 	out := Queued{Queued: []string{}, Skipped: []Skip{}}
 	seen := map[string]bool{}
 	for _, raw := range domains {
@@ -226,14 +326,14 @@ func (s *Service) Check(domains []string, force bool) Queued {
 			s.mu.Unlock()
 			out.Skipped = append(out.Skipped, Skip{d, map[State]string{StateDismissed: "вы отклонили это предложение", StateAccepted: "предложение уже принято"}[old.State]})
 			continue
-		case old != nil && !force && time.Since(time.Unix(old.CheckedAt, 0)) < scanFresh:
+		case old != nil && !force && s.now().Sub(time.Unix(old.CheckedAt, 0)) < scanFresh:
 			s.mu.Unlock()
 			out.Skipped = append(out.Skipped, Skip{d, "проверен недавно"})
 			continue
 		}
 		select {
 		case s.queue <- d:
-			s.items[d] = &Item{Domain: d, State: StateChecking}
+			s.items[d] = &Item{Domain: d, State: StateChecking, Source: source}
 			s.busy++
 			s.mu.Unlock()
 			out.Queued = append(out.Queued, d)
@@ -245,9 +345,6 @@ func (s *Service) Check(domains []string, force bool) Queued {
 	return out
 }
 
-// Scan checks the built-in catalog.
-func (s *Service) Scan() Queued { return s.Check(Catalog, false) }
-
 // Overview is the current picture.
 func (s *Service) Overview() Overview {
 	s.mu.Lock()
@@ -255,7 +352,7 @@ func (s *Service) Overview() Overview {
 	for _, it := range s.items {
 		items = append(items, *it)
 	}
-	busy := s.busy
+	busy, set, ref := s.busy, s.set, s.ref
 	s.mu.Unlock()
 	sort.Slice(items, func(i, j int) bool { // checking first, then the freshest
 		if (items[i].State == StateChecking) != (items[j].State == StateChecking) {
@@ -267,14 +364,18 @@ func (s *Service) Overview() Overview {
 		return items[i].Domain < items[j].Domain
 	})
 	var paths []PathInfo
-	for _, p := range s.P.Paths() {
-		paths = append(paths, PathInfo{Via: string(p.Via), Iface: p.Iface, Usable: p.Usable, Why: p.Why})
+	if s.P != nil {
+		for _, p := range s.P.Paths() {
+			paths = append(paths, PathInfo{Via: string(p.Via), Iface: p.Iface, Usable: p.Usable, Why: p.Why})
+		}
 	}
-	return Overview{Items: items, Paths: paths, Busy: busy, Desync: s.desync()}
+	return Overview{Items: items, Paths: paths, Busy: busy, Desync: s.desync(), Settings: set, Reference: ref,
+		Discovering: set.Discover && s.DNS != nil && s.DNS.Watching()}
 }
 
 // Accept puts the domain into the plane's «Подбор» list for mode ("" = the
-// suggested one; the verified alternative is also allowed).
+// suggested one; the verified alternative is also allowed). The way is
+// measured again once the plane has had time to apply it.
 func (s *Service) Accept(domain, mode string) error {
 	s.mu.Lock()
 	it, ok := s.items[domain]
@@ -303,14 +404,19 @@ func (s *Service) Accept(domain, mode string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if it := s.items[domain]; it != nil {
-		it.State = StateAccepted
+		now := s.now()
+		it.State, it.Hidden = StateAccepted, false
+		it.Accepted, it.AcceptedAt = mode, now.Unix()
+		it.Verified, it.VerifiedAt, it.VerifyNote = false, 0, ""
+		it.VerifyDue = now.Add(verifyAfter).Unix()
 		s.saveLocked()
 	}
 	slog.Info("suggest: accepted", "domain", domain, "mode", mode)
 	return nil
 }
 
-// Dismiss hides a suggestion; a later scan won't bring it back.
+// Dismiss hides a suggestion; a later scan won't bring it back, and it is
+// never measured again on its own.
 func (s *Service) Dismiss(domain string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -318,77 +424,51 @@ func (s *Service) Dismiss(domain string) error {
 	if !ok || it.State == StateChecking {
 		return ErrNotFound
 	}
-	it.State = StateDismissed
+	it.State, it.VerifyDue = StateDismissed, 0
 	s.saveLocked()
 	return nil
 }
 
-// saveLocked persists everything but in-flight checks, oldest decided items
-// dropped past maxItems. Caller holds s.mu.
+// keepRank: what goes first when there are too many — quiet finds from DNS,
+// then dismissed, then the rest; accepted ones last.
+func keepRank(it *Item) int {
+	switch {
+	case it.State == StateAccepted:
+		return 0
+	case it.Hidden:
+		return 3
+	case it.State == StateDismissed:
+		return 2
+	}
+	return 1
+}
+
+// saveLocked persists everything but in-flight checks; past maxItems the
+// least needed go (see keepRank), oldest first. Caller holds s.mu.
 func (s *Service) saveLocked() {
-	var keep []Item
+	var keep []*Item
 	for _, it := range s.items {
 		if it.State != StateChecking {
-			keep = append(keep, *it)
+			keep = append(keep, it)
 		}
 	}
-	sort.Slice(keep, func(i, j int) bool { return keep[i].CheckedAt > keep[j].CheckedAt })
+	sort.Slice(keep, func(i, j int) bool {
+		if a, b := keepRank(keep[i]), keepRank(keep[j]); a != b {
+			return a < b
+		}
+		return keep[i].CheckedAt > keep[j].CheckedAt
+	})
 	if len(keep) > maxItems {
 		for _, it := range keep[maxItems:] {
 			delete(s.items, it.Domain)
 		}
 		keep = keep[:maxItems]
 	}
-	if err := s.Store.SaveJSON(stateKey, file{Items: keep}); err != nil {
+	f := file{Settings: s.set, Items: make([]Item, 0, len(keep))}
+	for _, it := range keep {
+		f.Items = append(f.Items, *it)
+	}
+	if err := s.Store.SaveJSON(stateKey, f); err != nil {
 		slog.Warn("suggest: save failed", "err", err)
 	}
-}
-
-// describe renders what each probed path did, for the details row.
-func describe(r probe.Report) []Path {
-	if r.DNS != "" {
-		return []Path{{Via: "dns", Result: map[string]string{"bogus": "подменённый ответ", "nxdomain": "имя не найдено", "timeout": "нет ответа"}[r.DNS]}}
-	}
-	paths := []Path{describeOne(r.Direct)}
-	for _, t := range r.Tunnels {
-		paths = append(paths, describeOne(t))
-	}
-	return paths
-}
-
-var failText = map[probe.Fail]string{
-	probe.FailTimeout: "тишина (таймаут)", probe.FailReset: "обрыв соединения (RST)", probe.FailEOF: "соединение закрыто",
-	probe.FailRefused: "отказ в соединении", probe.FailUnreachable: "нет маршрута", probe.FailAlert: "сервер отверг TLS", probe.FailOther: "ошибка",
-}
-
-func describeOne(r probe.Result) Path {
-	p := Path{Via: string(r.Via), Ms: r.Ms}
-	switch {
-	case r.Skipped != "":
-		p.Result, p.Ms = "не проверялся: "+r.Skipped, 0
-	case !r.TCP:
-		p.Result = "не подключается: " + failText[r.TCPFail]
-	case !r.TLS:
-		p.Result = "TLS: " + failText[r.TLSFail]
-		if r.Neutral != nil {
-			if *r.Neutral {
-				p.Result += "; на другое имя тот же адрес отвечает"
-			} else {
-				p.Result += "; на другое имя тоже молчит"
-			}
-		}
-	case r.Status == 0:
-		p.Result = "HTTP: " + failText[r.HTTPFail]
-	case r.Signal == probe.SignalExplicit:
-		p.Result = fmt.Sprintf("отказ по стране (HTTP %d)", r.Status)
-	case r.Signal == probe.SignalChallenge:
-		p.Result = fmt.Sprintf("проверка «Just a moment» (HTTP %d)", r.Status)
-	case r.Signal == probe.SignalDenied:
-		p.Result = "отказ (HTTP 403)"
-	case r.Status >= 500:
-		p.Result = fmt.Sprintf("ошибка сервера (HTTP %d)", r.Status)
-	default:
-		p.Result = fmt.Sprintf("открывается (HTTP %d)", r.Status)
-	}
-	return p
 }

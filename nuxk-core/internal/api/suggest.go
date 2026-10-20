@@ -15,6 +15,7 @@ import (
 // Probes run in the background, one domain at a time; the screen polls GET
 // /suggest. Nothing here touches routing: accept only adds the domain to the
 // plane's «Подбор» list, and the plane's apply switch still decides the rest.
+// The checks after acceptance and the discovery from DNS only measure.
 
 func (d Deps) suggestOff(w http.ResponseWriter) bool {
 	if d.Suggest == nil {
@@ -50,6 +51,27 @@ func (d Deps) handleSuggestScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, d.Suggest.Scan())
+}
+
+// handleSuggestSettings: the "good enough" thresholds, the reference site and
+// discovery. What the body leaves out stays as it is.
+func (d Deps) handleSuggestSettings(w http.ResponseWriter, r *http.Request) {
+	if d.suggestOff(w) {
+		return
+	}
+	s := d.Suggest.Settings()
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<10)).Decode(&s); err != nil {
+		writeErr(w, http.StatusBadRequest, "bad_body", `want {"ttfb_max_ms":5000,"ttfb_factor":3,"kbps_min":2000,"kbps_share":30,"reference":"ya.ru","discover":true}`)
+		return
+	}
+	switch set, err := d.Suggest.SetSettings(s); {
+	case errors.Is(err, suggest.ErrBadSettings):
+		writeErr(w, http.StatusBadRequest, "bad_settings", err.Error())
+	case err != nil:
+		writeErr(w, http.StatusInternalServerError, "state_error", err.Error())
+	default:
+		writeJSON(w, http.StatusOK, set)
+	}
 }
 
 func (d Deps) handleSuggestAccept(w http.ResponseWriter, r *http.Request) {

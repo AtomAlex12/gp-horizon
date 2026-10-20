@@ -10,6 +10,10 @@ const (
 	VerdictIP      Verdict = "ip-block"  // the provider cuts the address itself
 	VerdictDNS     Verdict = "dns-block" // DNS gives a stub instead of the site
 	VerdictUnknown Verdict = "unknown"   // no safe conclusion
+	// Only the decision ladder (internal/suggest) tells these apart: they
+	// need the samples and the freeze test of a measured way.
+	VerdictFreeze Verdict = "freeze" // the connection stalls after the first ~16 KB (TSPU on foreign hosting)
+	VerdictSlow   Verdict = "slow"   // opens, but below the "good enough" thresholds
 )
 
 // Suggestion is the verdict plus the way out it points to.
@@ -38,6 +42,10 @@ var viaTitle = map[Via]string{ViaVless: "VLESS", ViaWarp: "WARP"}
 // recommended as a fix only for something we can tell apart from a site that
 // is simply down — a bare 403 or a challenge page counts as geo-blocking only
 // when a tunnel opens the same site.
+//
+// Classify judges a single walk (Check). The suggestion screen decides with
+// measured ways and thresholds instead (internal/suggest), keeping these
+// verdicts and the same rule.
 func Classify(r Report, o Options) Suggestion {
 	switch r.DNS {
 	case "":

@@ -746,7 +746,11 @@ paths:
     get:
       tags: [suggest]
       operationId: suggest
-      summary: Suggestions so far, which ways out can be probed, and how many domains are still being checked
+      summary: Suggestions so far, which ways out can be probed, how many domains are still being checked, the settings and the reference
+      description: |
+        Advise only: nothing here changes routing. Suggestions come from the person's checks,
+        the built-in scan and — while protected DNS is on and discovery is enabled — the names
+        the router asks about often (`source: dns`; those with nothing to tell are `hidden`).
       responses:
         "200":
           description: overview
@@ -759,8 +763,12 @@ paths:
       operationId: suggestCheck
       summary: Probe these domains in the background (redoes ones already checked)
       description: |
-        Each domain is tried directly; only if that doesn't open it are the tunnels tried.
-        Domains already in a nuxk list or in the user's own Keenetic routing are skipped.
+        Each domain is measured directly (several tries, first byte, speed, the ~16 KB freeze);
+        only if that isn't good enough are other ways measured, cheapest first, stopping at the
+        first good enough one. A site refusing the country is tried through VLESS only (WARP
+        leaves the network in Moscow); a provider block gets DPI (nfqws2, unconfirmed until
+        accepted), then WARP, then VLESS. Domains already in a nuxk list or in the user's own
+        Keenetic routing are skipped.
       requestBody:
         required: true
         content:
@@ -789,6 +797,22 @@ paths:
           content: { application/json: { schema: { $ref: "#/components/schemas/SuggestQueued" } } }
         "404": { $ref: "#/components/responses/Error" }
 
+  /api/v1/suggest/settings:
+    put:
+      tags: [suggest]
+      operationId: suggestSettings
+      summary: Set what counts as "good enough", the reference site and discovery
+      description: What the body leaves out stays as it is. A new reference is measured with the next check.
+      requestBody:
+        required: true
+        content: { application/json: { schema: { $ref: "#/components/schemas/SuggestSettings" } } }
+      responses:
+        "200":
+          description: the settings now
+          content: { application/json: { schema: { $ref: "#/components/schemas/SuggestSettings" } } }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+
   /api/v1/suggest/{domain}/accept:
     post:
       tags: [suggest]
@@ -796,7 +820,9 @@ paths:
       summary: Put the domain into the plane's «Подбор» list
       description: |
         Nothing changes on the router unless the plane is in apply mode (PLANE_APPLY=1).
-        `mode` may be the suggested one (default) or the verified alternative.
+        `mode` may be the suggested one (default) or the verified alternative. About two
+        minutes later (once the plane has applied it), and then daily, the accepted way is
+        measured again: see `verified`, `verify_note`, `next`, `interim`.
       parameters:
         - { name: domain, in: path, required: true, schema: { type: string } }
       requestBody:
@@ -819,7 +845,7 @@ paths:
     delete:
       tags: [suggest]
       operationId: suggestDismiss
-      summary: Dismiss a suggestion; a scan won't bring it back
+      summary: Dismiss a suggestion; a scan won't bring it back, and it is never measured again on its own
       parameters:
         - { name: domain, in: path, required: true, schema: { type: string } }
       responses:
@@ -850,11 +876,20 @@ components:
   schemas:
     SuggestPath:
       type: object
-      required: [via, result]
+      required: [via, result, tries, opened, acceptable]
       properties:
-        via: { type: string, enum: [direct, vless, warp, dns] }
+        via:
+          type: string
+          enum: [direct, desync, vless, warp, dns]
+          description: "direct = the provider's path as it is (past nfqws2); desync = through nfqws2 (measured after acceptance); dns = the name didn't resolve"
         result: { type: string, description: "what this way out did, in words for the user" }
-        ms: { type: integer }
+        ms: { type: integer, description: median whole try }
+        tries: { type: integer, description: "tries made (fewer than 5 once the way can no longer come out clean)" }
+        opened: { type: integer, description: tries where the site opened normally }
+        ttfb_ms: { type: integer, description: "median time to the answer's first byte; absent = unknown" }
+        kbps: { type: integer, description: "median download speed, kbit/s; absent = not measurable (the page is too small)" }
+        frozen: { type: boolean, description: the connection stalled after the first ~16 KB }
+        acceptable: { type: boolean, description: "good enough by the settings: ≥ 4 of 5 opened, not frozen, first byte and speed within the limits" }
 
     SuggestPathInfo:
       type: object
@@ -867,29 +902,71 @@ components:
 
     Suggestion:
       type: object
-      required: [domain, state, confirmed]
+      required: [domain, state, source, confirmed, verified]
       properties:
         domain: { type: string }
         state: { type: string, enum: [checking, ready, accepted, dismissed] }
+        source: { type: string, enum: [user, scan, dns], description: "who asked: the person, the built-in scan, or discovery from the router's DNS questions" }
         verdict:
           type: string
-          enum: [ok, geoblock, sni-block, ip-block, dns-block, unknown]
-          description: "geoblock = the site refuses this country; sni-block / ip-block = the provider cuts it; dns-block = DNS gives a stub"
+          enum: [ok, geoblock, sni-block, ip-block, dns-block, freeze, slow, unknown]
+          description: >
+            geoblock = the site refuses this country; sni-block / ip-block = the provider cuts it;
+            freeze = the connection stalls after the first ~16 KB; slow = opens, but below the
+            settings' limits; dns-block = DNS gives a stub (turn protected DNS on)
         mode: { $ref: "#/components/schemas/ListMode", description: "the list to put the domain in; absent = routing wouldn't help or nothing can be said" }
-        alt: { $ref: "#/components/schemas/ListMode", description: another way that was tried and works }
-        confirmed: { type: boolean, description: "the site really opened through `mode`; false = a conclusion from the evidence, not tried (e.g. DPI)" }
+        alt: { $ref: "#/components/schemas/ListMode", description: another way that was measured and is good enough }
+        confirmed: { type: boolean, description: "the site really opened well enough through `mode`; false = a conclusion from the evidence, not tried (DPI) or below the limits" }
+        interim: { $ref: "#/components/schemas/ListMode", description: "the way to use while a strategy search runs (with next = search): measured and good enough" }
+        next: { type: string, enum: [search], description: "search = DPI with the known strategies didn't help: a strategy search (GP on the Raspberry Pi) is advised" }
         reason: { type: string, description: why, in words for the user }
         paths: { type: array, items: { $ref: "#/components/schemas/SuggestPath" } }
         checked_at: { type: integer }
+        hidden: { type: boolean, description: "found in DNS with nothing to tell (it opens): kept so it isn't measured again for a week; the screen hides it" }
+        accepted: { $ref: "#/components/schemas/ListMode", description: the list the person put it in (mode or alt) }
+        accepted_at: { type: integer }
+        verified: { type: boolean, description: the accepted way was measured good enough after acceptance }
+        verified_at: { type: integer, description: "when the accepted way was last measured (unix); absent = not yet" }
+        verify_due: { type: integer, description: "when it will be measured next (unix): ~2 min after acceptance, then daily" }
+        verify_note: { type: string, description: "what the check after acceptance found (or waits for), for the user" }
+
+    SuggestSettings:
+      type: object
+      required: [ttfb_max_ms, ttfb_factor, kbps_min, kbps_share, reference, discover]
+      description: >
+        A way is good enough when at least 4 of 5 tries open it, it doesn't freeze, the median
+        first byte is within ttfb_max_ms and within ttfb_factor × the reference's + 500 ms, and —
+        only when speed was measurable — at least kbps_min and kbps_share % of the reference's.
+        The first good enough way in the ladder wins, not the fastest.
+      properties:
+        ttfb_max_ms: { type: integer, minimum: 500, maximum: 30000, description: "the first byte within this, always (5000)" }
+        ttfb_factor: { type: number, minimum: 1, maximum: 20, description: "...and within this × the reference's first byte + 500 ms, when known (3)" }
+        kbps_min: { type: integer, minimum: 0, maximum: 1000000, description: "speed, when measurable: at least this, kbit/s (2000)" }
+        kbps_share: { type: integer, minimum: 0, maximum: 100, description: "...and at least this percent of the reference's speed, when known (30)" }
+        reference: { type: string, description: "a well-reachable site measured directly, at most every 10 minutes (ya.ru)" }
+        discover: { type: boolean, description: "look for sites in the router's DNS questions — works only while protected DNS is on (true)" }
+
+    SuggestReference:
+      type: object
+      required: [domain, ok]
+      properties:
+        domain: { type: string }
+        ok: { type: boolean, description: it opened directly when last measured; false = only the fixed limits apply }
+        ttfb_ms: { type: integer }
+        kbps: { type: integer, description: absent = not measurable }
+        at: { type: integer, description: "when measured (unix); absent = not yet" }
 
     SuggestOverview:
       type: object
-      required: [items, paths, busy, desync]
+      required: [items, paths, busy, desync, settings, reference, discovering]
       properties:
         items: { type: [array, "null"], items: { $ref: "#/components/schemas/Suggestion" } }
         paths: { type: [array, "null"], items: { $ref: "#/components/schemas/SuggestPathInfo" } }
         busy: { type: integer, description: domains queued or being probed }
         desync: { type: boolean, description: nfqws2 is wired, so a DPI list is an option }
+        settings: { $ref: "#/components/schemas/SuggestSettings" }
+        reference: { $ref: "#/components/schemas/SuggestReference" }
+        discovering: { type: boolean, description: "discovery is on and sees the router's DNS questions (protected DNS is on)" }
 
     SuggestSkip:
       type: object
