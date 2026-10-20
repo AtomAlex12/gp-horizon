@@ -2,16 +2,17 @@
 // here, and does it open some other way?
 //
 // A probe walks the path a browser would — DNS, TCP :443, TLS with the real
-// SNI, one HTTP GET — over the router's default route ("direct") and, only
-// when direct is not clean, over each tunnel interface. Classify turns the
-// Report into a verdict. Nothing here changes the router; a probe is a few
-// short connections to the site itself, with no cookies and no credentials.
+// SNI, one HTTP GET — several times in a row over one way out (Way): the DPI
+// here does not only cut, it also freezes connections after the first ~16 KB
+// and slows them down, and a single try is noise. Check walks the router's
+// default route ("direct") and, only when direct is not clean, each tunnel
+// interface; Classify turns the Report into a verdict. Nothing here changes
+// the router; a probe is a few short connections to the site itself, with no
+// cookies and no credentials.
 package probe
 
 import (
-	"bufio"
 	"context"
-	"crypto/tls"
 	"errors"
 	"io"
 	"net"
@@ -25,7 +26,8 @@ import (
 type Via string
 
 const (
-	ViaDirect Via = "direct" // the router's own default route
+	ViaDirect Via = "direct" // the default route, marked so nfqws2 leaves it alone: the provider's path as it is
+	ViaDesync Via = "desync" // the same route unmarked, so through nfqws2 (meaningful for names in its lists)
 	ViaVless  Via = "vless"  // xray tunnel interface
 	ViaWarp   Via = "warp"   // usque tunnel interface
 )
@@ -54,7 +56,8 @@ const (
 	SignalDenied    Signal = "denied"    // bare 403, no explanation
 )
 
-// Result is one path's walk.
+// Result is one way out, tried Tries times. The per-stage fields (TCP …
+// Signal) are the first try's: what a single look would have seen.
 type Result struct {
 	Via     Via
 	Iface   string
@@ -72,12 +75,28 @@ type Result struct {
 	Status   int // HTTP status, 0 = no answer
 	HTTPFail Fail
 	Signal   Signal
-	Ms       int
+	Ms       int // median whole try (dial → body read) over opened tries; the first try's when none opened
+
+	Tries     int   // tries run; fewer than Samples once the way can no longer come out clean
+	Opened    int   // tries where the site opened: TLS, an HTTP answer 1..499, no geo Signal
+	ConnectMs int   // median TCP connect over opened tries
+	TLSMs     int   // median TLS handshake over opened tries
+	TTFBMs    int   // median time from writing the request to the answer's first byte, over opened tries
+	Bytes     int64 // most body bytes read in one try (read cap 256 KB)
+	// Kbps is the median download speed over opened tries that read at least
+	// 128 KB, or that were still reading when the stage ran out (a slow way is
+	// a measured one); 0 = not measurable, the page is too small.
+	Kbps int
+	// Frozen is the 16–20 KB freeze: the start of a connection gets through,
+	// then everything stops. Seen when the 64 KB upload test hangs, or when a
+	// page whose headers came stops arriving mid-way (no byte for half a stage).
+	Frozen bool
 }
 
-// Clean means the site opened normally on this path.
+// Clean means the site opened normally on this path: at least 4 tries in 5
+// opened and nothing froze.
 func (r Result) Clean() bool {
-	return r.Skipped == "" && r.TLS && r.Status > 0 && r.Status < 500 && r.Signal == SignalNone
+	return r.Skipped == "" && r.Tries > 0 && r.Opened*5 >= r.Tries*4 && !r.Frozen
 }
 
 // Report is everything one check learned about a domain.
@@ -91,9 +110,12 @@ type Report struct {
 
 // Prober runs checks. The zero value probes direct only.
 type Prober struct {
-	Ifaces  map[Via]string // tunnel interface per path
-	Timeout time.Duration  // per stage; 0 = 6s
-	Neutral string         // SNI of the control handshake; "" = www.google.com
+	Ifaces   map[Via]string // tunnel interface per path
+	Timeout  time.Duration  // per stage; 0 = 6s
+	Neutral  string         // SNI of the control handshake; "" = www.google.com
+	Samples  int            // tries per way; 0 = 5
+	Mark     uint32         // SO_MARK on direct sockets so nfqws2 leaves them alone; 0 = 0x40000000
+	NoFreeze bool           // skip the 64 KB upload test (tests)
 
 	// Test hooks. nil = the real network.
 	LookupIP func(ctx context.Context, host string) ([]net.IP, error)
@@ -108,22 +130,38 @@ func (p *Prober) stage() time.Duration {
 	return 6 * time.Second
 }
 
+func (p *Prober) samples() int {
+	if p.Samples > 0 {
+		return p.Samples
+	}
+	return 5
+}
+
+// mark is nfqws2's own "already handled" fwmark: its iptables rules skip
+// packets that carry it.
+func (p *Prober) mark() uint32 {
+	if p.Mark != 0 {
+		return p.Mark
+	}
+	return 0x40000000
+}
+
 // Check probes domain. Tunnels are tried only when direct is not clean, VLESS
 // first, and the walk stops at the first tunnel that opens the site.
 func (p *Prober) Check(ctx context.Context, domain string) Report {
 	rep := Report{Domain: domain}
-	ip, why := p.resolve(ctx, domain)
+	ip, why := p.Resolve(ctx, domain)
 	if why != "" {
 		rep.DNS = why
 		return rep
 	}
 	rep.Addr = ip.String()
-	rep.Direct = p.path(ctx, domain, ip, ViaDirect)
+	rep.Direct = p.Way(ctx, domain, ip, ViaDirect)
 	if rep.Direct.Clean() {
 		return rep
 	}
 	for _, via := range []Via{ViaVless, ViaWarp} {
-		r := p.path(ctx, domain, ip, via)
+		r := p.Way(ctx, domain, ip, via)
 		rep.Tunnels = append(rep.Tunnels, r)
 		if r.Clean() {
 			break
@@ -132,7 +170,9 @@ func (p *Prober) Check(ctx context.Context, domain string) Report {
 	return rep
 }
 
-func (p *Prober) resolve(ctx context.Context, host string) (net.IP, string) {
+// Resolve gives the IPv4 address every way is pointed at, or why there is
+// none: "nxdomain" | "timeout" | "bogus" (a private or zero answer — a stub).
+func (p *Prober) Resolve(ctx context.Context, host string) (net.IP, string) {
 	if net.ParseIP(host) != nil {
 		return nil, "bogus" // a probe takes names, not addresses
 	}
@@ -167,96 +207,24 @@ func (p *Prober) resolve(ctx context.Context, host string) (net.IP, string) {
 	return nil, "nxdomain"
 }
 
-// path walks one way out to ip.
-func (p *Prober) path(ctx context.Context, domain string, ip net.IP, via Via) (r Result) {
-	r = Result{Via: via, Iface: p.Ifaces[via]}
-	if via != ViaDirect {
-		if why := p.unavailable(via); why != "" {
-			r.Skipped = why
-			return r
-		}
-	}
-	start := time.Now()
-	defer func() { r.Ms = int(time.Since(start) / time.Millisecond) }()
-
-	addr := net.JoinHostPort(ip.String(), "443")
-	dctx, cancel := context.WithTimeout(ctx, p.stage())
-	conn, err := p.dial(dctx, via, addr)
-	cancel()
-	if err != nil {
-		r.TCPFail = failKind(err)
-		return r
-	}
-	defer conn.Close()
-	r.TCP = true
-
-	// Certificates are not checked: the question is whether the handshake and
-	// the answer get through, not who signed them — and the router's Entware
-	// CA store is not always where Go looks for it.
-	tc := tls.Client(conn, &tls.Config{ServerName: domain, InsecureSkipVerify: true, MinVersion: tls.VersionTLS12, NextProtos: []string{"http/1.1"}})
-	hctx, hcancel := context.WithTimeout(ctx, p.stage())
-	err = tc.HandshakeContext(hctx)
-	hcancel()
-	if err != nil {
-		r.TLSFail = failKind(err)
-		n := p.neutral(ctx, via, addr)
-		r.Neutral = &n
-		return r
-	}
-	r.TLS = true
-
-	_ = conn.SetDeadline(time.Now().Add(p.stage()))
-	req, _ := http.NewRequest(http.MethodGet, "https://"+domain+"/", nil)
-	req.Header.Set("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36")
-	req.Header.Set("Accept", "text/html,application/xhtml+xml,*/*;q=0.8")
-	req.Header.Set("Accept-Encoding", "identity")
-	req.Header.Set("Connection", "close")
-	if err := req.Write(tc); err != nil {
-		r.HTTPFail = failKind(err)
-		return r
-	}
-	resp, err := http.ReadResponse(bufio.NewReader(tc), req)
-	if err != nil {
-		r.HTTPFail = failKind(err)
-		return r
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 16<<10))
-	r.Status = resp.StatusCode
-	r.Signal = geoSignal(resp.StatusCode, resp.Header, string(body))
-	return r
-}
-
-// neutral reports whether ip completes (or answers with an alert to) a TLS
-// handshake for an unrelated name — i.e. the address itself is not cut.
-func (p *Prober) neutral(ctx context.Context, via Via, addr string) bool {
-	dctx, cancel := context.WithTimeout(ctx, p.stage())
-	defer cancel()
-	conn, err := p.dial(dctx, via, addr)
-	if err != nil {
-		return false
-	}
-	defer conn.Close()
-	sni := p.Neutral
-	if sni == "" {
-		sni = "www.google.com"
-	}
-	tc := tls.Client(conn, &tls.Config{ServerName: sni, InsecureSkipVerify: true, MinVersion: tls.VersionTLS12})
-	err = tc.HandshakeContext(dctx)
-	// A server that doesn't know the name and says so is still a server we reached.
-	return err == nil || failKind(err) == FailAlert
-}
-
 func (p *Prober) dial(ctx context.Context, via Via, addr string) (net.Conn, error) {
 	if p.Dial != nil {
 		return p.Dial(ctx, via, addr)
 	}
 	d := net.Dialer{Timeout: p.stage()}
-	if via != ViaDirect {
+	switch {
+	case via == ViaDirect:
+		d.Control = markControl(p.mark())
+	case tunnel(via):
 		d.Control = bindControl(p.Ifaces[via])
 	}
+	// ViaDesync: the default route with no mark. nfqws2's rules sit in mangle
+	// POSTROUTING, so the router's own traffic meets it like a LAN client's.
 	return d.DialContext(ctx, "tcp4", addr)
 }
+
+// tunnel: via leaves through an interface of its own.
+func tunnel(via Via) bool { return via != ViaDirect && via != ViaDesync }
 
 // unavailable says why a tunnel can't be probed, in words for the user.
 func (p *Prober) unavailable(via Via) string {
