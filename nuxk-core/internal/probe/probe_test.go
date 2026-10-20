@@ -4,9 +4,14 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -222,5 +227,213 @@ func TestGeoSignal(t *testing.T) {
 		if got := geoSignal(c.status, c.h, c.body); got != c.want {
 			t.Errorf("geoSignal(%d,%q) = %q, want %q", c.status, c.body, got, c.want)
 		}
+	}
+}
+
+var testIP = net.ParseIP("203.0.113.5")
+
+// wayProber sends every way to srv with short stages. Dials for which fail(n)
+// is true (n counts from 1) are refused, as on a flaky or blocked path. The
+// returned slice records the Via of every dial.
+func wayProber(srv *httptest.Server, fail func(n int) bool) (*Prober, *[]Via) {
+	var vias []Via
+	return &Prober{
+		Timeout: 500 * time.Millisecond,
+		Dial: func(ctx context.Context, via Via, addr string) (net.Conn, error) {
+			vias = append(vias, via)
+			if fail != nil && fail(len(vias)) {
+				return nil, errors.New("connection refused")
+			}
+			var d net.Dialer
+			return d.DialContext(ctx, "tcp", srv.Listener.Addr().String())
+		},
+	}, &vias
+}
+
+func TestWayStopsOnceItCannotBeClean(t *testing.T) {
+	ok := site(t, 200, "ok")
+	p, vias := wayProber(ok, func(int) bool { return true })
+	r := p.Way(context.Background(), "x.test", testIP, ViaDirect)
+	if r.Tries != 2 || len(*vias) != 2 || r.Opened != 0 || r.Clean() {
+		t.Fatalf("a dead way must cost two tries of five: tries=%d dials=%d %+v", r.Tries, len(*vias), r)
+	}
+	if r.TCP || r.TCPFail != FailRefused {
+		t.Errorf("first try: %+v", r)
+	}
+	p, _ = wayProber(ok, func(int) bool { return true })
+	p.Samples = 3 // 80% of 3 is all 3: the first miss ends it
+	if r := p.Way(context.Background(), "x.test", testIP, ViaDirect); r.Tries != 1 {
+		t.Errorf("3 samples: tries=%d", r.Tries)
+	}
+}
+
+func TestWayCleanNeedsFourInFive(t *testing.T) {
+	ok := site(t, 200, "ok")
+	for _, c := range []struct {
+		name          string
+		fail          func(int) bool
+		opened, tries int
+		clean, tcp    bool
+	}{
+		{"one miss", func(n int) bool { return n == 2 }, 4, 5, true, true},
+		{"first try missed", func(n int) bool { return n == 1 }, 4, 5, true, false},
+		{"two misses", func(n int) bool { return n >= 4 }, 3, 5, false, true},
+		{"two misses early", func(n int) bool { return n <= 2 }, 0, 2, false, false},
+	} {
+		p, _ := wayProber(ok, c.fail)
+		p.NoFreeze = true
+		r := p.Way(context.Background(), "x.test", testIP, ViaDirect)
+		if r.Opened != c.opened || r.Tries != c.tries || r.Clean() != c.clean || r.TCP != c.tcp {
+			t.Errorf("%s: opened %d/%d clean=%v tcp=%v", c.name, r.Opened, r.Tries, r.Clean(), r.TCP)
+		}
+	}
+}
+
+func TestWayMetrics(t *testing.T) {
+	slow := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(30 * time.Millisecond)
+		_, _ = w.Write([]byte("ok"))
+	}))
+	t.Cleanup(slow.Close)
+	p, _ := wayProber(slow, nil)
+	r := p.Way(context.Background(), "x.test", testIP, ViaDirect)
+	if !r.Clean() || r.Tries != 5 || r.Opened != 5 || r.Status != 200 {
+		t.Fatalf("%+v", r)
+	}
+	if r.TTFBMs < 30 || r.Ms < r.TTFBMs {
+		t.Errorf("ttfb=%dms whole=%dms", r.TTFBMs, r.Ms)
+	}
+	if r.Bytes != 2 || r.Kbps != 0 {
+		t.Errorf("a 2-byte page says nothing about speed: bytes=%d kbps=%d", r.Bytes, r.Kbps)
+	}
+
+	p, _ = wayProber(site(t, 200, strings.Repeat("x", 300<<10)), nil)
+	r = p.Way(context.Background(), "x.test", testIP, ViaDirect)
+	if !r.Clean() || r.Bytes != maxBody || r.Kbps <= 0 {
+		t.Errorf("big page: bytes=%d kbps=%d %+v", r.Bytes, r.Kbps, r)
+	}
+}
+
+func TestMedian(t *testing.T) {
+	if m := median([]time.Duration{5, 1, 3}); m != 3 {
+		t.Errorf("odd: %v", m)
+	}
+	if m := median([]int{4, 1, 3, 2}); m != 2 { // (2+3)/2
+		t.Errorf("even: %v", m)
+	}
+	if m := median([]int(nil)); m != 0 {
+		t.Errorf("empty: %v", m)
+	}
+}
+
+// freezeListener lets each connection's first limit bytes from the client
+// through and then reads no more — the DPI freeze, past ~16 KB nothing arrives.
+type freezeListener struct {
+	net.Listener
+	limit int64
+}
+
+type freezeConn struct {
+	net.Conn
+	left   atomic.Int64
+	once   sync.Once
+	closed chan struct{}
+}
+
+func (l freezeListener) Accept() (net.Conn, error) {
+	c, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	fc := &freezeConn{Conn: c, closed: make(chan struct{})}
+	fc.left.Store(l.limit)
+	return fc, nil
+}
+
+func (c *freezeConn) Read(p []byte) (int, error) {
+	left := c.left.Load()
+	if left <= 0 {
+		<-c.closed
+		return 0, net.ErrClosed
+	}
+	n, err := c.Conn.Read(p[:min(int64(len(p)), left)])
+	c.left.Add(-int64(n))
+	return n, err
+}
+
+func (c *freezeConn) Close() error {
+	c.once.Do(func() { close(c.closed) })
+	return c.Conn.Close()
+}
+
+// echo answers GET with "ok" and reads a POST through before answering it.
+var echo = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	_, _ = io.Copy(io.Discard, r.Body)
+	_, _ = w.Write([]byte("ok"))
+})
+
+func TestFreezeOnUpload(t *testing.T) {
+	s := httptest.NewUnstartedServer(echo)
+	s.Listener = freezeListener{Listener: s.Listener, limit: 16 << 10}
+	s.StartTLS()
+	t.Cleanup(func() { s.CloseClientConnections(); s.Close() }) // a frozen handler waits for its conn to close
+
+	p, _ := wayProber(s, nil)
+	r := p.Way(context.Background(), "x.test", testIP, ViaDirect)
+	if r.Opened != 5 || !r.Frozen || r.Clean() {
+		t.Fatalf("plain GETs pass, the upload hangs: want frozen, got %+v", r)
+	}
+	p.NoFreeze = true
+	if r := p.Way(context.Background(), "x.test", testIP, ViaDirect); r.Frozen || !r.Clean() {
+		t.Errorf("NoFreeze must skip the upload test: %+v", r)
+	}
+}
+
+func TestRefusedUploadIsNotFrozen(t *testing.T) {
+	s := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			http.Error(w, "no", http.StatusMethodNotAllowed)
+			return
+		}
+		_, _ = w.Write([]byte("ok"))
+	}))
+	t.Cleanup(s.Close)
+	p, _ := wayProber(s, nil)
+	if r := p.Way(context.Background(), "x.test", testIP, ViaDirect); r.Frozen || !r.Clean() {
+		t.Fatalf("a 405 to the upload is an answer, not a freeze: %+v", r)
+	}
+}
+
+func TestFreezeOnDownload(t *testing.T) {
+	s := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(bytes.Repeat([]byte("x"), 20<<10))
+		w.(http.Flusher).Flush()
+		select { // the rest never comes
+		case <-r.Context().Done():
+		case <-time.After(5 * time.Second):
+		}
+	}))
+	t.Cleanup(s.Close)
+	p, _ := wayProber(s, nil)
+	p.NoFreeze = true // the page alone shows it
+	r := p.Way(context.Background(), "x.test", testIP, ViaDirect)
+	if !r.Frozen || r.Clean() || r.Tries != 1 || r.Bytes != 20<<10 || r.Status != 200 {
+		t.Fatalf("a page stopped mid-way is the freeze, and one is enough: %+v", r)
+	}
+}
+
+func TestDirectAndDesyncAreDistinctWays(t *testing.T) {
+	p, vias := wayProber(site(t, 200, "ok"), nil)
+	p.Samples, p.NoFreeze = 1, true
+	p.Avail = func(Via) string { return "нет" } // no tunnel is up; direct and desync need none
+	ctx := context.Background()
+	d := p.Way(ctx, "x.test", testIP, ViaDirect)
+	s := p.Way(ctx, "x.test", testIP, ViaDesync)
+	v := p.Way(ctx, "x.test", testIP, ViaVless)
+	if !d.Clean() || !s.Clean() || s.Via != ViaDesync || v.Skipped == "" {
+		t.Fatalf("direct %+v\ndesync %+v\nvless %+v", d, s, v)
+	}
+	if want := []Via{ViaDirect, ViaDesync}; !slices.Equal(*vias, want) {
+		t.Errorf("dials %v, want %v", *vias, want)
 	}
 }
