@@ -74,14 +74,17 @@
       msg = { ok: false, text: `Введите число в поле «${bad[1]}».`, at: 'form' };
       return;
     }
+    // only what was changed: an untouched field keeps the agent's exact value
+    // (the form shows it rounded)
+    const changed = (f: Field) => f in edits && edits[f] !== fromAgent[f];
+    const body: Partial<SuggestSettings> = {};
+    if (changed('ttfb')) body.ttfb_max_ms = Math.round(ttfb * 1000);
+    if (changed('factor')) body.ttfb_factor = factor;
+    if (changed('speed')) body.kbps_min = Math.round(speed * 1000);
+    if (changed('share')) body.kbps_share = Math.round(share);
+    if (changed('ref')) body.reference = val('ref').trim();
     const ok = await put(
-      {
-        ttfb_max_ms: Math.round(ttfb * 1000),
-        ttfb_factor: factor,
-        kbps_min: Math.round(speed * 1000),
-        kbps_share: Math.round(share),
-        reference: val('ref').trim(),
-      },
+      body,
       'Сохранено. Новые пороги действуют со следующей проверки.',
       'form',
     );
@@ -102,25 +105,28 @@
     const ttfb = reference.ttfb_ms
       ? Math.min(settings.ttfb_max_ms, Math.round(settings.ttfb_factor * reference.ttfb_ms) + 500)
       : settings.ttfb_max_ms;
-    const kbps = reference.kbps
-      ? Math.max(settings.kbps_min, Math.round((reference.kbps * settings.kbps_share) / 100))
-      : settings.kbps_min;
-    return { ttfb, kbps };
+    // the share of the reference's speed: only for a site about as near as the reference
+    const near = reference.kbps ? Math.round((reference.kbps * settings.kbps_share) / 100) : 0;
+    return { ttfb, near: near > settings.kbps_min ? near : 0 };
   });
 </script>
 
 <section class="card">
   <div class="card-head">
-    <button class="linkbtn head-btn" onclick={() => (open = !open)} aria-expanded={open} aria-controls="suggest-settings">
-      <h2>Настройки проверки</h2>
-      <span class="caret" class:on={open} aria-hidden="true">▸</span>
-    </button>
+    <h2>
+      <button class="linkbtn head-btn" onclick={() => (open = !open)} aria-expanded={open} aria-controls="suggest-settings">
+        Настройки проверки
+        <span class="caret" class:on={open} aria-hidden="true">▸</span>
+      </button>
+    </h2>
     <span class="spacer"></span>
     {#if !open}
       <span class="hint">
         первый байт ≤ {secText(settings.ttfb_max_ms)} с · {settings.kbps_min
           ? `скорость ≥ ${num(settings.kbps_min / 1000)} Мбит/с`
-          : 'скорость не ограничена'} · эталон <span class="mono">{settings.reference}</span>
+          : settings.kbps_share
+            ? `скорость ≥ ${settings.kbps_share} % эталона`
+            : 'скорость не ограничена'} · эталон <span class="mono">{settings.reference}</span>
       </span>
     {/if}
   </div>
@@ -129,8 +135,9 @@
     <div id="suggest-settings" class="stack">
       <p class="hint">
         Путь годится, если сайт открылся хотя бы 4 раза из 5, не замирает, и первый байт и скорость — в пределах ниже.
-        Скорость сравнивается, только когда её удалось измерить (на маленькой странице — нет). Берётся первый подходящий
-        путь по порядку (напрямую → DPI → WARP → VLESS), а не самый быстрый.
+        Скорость сравнивается, только когда её удалось измерить (на маленькой странице — нет), а доля от скорости эталона —
+        только для сайтов примерно так же близких, как эталон: скорость короткой загрузки зависит от расстояния. Берётся
+        первый подходящий путь по порядку (напрямую → DPI → WARP → VLESS), а не самый быстрый.
       </p>
 
       <div class="fields">
@@ -164,7 +171,7 @@
             <input type="text" inputmode="numeric" value={val('share')} oninput={(e) => (edits.share = e.currentTarget.value)} />
             <span>% от эталона</span>
           </span>
-          <small>от 0 до 100</small>
+          <small>от 0 до 100; только для близких сайтов</small>
         </label>
         <label class="field wide">
           <span>Эталон — сайт, который открывается хорошо</span>
@@ -184,9 +191,9 @@
 
       {#if now}
         <p class="hint">
-          С этим эталоном сейчас: первый байт — не дольше {msText(now.ttfb)}{now.kbps
-            ? `, скорость — не ниже ${mbit(now.kbps)}`
-            : ''}.
+          С этим эталоном сейчас: первый байт — не дольше {msText(now.ttfb)}, скорость — {settings.kbps_min
+            ? `не ниже ${mbit(settings.kbps_min)}`
+            : 'без нижней границы'}{now.near ? `, у сайтов так же близких, как эталон, — не ниже ${mbit(now.near)}` : ''}.
         </p>
       {/if}
 
@@ -220,6 +227,7 @@
     display: inline-flex;
     align-items: center;
     gap: 8px;
+    font: inherit;
     color: var(--ink);
     text-decoration: none;
   }

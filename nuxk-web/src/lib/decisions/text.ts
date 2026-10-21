@@ -32,8 +32,9 @@ export const SOURCE_TITLE: Record<Suggestion['source'], string> = {
 
 const dec1 = (v: number) => v.toLocaleString('ru-RU', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 
-/** kbit/s → "12,3 Мбит/с"; absent = the speed couldn't be measured. */
-export const mbit = (kbps?: number) => (kbps ? `${dec1(kbps / 1000)} Мбит/с` : 'не измерена');
+/** kbit/s → "12,3 Мбит/с", under 1 Mbit/s "640 кбит/с"; absent = the speed couldn't be measured. */
+export const mbit = (kbps?: number) =>
+  !kbps ? 'не измерена' : kbps < 1000 ? `${Math.round(kbps)} кбит/с` : `${dec1(kbps / 1000)} Мбит/с`;
 
 /** "640 мс"; absent = unknown. */
 export const msText = (ms?: number) => (ms ? `${Math.round(ms).toLocaleString('ru-RU')} мс` : '—');

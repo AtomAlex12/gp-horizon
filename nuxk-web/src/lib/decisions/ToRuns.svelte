@@ -1,7 +1,7 @@
 <script lang="ts">
   // Full (Pi) build only — rendered under `!__LITE__`, so the router bundle
-  // leaves it out. Hands the domains to «Прогоны»: copied to the clipboard and
-  // put into the run form, then the tab opens.
+  // leaves it out. Hands the domains to «Прогоны»: put into the run form (and
+  // copied to the clipboard when the browser lets it), then the tab opens.
   import { runDraft } from '../gpdraft.svelte';
 
   let { domains, label = 'Открыть «Прогоны»' }: { domains: string[]; label?: string } = $props();
@@ -41,4 +41,4 @@
   }
 </script>
 
-<button class="sm" onclick={open} title="Домены скопируются в буфер обмена и подставятся в форму нового прогона">{label}</button>
+<button class="sm" onclick={open} title="Домены подставятся в форму нового прогона">{label}</button>

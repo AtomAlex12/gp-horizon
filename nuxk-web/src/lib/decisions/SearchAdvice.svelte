@@ -20,7 +20,7 @@
     {#if !__LITE__}
       <div class="row">
         <ToRuns {domains} />
-        <span class="hint">домены скопируются в буфер обмена и подставятся в форму прогона</span>
+        <span class="hint">домены подставятся в форму нового прогона</span>
       </div>
     {:else}
       <span class="hint">

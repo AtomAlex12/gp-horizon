@@ -26,6 +26,9 @@
   const v = $derived(verdictOf(s));
   const paths = $derived(s.paths ?? []);
   const acceptTitle = $derived(canAccept ? 'Добавить домен в список «Подбор»' : 'Маршрутизация выключена — принять нельзя');
+  // the suggested way was measured but fell short of the limits (a slow tunnel
+  // is still the only way for a geo-blocked site) — that's not "unchecked"
+  const short = $derived(paths.find((p) => p.via === s.mode && p.tries > 0 && p.opened > 0 && !p.acceptable));
 </script>
 
 <article class="item">
@@ -42,7 +45,10 @@
   </header>
 
   {#if s.state === 'checking'}
-    <p class="hint">Захожу на сайт напрямую, потом — если нужно — через туннели, по несколько попыток. Это до пары минут.</p>
+    <p class="hint">
+      Захожу на сайт напрямую, потом — если нужно — через туннели, по несколько попыток. Обычно это минута-две, у медленного
+      сайта — до 5 минут.
+    </p>
   {:else}
     {#if s.reason}<p class="reason">{s.reason}</p>{/if}
 
@@ -68,6 +74,8 @@
         <span class="mode {s.mode}"><b>{modeTitle(s.mode)}</b></span>
         {#if s.confirmed}
           <span class="chip ok">проверено: открывается</span>
+        {:else if short}
+          <span class="chip deg">проверено: открывается, но хуже порогов</span>
         {:else}
           <span class="chip">не проверено</span>
           {#if s.mode === 'desync'}<span class="hint">DPI можно проверить только после принятия</span>{/if}
@@ -81,7 +89,13 @@
         </div>
       {/if}
     {:else if s.state === 'ready'}
-      <p class="hint">{s.verdict === 'ok' ? 'Ничего делать не нужно.' : 'Маршрут тут не поможет — принимать нечего.'}</p>
+      {#if s.verdict === 'ok'}
+        <p class="hint">Ничего делать не нужно.</p>
+      {:else if s.verdict === 'dns-block'}
+        <p class="hint">Маршрут тут не поможет — нужен защищённый DNS.</p>
+      {:else if !s.verdict || s.verdict === 'unknown'}
+        <p class="hint">Причину определить не удалось — принимать пока нечего.</p>
+      {/if}
     {/if}
 
     {#if s.next === 'search'}
@@ -91,13 +105,25 @@
     <div class="row actions">
       {#if s.state === 'ready'}
         {#if s.mode}
-          <button class="sm" onclick={() => onaccept(s.mode as ListMode)} disabled={!canAccept || pending} title={acceptTitle}>
+          <button
+            class="sm"
+            onclick={() => onaccept(s.mode as ListMode)}
+            disabled={!canAccept || pending}
+            title={acceptTitle}
+            aria-label="Принять для {s.domain}: {modeTitle(s.mode)}"
+          >
             Принять · {modeTitle(s.mode)}
           </button>
         {/if}
         {#if s.alt}
-          <button class="ghost sm" onclick={() => onaccept(s.alt as ListMode)} disabled={!canAccept || pending} title={acceptTitle}>
-            {modeTitle(s.alt)} вместо
+          <button
+            class="ghost sm"
+            onclick={() => onaccept(s.alt as ListMode)}
+            disabled={!canAccept || pending}
+            title={acceptTitle}
+            aria-label="Принять для {s.domain}: {modeTitle(s.alt)}"
+          >
+            Принять · {modeTitle(s.alt)}
           </button>
         {/if}
         <button class="ghost sm" onclick={ondismiss} disabled={pending} aria-label="Скрыть предложение для {s.domain}">Скрыть</button>

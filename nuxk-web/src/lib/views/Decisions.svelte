@@ -19,14 +19,20 @@
   let err = $state('');
   let input = $state('');
   let sending = $state(false);
-  let pending = $state(''); // the domain an accept/dismiss is in flight for
+  let pending = $state<string[]>([]); // domains an accept/dismiss is in flight for
   let msg = $state<{ ok: boolean; text: string } | null>(null);
 
+  // a poll and an action's refresh can overlap: only the latest answer counts
+  let seq = 0;
   async function load() {
+    const n = ++seq;
     try {
-      ov = await api.suggest();
+      const o = await api.suggest();
+      if (n !== seq) return;
+      ov = o;
       err = '';
     } catch (e) {
+      if (n !== seq) return;
       err =
         e instanceof HttpError && e.status === 404
           ? 'Агент на роутере не знает этого раздела — обновите nuxk-core («Система» → обновление).'
@@ -64,6 +70,7 @@
   }
 
   async function queue(f: () => Promise<SuggestQueued>) {
+    if (sending) return false;
     sending = true;
     msg = null;
     try {
@@ -90,22 +97,37 @@
   }
   const recheck = (d: string) => queue(() => api.suggestCheck([d]));
 
+  // the buttons stay locked until the list shows the result, not just the answer
   async function act(domain: string, f: () => Promise<unknown>, done: string) {
-    pending = domain;
+    if (pending.includes(domain)) return;
+    pending = [...pending, domain];
     msg = null;
     try {
       await f();
       msg = { ok: true, text: done };
     } catch (e) {
       msg = { ok: false, text: e instanceof Error ? e.message : String(e) };
-    } finally {
-      pending = '';
     }
     await refresh();
+    pending = pending.filter((d) => d !== domain);
   }
 
-  const accept = (s: Suggestion, mode: ListMode) =>
-    act(
+  function accept(s: Suggestion, mode: ListMode) {
+    // the first «DPI» list makes nuxk the owner of nfqws2's own site list
+    if (
+      mode === 'desync' &&
+      plane &&
+      !plane.desync_managed &&
+      !confirm(
+        `Это будет первый список «DPI». С ним nuxk начнёт сам вести список сайтов nfqws2 (user.list): ` +
+          `при включённом применении файл заменится списками nuxk. Если вы вписывали туда сайты вручную, ` +
+          `сначала перенесите их в «Списки».
+
+Добавить ${s.domain} в «Подбор: DPI»?`,
+      )
+    )
+      return;
+    return act(
       s.domain,
       () => api.suggestAccept(s.domain, mode),
       `${s.domain} добавлен в список «Подбор: ${modeTitle(mode)}». ` +
@@ -113,6 +135,7 @@
           ? 'Роутер применит его за пару минут, после этого nuxk проверит, открывается ли сайт.'
           : 'Роутер не изменится, пока маршрутизация в режиме плана.'),
     );
+  }
   const dismiss = (s: Suggestion) =>
     act(
       s.domain,
@@ -185,7 +208,7 @@
       {/if}
     </p>
 
-    <div class="ways" aria-label="Чем проверяется">
+    <div class="ways" role="group" aria-label="Чем проверяется">
       <span class="lbl">Пути</span>
       <span class="chip {direct && !direct.usable ? 'deg' : 'ok'}" title={direct?.iface ?? ''}>
         напрямую{direct && !direct.usable && direct.why ? ` — ${direct.why}` : ''}
@@ -240,7 +263,7 @@
           <SuggestItem
             {s}
             canAccept={!!plane}
-            pending={pending === s.domain}
+            pending={pending.includes(s.domain)}
             onaccept={(m) => accept(s, m)}
             ondismiss={() => dismiss(s)}
           />
@@ -250,13 +273,20 @@
 
     {#if quiet.length}
       <details class="fold">
-        <summary>Проверено автоматически, всё в порядке: {quiet.length}</summary>
+        <summary>Найдены по DNS, делать ничего не нужно: {quiet.length}</summary>
         <p class="hint">
-          Найдены по журналу DNS и открываются напрямую — делать ничего не нужно. Снова проверятся не раньше чем через неделю.
+          Открываются напрямую или не похожи на сайт, который маршрут сделал бы рабочим. Снова проверятся не раньше чем через
+          неделю; проверить сейчас — введите домен выше.
         </p>
         <ul class="mini">
           {#each quiet as s (s.domain)}
-            <li><span class="mono">{s.domain}</span><span class="hint">{ago(s.checked_at)}</span></li>
+            {@const v = verdictOf(s)}
+            <li>
+              <span class="mono">{s.domain}</span>
+              <span class="chip {v.cls}">{v.label}</span>
+              {#if s.verdict !== 'ok' && s.reason}<span class="hint">{s.reason}</span>{/if}
+              <span class="hint">{ago(s.checked_at)}</span>
+            </li>
           {/each}
         </ul>
       </details>
@@ -272,9 +302,15 @@
             <li>
               <span class="mono">{s.domain}</span>
               {#if s.verdict && s.verdict !== 'unknown'}<span class="chip {v.cls}">{v.label}</span>{/if}
-              {#if s.accepted}<span class="hint">был принят: {modeTitle(s.accepted)}</span>{/if}
               <span class="spacer"></span>
-              <button class="ghost sm" onclick={() => recheck(s.domain)} disabled={sending}>Проверить снова</button>
+              {#if s.accepted}
+                <!-- still in «Подбор»: domains already in a list aren't checked -->
+                <span class="hint">в списке «Подбор: {modeTitle(s.accepted)}» — чтобы проверить заново, уберите его оттуда</span>
+              {:else}
+                <button class="ghost sm" onclick={() => recheck(s.domain)} disabled={sending} aria-label="Проверить {s.domain} снова">
+                  Проверить снова
+                </button>
+              {/if}
             </li>
           {/each}
         </ul>
@@ -295,7 +331,7 @@
           <SuggestItem
             {s}
             canAccept={!!plane}
-            pending={pending === s.domain}
+            pending={pending.includes(s.domain)}
             onaccept={(m) => accept(s, m)}
             ondismiss={() => dismiss(s)}
           />
@@ -313,9 +349,10 @@
 
   {#if err}<p class="err-text">Нет связи с агентом: {err} Показаны последние данные.</p>{/if}
   <p class="hint legend">
-    Как читать выводы: «сайт блокирует Россию» — отказывает сам
-    сайт, поможет только VLESS (WARP выходит в Москве); «блок по имени», «блок по адресу», «заморозка» — режет провайдер:
-    сначала DPI, потом WARP, потом подбор стратегии; «подмена DNS» — нужен защищённый DNS, маршрут не поможет.
+    Как читать выводы: «сайт блокирует Россию» — отказывает сам сайт, поможет только VLESS (WARP выходит в Москве); «блок
+    по имени», «заморозка» — режет провайдер: сначала DPI, если не помог — подбор стратегии, а пока он идёт — туннель;
+    «блок по адресу» — то же, но если соединения нет вовсе, DPI не поможет, нужен туннель; «подмена DNS» — нужен
+    защищённый DNS, маршрут не поможет.
   </p>
 {/if}
 
