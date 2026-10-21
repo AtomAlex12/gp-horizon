@@ -19,7 +19,7 @@ import (
 
 func (d Deps) suggestOff(w http.ResponseWriter) bool {
 	if d.Suggest == nil {
-		writeErr(w, http.StatusNotFound, "suggest_off", "route suggestions are off")
+		writeErr(w, http.StatusNotFound, "suggest_off", "советы по маршрутам выключены")
 		return true
 	}
 	return false
@@ -89,13 +89,13 @@ func (d Deps) handleSuggestAccept(w http.ResponseWriter, r *http.Request) {
 	}
 	switch err := d.Suggest.Accept(r.PathValue("domain"), req.Mode); {
 	case errors.Is(err, suggest.ErrNotFound):
-		writeErr(w, http.StatusNotFound, "not_found", "no such suggestion (already accepted, dismissed or still being checked)")
+		writeErr(w, http.StatusNotFound, "not_found", err.Error())
 	case errors.Is(err, suggest.ErrNoMode):
-		writeErr(w, http.StatusConflict, "nothing_to_route", "routing would not help for this domain")
+		writeErr(w, http.StatusConflict, "nothing_to_route", err.Error())
 	case errors.Is(err, suggest.ErrBadMode), errors.Is(err, plane.ErrBadList):
 		writeErr(w, http.StatusBadRequest, "bad_mode", err.Error())
 	case errors.Is(err, suggest.ErrNoPlane):
-		writeErr(w, http.StatusNotFound, "plane_off", "routing plane is off (PLANE= in nuxk.conf)")
+		writeErr(w, http.StatusNotFound, "plane_off", err.Error())
 	case err != nil:
 		writeErr(w, http.StatusInternalServerError, "state_error", err.Error())
 	default:
@@ -108,7 +108,7 @@ func (d Deps) handleSuggestDismiss(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := d.Suggest.Dismiss(r.PathValue("domain")); err != nil {
-		writeErr(w, http.StatusNotFound, "not_found", "no such suggestion")
+		writeErr(w, http.StatusNotFound, "not_found", err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})

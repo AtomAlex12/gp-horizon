@@ -116,6 +116,8 @@ func (l *ladder) afterDirect(ctx context.Context) {
 		l.provider(ctx, probe.VerdictFreeze, true, "Соединение устанавливается, но замирает после первых ~16 КБ — так ТСПУ режет зарубежные хостинги и CDN.")
 	case d.Opened > 0:
 		l.provider(ctx, probe.VerdictSlow, true, "Напрямую открывается не каждый раз ("+j.why+").")
+	case d.Cut:
+		l.provider(ctx, probe.VerdictFreeze, true, fmt.Sprintf("Ответ начинает приходить, но соединение обрывается посреди страницы (после %d КБ) — так ТСПУ режет зарубежные хостинги и CDN.", d.Bytes>>10))
 	case d.TLS && d.Status > 0:
 		l.it.Verdict = string(probe.VerdictUnknown)
 		l.it.Reason = fmt.Sprintf("Сайт отвечает, но не открывается нормально (HTTP %d) — это его неполадка, маршрут тут не поможет.", d.Status)
@@ -282,6 +284,8 @@ func describe(j judged) Path {
 		p.Result = "замирает после первых ~16 КБ"
 	case m.Opened > 0:
 		p.Result = j.why
+	case m.Cut:
+		p.Result = fmt.Sprintf("обрывается посреди страницы (после %d КБ)", m.Bytes>>10)
 	case !m.TCP:
 		p.Result = "не подключается: " + failText[m.TCPFail]
 	case !m.TLS:

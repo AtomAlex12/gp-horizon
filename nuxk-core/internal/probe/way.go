@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/tls"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -23,7 +24,9 @@ const (
 // Way probes one way out to ip: up to Samples tries one after another — in
 // parallel, many handshakes for one name can trip the DPI by themselves —
 // then one freeze test. It stops as soon as the way can no longer come out
-// clean, so a blocked site costs about two tries, not five.
+// clean, so a blocked site costs about two tries, not five. A walk that ctx
+// cut short says nothing and comes back Skipped: one good try out of one is
+// not "opens".
 func (p *Prober) Way(ctx context.Context, domain string, ip net.IP, via Via) Result {
 	r := Result{Via: via, Iface: p.Ifaces[via]}
 	if tunnel(via) {
@@ -50,6 +53,7 @@ func (p *Prober) Way(ctx context.Context, domain string, ip net.IP, via Via) Res
 			}
 		}
 		r.Bytes = max(r.Bytes, s.bytes)
+		r.Cut = r.Cut || s.cut
 		if s.opened() {
 			r.Opened++
 			ok = append(ok, s)
@@ -60,6 +64,9 @@ func (p *Prober) Way(ctx context.Context, domain string, ip net.IP, via Via) Res
 	}
 	if r.Opened > 0 && !r.Frozen && !p.NoFreeze && ctx.Err() == nil {
 		r.Frozen = p.frozen(ctx, domain, addr, via)
+	}
+	if ctx.Err() != nil {
+		r.Skipped = Interrupted
 	}
 
 	if len(ok) == 0 {
@@ -94,10 +101,11 @@ type sample struct {
 	bytes   int64
 	kbps    int  // 0 = not measurable
 	stalled bool // the body stopped coming mid-way
+	cut     bool // the body broke off mid-way: a reset, or closed before its length
 }
 
 func (s sample) opened() bool {
-	return s.tls && s.status > 0 && s.status < 500 && s.signal == SignalNone
+	return s.tls && s.status > 0 && s.status < 500 && s.signal == SignalNone && !s.cut
 }
 
 // sample is one try: dial, TLS, GET /, read the page.
@@ -155,6 +163,7 @@ func (p *Prober) sample(ctx context.Context, domain, addr string, via Via) (s sa
 	s.bytes = n
 	s.signal = geoSignal(resp.StatusCode, resp.Header, string(head))
 	s.stalled = end == bodyStalled
+	s.cut = end == bodyCut
 	if n >= speedBody || end == bodySlow && n > 0 {
 		s.kbps = kbps(n, took)
 	}
@@ -192,9 +201,10 @@ func request(method, domain string, body io.Reader) (*http.Request, error) {
 type bodyEnd int
 
 const (
-	bodyDone    bodyEnd = iota // to the end, to the cap, or cut by an error
+	bodyDone    bodyEnd = iota // to the end or to the cap
 	bodySlow                   // still coming when the stage ran out
 	bodyStalled                // nothing came for half a stage: the freeze
+	bodyCut                    // broke off: a reset, or the connection closed before the declared length
 )
 
 // readBody reads up to maxBody of a page and keeps its first headBody bytes.
@@ -220,11 +230,15 @@ func (p *Prober) readBody(ctx context.Context, conn net.Conn, body io.Reader) (h
 		}
 		n += int64(k)
 		if err != nil {
-			if timedOut(err, dl) && ctx.Err() == nil {
+			switch {
+			case errors.Is(err, io.EOF) || ctx.Err() != nil:
+			case timedOut(err, dl):
 				end = bodyStalled
 				if last {
 					end = bodySlow
 				}
+			default:
+				end = bodyCut
 			}
 			break
 		}

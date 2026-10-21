@@ -32,6 +32,14 @@ func DefaultSettings() Settings {
 // is not "slow" next to one across town.
 const ttfbSlack = 500
 
+// A short download's speed is bound by the round trip (TCP slow start), so a
+// site across the world can't match one across town: the share of the
+// reference's speed applies only to a site about as near as the reference —
+// its connect time within 2× the reference's plus nearSlack.
+const nearSlack = 20 // ms
+
+func near(siteMs, refMs int) bool { return refMs > 0 && siteMs > 0 && siteMs <= 2*refMs+nearSlack }
+
 // refEvery: the reference is measured again at most this often.
 const refEvery = 10 * time.Minute
 
@@ -60,11 +68,12 @@ func (s Settings) check() (Settings, error) {
 // Reference is the well-reachable site's direct measurement: the yardstick
 // for "slow" that moves with the line itself.
 type Reference struct {
-	Domain string `json:"domain"`
-	OK     bool   `json:"ok"` // it opened directly when last measured
-	TTFBMs int    `json:"ttfb_ms,omitempty"`
-	Kbps   int    `json:"kbps,omitempty"`
-	At     int64  `json:"at,omitempty"` // when measured (unix); 0 = not yet
+	Domain    string `json:"domain"`
+	OK        bool   `json:"ok"` // it opened directly when last measured
+	ConnectMs int    `json:"connect_ms,omitempty"`
+	TTFBMs    int    `json:"ttfb_ms,omitempty"`
+	Kbps      int    `json:"kbps,omitempty"`
+	At        int64  `json:"at,omitempty"` // when measured (unix); 0 = not yet
 }
 
 // Settings now.
@@ -107,7 +116,7 @@ func (s *Service) bar(ctx context.Context) bar {
 	defer cancel()
 	if ip, why := s.P.Resolve(rctx, ref.Domain); why == "" {
 		if m := s.P.Way(rctx, ref.Domain, ip, probe.ViaDirect); m.Clean() {
-			ref.OK, ref.TTFBMs, ref.Kbps = true, m.TTFBMs, m.Kbps
+			ref.OK, ref.ConnectMs, ref.TTFBMs, ref.Kbps = true, m.ConnectMs, m.TTFBMs, m.Kbps
 		}
 	}
 	if !ref.OK {
@@ -135,9 +144,12 @@ func (b bar) judge(m probe.Result) (bool, string) {
 		return false, "не измерен"
 	case m.Frozen:
 		return false, "соединение замирает после первых ~16 КБ"
-	case m.Signal != probe.SignalNone || m.Status >= 500:
-		return false, "сайт отвечает отказом или ошибкой"
 	case m.Opened*5 < m.Tries*4:
+		// one refusal among good tries is the 4-in-5 rule's to forgive; only
+		// a way that never opened is "refuses"
+		if m.Opened == 0 && (m.Signal != probe.SignalNone || m.Status >= 500) {
+			return false, "сайт отвечает отказом или ошибкой"
+		}
 		return false, fmt.Sprintf("открылся %d из %d раз", m.Opened, m.Tries)
 	}
 	if m.TTFBMs > 0 {
@@ -154,7 +166,7 @@ func (b bar) judge(m probe.Result) (bool, string) {
 		if m.Kbps < b.KbpsMin {
 			return false, "скорость " + speed(m.Kbps) + " (нужно от " + speed(b.KbpsMin) + ")"
 		}
-		if b.ref.OK && b.ref.Kbps > 0 && m.Kbps*100 < b.ref.Kbps*b.KbpsShare {
+		if b.ref.OK && b.ref.Kbps > 0 && near(m.ConnectMs, b.ref.ConnectMs) && m.Kbps*100 < b.ref.Kbps*b.KbpsShare {
 			return false, fmt.Sprintf("скорость %s — меньше %d%% эталона (%s: %s)", speed(m.Kbps), b.KbpsShare, b.ref.Domain, speed(b.ref.Kbps))
 		}
 	}

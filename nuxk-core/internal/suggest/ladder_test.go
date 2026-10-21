@@ -127,7 +127,8 @@ func TestLadderDNS(t *testing.T) {
 
 func TestJudge(t *testing.T) {
 	set := DefaultSettings()
-	withRef := bar{set, Reference{Domain: "ya.ru", OK: true, TTFBMs: 100, Kbps: 20000}}
+	withRef := bar{set, Reference{Domain: "ya.ru", OK: true, ConnectMs: 10, TTFBMs: 100, Kbps: 20000}}
+	at := func(connectMs int, r probe.Result) probe.Result { r.ConnectMs = connectMs; return r }
 	noRef := bar{set, Reference{Domain: "ya.ru"}}
 	for _, c := range []struct {
 		name string
@@ -138,6 +139,8 @@ func TestJudge(t *testing.T) {
 		{"fast", noRef, opened(300, 0), true},
 		{"4 of 5", noRef, probe.Result{TLS: true, Status: 200, Tries: 5, Opened: 4, TTFBMs: 300}, true},
 		{"3 of 5", noRef, probe.Result{TLS: true, Status: 200, Tries: 5, Opened: 3, TTFBMs: 300}, false},
+		{"the first try refused, 4 of 5 opened", noRef, probe.Result{TLS: true, Status: 503, Tries: 5, Opened: 4, TTFBMs: 300}, true},
+		{"a challenge first, 4 of 5 opened", noRef, probe.Result{TLS: true, Status: 403, Signal: probe.SignalChallenge, Tries: 5, Opened: 4, TTFBMs: 300}, true},
 		{"frozen", noRef, frozen(), false},
 		{"skipped", noRef, probe.Result{Skipped: "нет"}, false},
 		{"not measured", noRef, probe.Result{}, false},
@@ -150,8 +153,12 @@ func TestJudge(t *testing.T) {
 		{"speed not measurable: not judged", withRef, opened(300, 0), true},
 		{"below the speed floor", noRef, opened(300, 1999), false},
 		{"above the floor, no reference", noRef, opened(300, 2000), true},
-		{"below 30% of the reference", withRef, opened(300, 5999), false},
-		{"30% of the reference", withRef, opened(300, 6000), true},
+		{"below 30% of the reference", withRef, at(40, opened(300, 5999)), false},
+		{"30% of the reference", withRef, at(40, opened(300, 6000)), true},
+		{"far away: only the floor", withRef, at(41, opened(300, 2000)), true},
+		{"far away, below the floor", withRef, at(200, opened(300, 1999)), false},
+		{"connect time unknown: only the floor", withRef, opened(300, 2000), true},
+		{"interrupted", noRef, probe.Result{Skipped: probe.Interrupted, Tries: 1, Opened: 1}, false},
 	} {
 		if ok, why := c.b.judge(c.m); ok != c.ok || ok != (why == "") {
 			t.Errorf("%s: got %v %q, want %v", c.name, ok, why, c.ok)

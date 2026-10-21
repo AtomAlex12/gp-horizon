@@ -160,3 +160,89 @@ func TestDismissedNeverVerified(t *testing.T) {
 		t.Fatalf("a dismissed item was measured: %v", p.calls)
 	}
 }
+
+// Moved by hand to the tunnel advised while a strategy search runs: the
+// check follows the domain instead of waiting for nfqws2 forever.
+func TestVerifyFollowsAMove(t *testing.T) {
+	s, p, rt, c := accepted(t, "desync")
+	p.set("x.example", probe.ViaDesync, sniCut())
+	c.advance(verifyAfter)
+	s.verifyDue(context.Background())
+	if it := item(t, s, "x.example"); it.Next != NextSearch || it.Interim != "warp" {
+		t.Fatalf("before the move: %+v", it)
+	}
+	rt.modes = map[string]plane.Mode{"x.example": plane.ModeWarp}
+	p.reset()
+	c.advance(reverifyEvery)
+	s.verifyDue(context.Background())
+	it := item(t, s, "x.example")
+	if it.Accepted != "warp" || it.Next != "" || it.Interim != "" || it.VerifiedAt != 0 ||
+		it.VerifyDue != c.t.Add(verifyAfter).Unix() || !strings.Contains(it.VerifyNote, "перенесён") || len(p.calls) != 0 {
+		t.Fatalf("after the move: %+v calls %v", it, p.calls)
+	}
+	c.advance(verifyAfter)
+	s.verifyDue(context.Background())
+	if it := item(t, s, "x.example"); !it.Verified || strings.Join(p.walked("x.example"), ",") != "warp" {
+		t.Fatalf("the new way: %+v walked %v", it, p.walked("x.example"))
+	}
+}
+
+// A DNS hiccup measures nothing: the last real result stays, and the next
+// look is soon.
+func TestVerifyDNSFailureKeepsTheResult(t *testing.T) {
+	s, p, _, c := accepted(t, "warp")
+	c.advance(verifyAfter)
+	s.verifyDue(context.Background())
+	before := item(t, s, "x.example")
+	if !before.Verified {
+		t.Fatalf("%+v", before)
+	}
+	p.dns["x.example"] = "timeout"
+	c.advance(reverifyEvery)
+	s.verifyDue(context.Background())
+	it := item(t, s, "x.example")
+	if !it.Verified || it.VerifiedAt != before.VerifiedAt || it.VerifyDue != c.t.Add(verifyWait).Unix() || !strings.Contains(it.VerifyNote, "DNS") {
+		t.Fatalf("%+v", it)
+	}
+}
+
+// The agent stopping mid-check leaves no verdict behind.
+func TestVerifyStoppingLeavesItDue(t *testing.T) {
+	s, _, _, c := accepted(t, "warp")
+	c.advance(verifyAfter)
+	due := item(t, s, "x.example").VerifyDue
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	s.verifyDue(ctx)
+	if it := item(t, s, "x.example"); it.VerifiedAt != 0 || it.VerifyNote != "" || it.VerifyDue != due {
+		t.Fatalf("%+v", it)
+	}
+}
+
+type countStore struct {
+	Store
+	saves int
+}
+
+func (c *countStore) SaveJSON(name string, v any) error {
+	c.saves++
+	return c.Store.SaveJSON(name, v)
+}
+
+// In plan mode the check waits; waiting again with nothing new for the person
+// doesn't rewrite the file every 10 minutes.
+func TestVerifyWaitDoesNotRewrite(t *testing.T) {
+	s, _, rt, c := accepted(t, "desync")
+	cs := &countStore{Store: s.Store}
+	s.Store = cs
+	rt.status.Apply = false
+	c.advance(verifyAfter)
+	s.verifyDue(context.Background())
+	for range 3 {
+		c.advance(verifyWait)
+		s.verifyDue(context.Background())
+	}
+	if it := item(t, s, "x.example"); cs.saves != 1 || it.VerifyDue != c.t.Add(verifyWait).Unix() {
+		t.Fatalf("saves %d, item %+v", cs.saves, it)
+	}
+}

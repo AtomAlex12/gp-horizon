@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net"
 	"sort"
 	"sync"
 	"time"
@@ -137,11 +138,13 @@ type Queued struct {
 	Skipped []Skip   `json:"skipped"`
 }
 
+// The errors' words reach the person as they are (the screen shows the
+// API's message).
 var (
-	ErrNotFound = errors.New("no such suggestion")
-	ErrNoMode   = errors.New("nothing to route for this domain")
-	ErrBadMode  = errors.New("mode is neither the suggested one nor the verified alternative")
-	ErrNoPlane  = errors.New("routing plane is off")
+	ErrNotFound = errors.New("такого предложения нет: оно уже принято, скрыто или ещё проверяется")
+	ErrNoMode   = errors.New("для этого сайта маршрут не поможет — принимать нечего")
+	ErrBadMode  = errors.New("этот путь не предлагался: можно принять предложенный или проверенный запасной")
+	ErrNoPlane  = errors.New("маршрутизация выключена (PLANE= в nuxk.conf)")
 )
 
 // Store persists the suggestions and settings (state/suggest.json).
@@ -153,6 +156,7 @@ type Store interface {
 // Router is the plane as the service sees it. nil = plane off.
 type Router interface {
 	Covered(domain string) string
+	ModeOf(domain string) plane.Mode // the mode of nuxk's list that carries it; "" = none
 	AddAuto(mode plane.Mode, domain string) error
 	Status() plane.Status
 }
@@ -172,12 +176,13 @@ type Service struct {
 
 	now func() time.Time
 
-	queue chan string
-	mu    sync.Mutex
-	items map[string]*Item
-	busy  int
-	set   Settings
-	ref   Reference
+	queue     chan string
+	mu        sync.Mutex
+	items     map[string]*Item
+	busy      int
+	set       Settings
+	ref       Reference
+	accepting map[string]bool // an Accept is between its checks and the plane
 
 	// the worker's own (Run's goroutine)
 	lastDiscover time.Time
@@ -193,7 +198,7 @@ type file struct {
 // stopped is dropped, not shown as stuck.
 func New(p Prober, st Store, rt Router, desync func() bool) *Service {
 	s := &Service{P: p, Store: st, Router: rt, Desync: desync, now: time.Now,
-		queue: make(chan string, maxQueue), items: map[string]*Item{}, passed: map[string]time.Time{}}
+		queue: make(chan string, maxQueue), items: map[string]*Item{}, accepting: map[string]bool{}, passed: map[string]time.Time{}}
 	f := file{Settings: DefaultSettings()} // what the file leaves out keeps its default
 	if err := st.LoadJSON(stateKey, &f); err != nil {
 		slog.Warn("suggest: stored suggestions unreadable, starting empty", "err", err)
@@ -213,9 +218,10 @@ func New(p Prober, st Store, rt Router, desync func() bool) *Service {
 		if it.Source == "" {
 			it.Source = SourceUser
 		}
-		if it.State == StateAccepted && it.VerifyDue == 0 && it.VerifiedAt == 0 {
-			// accepted before verification existed: measure it soon
-			it.Accepted, it.VerifyDue = it.Mode, now.Add(verifyAfter).Unix()
+		if it.State == StateAccepted && it.Accepted == "" {
+			// accepted before verification existed, maybe the alternative: the
+			// check reads the mode off the plane's lists
+			it.VerifyDue = now.Add(verifyAfter).Unix()
 		}
 		s.items[it.Domain] = &it
 	}
@@ -257,10 +263,19 @@ func (s *Service) process(ctx context.Context, domain string) {
 	defer cancel()
 	it := decide(pctx, s.P, s.bar(pctx), s.desync(), domain)
 	it.State, it.CheckedAt = StateReady, s.now().Unix()
+	if pctx.Err() != nil {
+		// a ladder cut short proves nothing: say so, keep what was measured
+		it.Verdict, it.Mode, it.Alt, it.Confirmed = string(probe.VerdictUnknown), "", "", false
+		it.Reason = "Проверка не уложилась в 5 минут — сайт отвечает слишком медленно. Проверьте ещё раз позже."
+	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	old := s.items[domain]
+	if ctx.Err() != nil { // the agent is stopping: no verdict, and in-flight checks aren't kept
+		delete(s.items, domain)
+		return
+	}
 	if old == nil || old.State != StateChecking {
 		return // dismissed or removed while probing
 	}
@@ -273,10 +288,12 @@ func (s *Service) process(ctx context.Context, domain string) {
 	slog.Info("suggest: checked", "domain", domain, "source", it.Source, "verdict", it.Verdict, "mode", it.Mode, "alt", it.Alt, "confirmed", it.Confirmed)
 }
 
-// quiet: nothing in it for the person — it opens, or nothing can be said and
-// nothing routed. A domain they didn't ask about stays out of sight then.
+// quiet: nothing in it for the person — it opens, or it is slow or unclear
+// with nothing to route. A domain they didn't ask about stays out of sight
+// then. A block with no way around stays in view: it says what to install.
 func quiet(it Item) bool {
-	return it.Verdict == string(probe.VerdictOK) || it.Mode == "" && it.Verdict == string(probe.VerdictUnknown)
+	return it.Verdict == string(probe.VerdictOK) ||
+		it.Mode == "" && (it.Verdict == string(probe.VerdictUnknown) || it.Verdict == string(probe.VerdictSlow))
 }
 
 func (s *Service) desync() bool { return s.Desync != nil && s.Desync() }
@@ -311,6 +328,10 @@ func (s *Service) enqueue(domains []string, force bool, source string) Queued {
 			continue
 		}
 		seen[d] = true
+		if net.ParseIP(d) != nil {
+			out.Skipped = append(out.Skipped, Skip{d, "это адрес, а не имя сайта — проверяются имена"})
+			continue
+		}
 		if why := s.covered(d); why != "" {
 			out.Skipped = append(out.Skipped, Skip{d, "уже маршрутизируется: " + why})
 			continue
@@ -321,6 +342,10 @@ func (s *Service) enqueue(domains []string, force bool, source string) Queued {
 		case old != nil && old.State == StateChecking:
 			s.mu.Unlock()
 			out.Skipped = append(out.Skipped, Skip{d, "уже проверяется"})
+			continue
+		case s.accepting[d]:
+			s.mu.Unlock()
+			out.Skipped = append(out.Skipped, Skip{d, "предложение как раз принимается"})
 			continue
 		case old != nil && !force && (old.State == StateDismissed || old.State == StateAccepted):
 			s.mu.Unlock()
@@ -379,7 +404,7 @@ func (s *Service) Overview() Overview {
 func (s *Service) Accept(domain, mode string) error {
 	s.mu.Lock()
 	it, ok := s.items[domain]
-	if !ok || it.State != StateReady {
+	if !ok || it.State != StateReady || s.accepting[domain] {
 		s.mu.Unlock()
 		return ErrNotFound
 	}
@@ -393,16 +418,21 @@ func (s *Service) Accept(domain, mode string) error {
 	case mode != it.Mode && mode != it.Alt:
 		s.mu.Unlock()
 		return ErrBadMode
-	}
-	s.mu.Unlock()
-	if s.Router == nil {
+	case s.Router == nil:
+		s.mu.Unlock()
 		return ErrNoPlane
 	}
-	if err := s.Router.AddAuto(plane.Mode(mode), domain); err != nil {
-		return err
-	}
+	// held until the item says accepted: a second Accept, a dismiss or a
+	// recheck can't slip in while the plane is being written
+	s.accepting[domain] = true
+	s.mu.Unlock()
+	err := s.Router.AddAuto(plane.Mode(mode), domain)
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	delete(s.accepting, domain)
+	if err != nil {
+		return err
+	}
 	if it := s.items[domain]; it != nil {
 		now := s.now()
 		it.State, it.Hidden = StateAccepted, false
@@ -421,7 +451,7 @@ func (s *Service) Dismiss(domain string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	it, ok := s.items[domain]
-	if !ok || it.State == StateChecking {
+	if !ok || it.State == StateChecking || s.accepting[domain] {
 		return ErrNotFound
 	}
 	it.State, it.VerifyDue = StateDismissed, 0

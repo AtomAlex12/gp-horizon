@@ -805,7 +805,7 @@ paths:
       description: What the body leaves out stays as it is. A new reference is measured with the next check.
       requestBody:
         required: true
-        content: { application/json: { schema: { $ref: "#/components/schemas/SuggestSettings" } } }
+        content: { application/json: { schema: { $ref: "#/components/schemas/SuggestSettingsUpdate" } } }
       responses:
         "200":
           description: the settings now
@@ -822,7 +822,12 @@ paths:
         Nothing changes on the router unless the plane is in apply mode (PLANE_APPLY=1).
         `mode` may be the suggested one (default) or the verified alternative. About two
         minutes later (once the plane has applied it), and then daily, the accepted way is
-        measured again: see `verified`, `verify_note`, `next`, `interim`.
+        measured again: see `verified`, `verify_note`, `next`, `interim`. If the domain is later
+        moved to another of nuxk's lists by hand, the check follows it.
+
+        The first «DPI» list (mode `desync` while `GET /plane` says `desync_managed: false`)
+        makes nuxk the owner of nfqws2's own site list: with apply on, `user.list` is then
+        written from nuxk's DPI lists, and what was typed into it by hand goes.
       parameters:
         - { name: domain, in: path, required: true, schema: { type: string } }
       requestBody:
@@ -922,7 +927,7 @@ components:
         reason: { type: string, description: why, in words for the user }
         paths: { type: array, items: { $ref: "#/components/schemas/SuggestPath" } }
         checked_at: { type: integer }
-        hidden: { type: boolean, description: "found in DNS with nothing to tell (it opens): kept so it isn't measured again for a week; the screen hides it" }
+        hidden: { type: boolean, description: "found in DNS with nothing to do: it opens, or it is slow or unclear with nothing to route; kept so it isn't measured again for a week; the screen folds it away" }
         accepted: { $ref: "#/components/schemas/ListMode", description: the list the person put it in (mode or alt) }
         accepted_at: { type: integer }
         verified: { type: boolean, description: the accepted way was measured good enough after acceptance }
@@ -942,9 +947,20 @@ components:
         ttfb_max_ms: { type: integer, minimum: 500, maximum: 30000, description: "the first byte within this, always (5000)" }
         ttfb_factor: { type: number, minimum: 1, maximum: 20, description: "...and within this × the reference's first byte + 500 ms, when known (3)" }
         kbps_min: { type: integer, minimum: 0, maximum: 1000000, description: "speed, when measurable: at least this, kbit/s (2000)" }
-        kbps_share: { type: integer, minimum: 0, maximum: 100, description: "...and at least this percent of the reference's speed, when known (30)" }
+        kbps_share: { type: integer, minimum: 0, maximum: 100, description: "...and at least this percent of the reference's speed, when known and the site is about as near as the reference (30)" }
         reference: { type: string, description: "a well-reachable site measured directly, at most every 10 minutes (ya.ru)" }
         discover: { type: boolean, description: "look for sites in the router's DNS questions — works only while protected DNS is on (true)" }
+
+    SuggestSettingsUpdate:
+      type: object
+      description: Any of SuggestSettings' fields; what is left out stays as it is.
+      properties:
+        ttfb_max_ms: { type: integer, minimum: 500, maximum: 30000 }
+        ttfb_factor: { type: number, minimum: 1, maximum: 20 }
+        kbps_min: { type: integer, minimum: 0, maximum: 1000000 }
+        kbps_share: { type: integer, minimum: 0, maximum: 100 }
+        reference: { type: string }
+        discover: { type: boolean }
 
     SuggestReference:
       type: object
@@ -952,6 +968,7 @@ components:
       properties:
         domain: { type: string }
         ok: { type: boolean, description: it opened directly when last measured; false = only the fixed limits apply }
+        connect_ms: { type: integer, description: "median TCP connect: the share of the reference's speed applies only to a site whose connect time is within 2× this + 20 ms (a short download's speed follows the distance)" }
         ttfb_ms: { type: integer }
         kbps: { type: integer, description: absent = not measurable }
         at: { type: integer, description: "when measured (unix); absent = not yet" }

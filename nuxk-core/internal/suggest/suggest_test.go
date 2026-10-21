@@ -19,6 +19,7 @@ import (
 type fakeRouter struct {
 	covered map[string]string
 	added   []string
+	modes   map[string]plane.Mode // moved by hand: overrides what added says
 	err     error
 	status  plane.Status
 }
@@ -30,6 +31,18 @@ func (f *fakeRouter) Covered(d string) string {
 	for _, a := range f.added { // an accepted domain is in a «Подбор» list
 		if strings.HasSuffix(a, ":"+d) {
 			return "список «Подбор»"
+		}
+	}
+	return ""
+}
+
+func (f *fakeRouter) ModeOf(d string) plane.Mode {
+	if m, ok := f.modes[d]; ok {
+		return m
+	}
+	for i := len(f.added) - 1; i >= 0; i-- {
+		if m, dom, _ := strings.Cut(f.added[i], ":"); dom == d {
+			return plane.Mode(m)
 		}
 	}
 	return ""
@@ -360,5 +373,118 @@ func TestReference(t *testing.T) {
 	drain(s)
 	if n := len(p.walked("ya.ru")); n != 2 {
 		t.Errorf("reference measured %d times after 11 min, want 2", n)
+	}
+}
+
+// The agent stopping mid-check: the domain is dropped, not saved with a
+// verdict the cut walk can't back.
+func TestProcessStoppingDropsTheCheck(t *testing.T) {
+	p := newFake()
+	p.set("x.example", probe.ViaDirect, opened(200, 0))
+	s, _, _ := newService(t, p, &fakeRouter{}, false)
+	s.Check([]string{"x.example"}, true)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	s.process(ctx, <-s.queue)
+	if ov := s.Overview(); len(ov.Items) != 0 || ov.Busy != 0 {
+		t.Fatalf("%+v", ov)
+	}
+}
+
+type slowRouter struct {
+	*fakeRouter
+	entered, gate chan struct{}
+}
+
+func (r slowRouter) AddAuto(m plane.Mode, d string) error {
+	close(r.entered)
+	<-r.gate
+	return r.fakeRouter.AddAuto(m, d)
+}
+
+// While Accept writes the plane, a second Accept, a dismiss or a recheck of
+// the same domain is turned away.
+func TestAcceptIsHeldWhileWriting(t *testing.T) {
+	p := newFake()
+	p.set("x.example", probe.ViaDirect, sniCut())
+	p.set("x.example", probe.ViaWarp, opened(300, 0))
+	rt := slowRouter{&fakeRouter{}, make(chan struct{}), make(chan struct{})}
+	s, _, _ := newService(t, p, rt, true)
+	s.Check([]string{"x.example"}, true)
+	drain(s)
+	done := make(chan error)
+	go func() { done <- s.Accept("x.example", "desync") }()
+	<-rt.entered
+	if err := s.Accept("x.example", "warp"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("second accept: %v", err)
+	}
+	if err := s.Dismiss("x.example"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("dismiss: %v", err)
+	}
+	if q := s.Check([]string{"x.example"}, true); len(q.Queued) != 0 {
+		t.Errorf("recheck: %+v", q)
+	}
+	close(rt.gate)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if it := item(t, s, "x.example"); it.State != StateAccepted || it.Accepted != "desync" || len(rt.added) != 1 {
+		t.Fatalf("%+v added %v", it, rt.added)
+	}
+}
+
+// Accepted under the build that kept no mode — maybe the alternative: the
+// check reads it off the plane's lists.
+func TestOldAcceptedReadsTheModeOffThePlane(t *testing.T) {
+	st, err := state.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := file{Settings: DefaultSettings(), Items: []Item{{Domain: "x.example", State: StateAccepted, Source: SourceUser, Mode: "desync", Alt: "warp", Verdict: "sni-block"}}}
+	if err := st.SaveJSON(stateKey, old); err != nil {
+		t.Fatal(err)
+	}
+	p := newFake()
+	p.set("x.example", probe.ViaWarp, opened(300, 0))
+	rt := &fakeRouter{added: []string{"warp:x.example"}, status: plane.Status{Apply: true,
+		Groups: []plane.Group{{Mode: plane.ModeWarp, Domains: []string{"x.example"}}}}}
+	s := New(p, st, rt, func() bool { return true })
+	c := &clock{time.Now()}
+	s.now = c.now
+	c.advance(verifyAfter)
+	s.verifyDue(context.Background())
+	if it := item(t, s, "x.example"); it.Accepted != "warp" || it.VerifyNote != "" {
+		t.Fatalf("migrated: %+v", it)
+	}
+	c.advance(verifyAfter)
+	s.verifyDue(context.Background())
+	if it := item(t, s, "x.example"); !it.Verified || strings.Join(p.walked("x.example"), ",") != "warp" {
+		t.Fatalf("verified: %+v walked %v", it, p.walked("x.example"))
+	}
+}
+
+func TestAddressesAreNotChecked(t *testing.T) {
+	s, _, _ := newService(t, newFake(), &fakeRouter{}, false)
+	if q := s.Check([]string{"203.0.113.7"}, true); len(q.Queued) != 0 || len(q.Skipped) != 1 || !strings.Contains(q.Skipped[0].Reason, "адрес") {
+		t.Fatalf("%+v", q)
+	}
+}
+
+func TestQuiet(t *testing.T) {
+	for _, c := range []struct {
+		it    Item
+		quiet bool
+	}{
+		{Item{Verdict: "ok"}, true},
+		{Item{Verdict: "unknown"}, true},
+		{Item{Verdict: "slow"}, true},
+		{Item{Verdict: "slow", Mode: "desync"}, false},
+		{Item{Verdict: "ip-block"}, false}, // no way around: it says what to install
+		{Item{Verdict: "dns-block"}, false},
+		{Item{Verdict: "geoblock", Mode: "vless"}, false},
+	} {
+		if got := quiet(c.it); got != c.quiet {
+			t.Errorf("%+v: got %v", c.it, got)
+		}
 	}
 }

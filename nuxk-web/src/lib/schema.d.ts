@@ -750,7 +750,12 @@ export interface paths {
          * @description Nothing changes on the router unless the plane is in apply mode (PLANE_APPLY=1).
          *     `mode` may be the suggested one (default) or the verified alternative. About two
          *     minutes later (once the plane has applied it), and then daily, the accepted way is
-         *     measured again: see `verified`, `verify_note`, `next`, `interim`.
+         *     measured again: see `verified`, `verify_note`, `next`, `interim`. If the domain is later
+         *     moved to another of nuxk's lists by hand, the check follows it.
+         *
+         *     The first «DPI» list (mode `desync` while `GET /plane` says `desync_managed: false`)
+         *     makes nuxk the owner of nfqws2's own site list: with apply on, `user.list` is then
+         *     written from nuxk's DPI lists, and what was typed into it by hand goes.
          */
         post: operations["suggestAccept"];
         delete?: never;
@@ -843,7 +848,7 @@ export interface components {
             reason?: string;
             paths?: components["schemas"]["SuggestPath"][];
             checked_at?: number;
-            /** @description found in DNS with nothing to tell (it opens): kept so it isn't measured again for a week; the screen hides it */
+            /** @description found in DNS with nothing to do: it opens, or it is slow or unclear with nothing to route; kept so it isn't measured again for a week; the screen folds it away */
             hidden?: boolean;
             /** @description the list the person put it in (mode or alt) */
             accepted?: components["schemas"]["ListMode"];
@@ -865,17 +870,28 @@ export interface components {
             ttfb_factor: number;
             /** @description speed, when measurable: at least this, kbit/s (2000) */
             kbps_min: number;
-            /** @description ...and at least this percent of the reference's speed, when known (30) */
+            /** @description ...and at least this percent of the reference's speed, when known and the site is about as near as the reference (30) */
             kbps_share: number;
             /** @description a well-reachable site measured directly, at most every 10 minutes (ya.ru) */
             reference: string;
             /** @description look for sites in the router's DNS questions — works only while protected DNS is on (true) */
             discover: boolean;
         };
+        /** @description Any of SuggestSettings' fields; what is left out stays as it is. */
+        SuggestSettingsUpdate: {
+            ttfb_max_ms?: number;
+            ttfb_factor?: number;
+            kbps_min?: number;
+            kbps_share?: number;
+            reference?: string;
+            discover?: boolean;
+        };
         SuggestReference: {
             domain: string;
             /** @description it opened directly when last measured; false = only the fixed limits apply */
             ok: boolean;
+            /** @description median TCP connect: the share of the reference's speed applies only to a site whose connect time is within 2× this + 20 ms (a short download's speed follows the distance) */
+            connect_ms?: number;
             ttfb_ms?: number;
             /** @description absent = not measurable */
             kbps?: number;
@@ -2602,7 +2618,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["SuggestSettings"];
+                "application/json": components["schemas"]["SuggestSettingsUpdate"];
             };
         };
         responses: {

@@ -54,7 +54,7 @@ func (s *Service) discover() {
 			continue
 		}
 		if q := s.enqueue([]string{base}, false, SourceDNS); len(q.Queued) > 0 {
-			slog.Info("suggest: found in DNS", "domain", base, "asked", name)
+			slog.Debug("suggest: found in DNS", "domain", base, "asked", name)
 			return
 		}
 	}

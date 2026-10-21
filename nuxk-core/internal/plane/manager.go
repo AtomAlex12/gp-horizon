@@ -224,6 +224,23 @@ func (m *Manager) Covered(domain string) string {
 	return ""
 }
 
+// ModeOf is the mode of nuxk's list that carries domain, "" when none does. A
+// tunnel wins over DPI: a domain routed into a tunnel no longer meets nfqws2.
+func (m *Manager) ModeOf(domain string) Mode {
+	domain = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(domain), "."))
+	d, err := m.Desired()
+	if err != nil {
+		return ""
+	}
+	var mode Mode
+	for _, l := range d.Lists {
+		if listCovers(l.Domains, domain) && (mode == "" || mode == ModeDesync) {
+			mode = l.Mode
+		}
+	}
+	return mode
+}
+
 // listCovers: some entry equals domain or is a parent of it.
 func listCovers(entries []string, domain string) bool {
 	set := make(map[string]bool, len(entries))

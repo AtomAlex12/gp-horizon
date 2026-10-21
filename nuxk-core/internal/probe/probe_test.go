@@ -437,3 +437,67 @@ func TestDirectAndDesyncAreDistinctWays(t *testing.T) {
 		t.Errorf("dials %v, want %v", *vias, want)
 	}
 }
+
+// A page that breaks off before its declared length (the DPI resets it a few
+// KB in) did not open — however good its headers looked.
+func TestBodyCutIsNotOpened(t *testing.T) {
+	s := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "300000")
+		w.WriteHeader(200)
+		_, _ = w.Write(bytes.Repeat([]byte("a"), 20<<10))
+		w.(http.Flusher).Flush()
+		conn, _, err := w.(http.Hijacker).Hijack()
+		if err == nil {
+			_ = conn.Close()
+		}
+	}))
+	s.StartTLS()
+	t.Cleanup(s.Close)
+	p := prober(s, nil, nil)
+	p.NoFreeze = true
+	r := p.Way(context.Background(), "x.test", net.ParseIP("203.0.113.5"), ViaDirect)
+	if r.Clean() || r.Opened != 0 || !r.Cut || r.Status != 200 {
+		t.Fatalf("%+v", r)
+	}
+}
+
+// A walk cut short says nothing: one good try out of one is not "opens".
+func TestInterruptedWayIsNotClean(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	s := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("ok"))
+		cancel()
+	}))
+	s.StartTLS()
+	t.Cleanup(s.Close)
+	p := prober(s, nil, nil)
+	p.NoFreeze = true
+	r := p.Way(ctx, "x.test", net.ParseIP("203.0.113.5"), ViaDirect)
+	if r.Clean() || r.Skipped != Interrupted {
+		t.Fatalf("%+v", r)
+	}
+}
+
+func TestRedirectToACountryPage(t *testing.T) {
+	h := http.Header{}
+	h.Set("Location", "https://help.example.test/unsupported_country")
+	if s := geoSignal(302, h, ""); s != SignalExplicit {
+		t.Errorf("country page: %q", s)
+	}
+	h.Set("Location", "/login")
+	if s := geoSignal(302, h, ""); s != SignalNone {
+		t.Errorf("login: %q", s)
+	}
+}
+
+func TestPublic(t *testing.T) {
+	for ip, want := range map[string]bool{
+		"8.8.8.8": true, "203.0.113.5": true,
+		"10.0.0.1": false, "100.64.1.1": false, "198.18.0.7": false, "0.1.2.3": false,
+		"240.0.0.1": false, "255.255.255.255": false, "127.0.0.1": false, "169.254.1.1": false,
+	} {
+		if got := public(net.ParseIP(ip).To4()); got != want {
+			t.Errorf("%s: got %v", ip, got)
+		}
+	}
+}

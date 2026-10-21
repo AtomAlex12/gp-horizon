@@ -116,3 +116,19 @@ func TestCoveredAndAddAuto(t *testing.T) {
 		t.Error("bad mode must be refused")
 	}
 }
+
+// A tunnel wins over DPI: a domain routed into a tunnel no longer meets nfqws2.
+func TestModeOf(t *testing.T) {
+	m := NewManager(slowBackend{}, &jsonStore{}, Config{})
+	if err := m.SetDesired(Desired{Lists: []List{
+		{Name: "DPI", Mode: ModeDesync, Domains: []string{"youtube.com", "x.com"}},
+		{Name: "WARP", Mode: ModeWarp, Domains: []string{"x.com"}},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	for d, want := range map[string]Mode{"m.youtube.com": ModeDesync, "x.com": ModeWarp, "chatgpt.com": ""} {
+		if got := m.ModeOf(d); got != want {
+			t.Errorf("ModeOf(%s) = %q, want %q", d, got, want)
+		}
+	}
+}

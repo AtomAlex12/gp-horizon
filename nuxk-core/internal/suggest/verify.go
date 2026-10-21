@@ -37,28 +37,51 @@ func (s *Service) verifyDue(ctx context.Context) {
 
 func (s *Service) verify(ctx context.Context, it Item) {
 	now := s.now()
-	update := func(f func(*Item)) {
+	// update changes the item if it is still the one accepted then. f says
+	// whether to write the file: a wait that changed nothing for the person
+	// keeps its next look in memory only (a router's flash)
+	update := func(f func(*Item) (save bool)) {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		cur := s.items[it.Domain]
 		if cur == nil || cur.State != StateAccepted || cur.AcceptedAt != it.AcceptedAt {
 			return // dismissed, re-checked or accepted anew meanwhile
 		}
-		f(cur)
-		s.saveLocked()
+		if f(cur) {
+			s.saveLocked()
+		}
+	}
+	// moved to another of nuxk's lists by hand — say, to the tunnel advised
+	// while a strategy search runs — or accepted before the mode was kept:
+	// the check follows the domain
+	if s.Router != nil {
+		if m := string(s.Router.ModeOf(it.Domain)); m != "" && m != it.Accepted {
+			update(func(c *Item) bool {
+				moved := c.Accepted != ""
+				c.Accepted, c.Next, c.Interim = m, "", ""
+				c.Verified, c.VerifiedAt, c.VerifyDue, c.VerifyNote = false, 0, now.Add(verifyAfter).Unix(), ""
+				if moved {
+					c.VerifyNote = "Домен перенесён: теперь он идёт через " + title[modeVia[m]] + " — проверю этот путь."
+				}
+				return true
+			})
+			return
+		}
 	}
 	if note, stop := s.applied(it); note != "" {
-		update(func(c *Item) {
+		update(func(c *Item) bool {
+			changed := c.VerifyNote != note || stop
 			c.VerifyNote, c.VerifyDue = note, now.Add(verifyWait).Unix()
 			if stop {
 				c.VerifyDue = 0
 			}
+			return changed
 		})
 		return
 	}
 	via, ok := modeVia[it.Accepted]
 	if !ok {
-		update(func(c *Item) { c.VerifyDue = 0 })
+		update(func(c *Item) bool { c.VerifyDue = 0; return true })
 		return
 	}
 
@@ -68,15 +91,21 @@ func (s *Service) verify(ctx context.Context, it Item) {
 	var scratch Item
 	l := &ladder{p: s.P, bar: b, desync: s.desync(), domain: it.Domain, it: &scratch, seen: map[probe.Via]judged{}}
 	ip, why := s.P.Resolve(pctx, it.Domain)
+	if ctx.Err() != nil {
+		return // the agent is stopping; the check is still due after the restart
+	}
 	if why != "" {
-		update(func(c *Item) {
-			c.Verified, c.VerifiedAt, c.VerifyDue = false, now.Unix(), now.Add(reverifyEvery).Unix()
+		// nothing was measured: the last real result stays as it is
+		update(func(c *Item) bool {
+			c.VerifyDue = now.Add(reverifyEvery).Unix()
 			c.VerifyNote = "Проверить не удалось: " + map[string]string{
 				"bogus": "DNS вернул подменённый ответ", "nxdomain": "DNS не знает такого имени",
 			}[why] + "."
 			if why == "timeout" {
-				c.VerifyNote = "Проверить не удалось: DNS не ответил вовремя."
+				c.VerifyNote = "Проверить не удалось: DNS не ответил вовремя — попробую ещё раз через 10 минут."
+				c.VerifyDue = now.Add(verifyWait).Unix()
 			}
+			return true
 		})
 		return
 	}
@@ -101,10 +130,22 @@ func (s *Service) verify(ctx context.Context, it Item) {
 	default:
 		note = "После применения через " + title[via] + " сайт не открывается как надо (" + j.why + "). Проверьте, работает ли туннель (раздел «Движки»)."
 	}
-	update(func(c *Item) {
+	switch {
+	case ctx.Err() != nil:
+		return // the agent is stopping; the check is still due after the restart
+	case pctx.Err() != nil:
+		update(func(c *Item) bool {
+			c.VerifyNote = "Проверка не уложилась в 5 минут — сайт отвечает слишком медленно. Попробую ещё раз через 10 минут."
+			c.VerifyDue = now.Add(verifyWait).Unix()
+			return true
+		})
+		return
+	}
+	update(func(c *Item) bool {
 		c.Verified, c.VerifiedAt, c.VerifyDue = j.ok, now.Unix(), now.Add(reverifyEvery).Unix()
 		c.Next, c.Interim, c.VerifyNote = next, interim, note
 		c.Paths = mergePaths(c.Paths, scratch.Paths)
+		return true
 	})
 	slog.Info("suggest: verified", "domain", it.Domain, "mode", it.Accepted, "ok", j.ok, "next", next, "interim", interim)
 }

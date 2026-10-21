@@ -91,7 +91,14 @@ type Result struct {
 	// then everything stops. Seen when the 64 KB upload test hangs, or when a
 	// page whose headers came stops arriving mid-way (no byte for half a stage).
 	Frozen bool
+	// Cut: in some try the page broke off mid-way — a reset, or the
+	// connection closed before the length it declared. Such a try didn't open.
+	Cut bool
 }
+
+// Interrupted is Skipped for a walk that was cut short (the check's time ran
+// out, or the agent is stopping).
+const Interrupted = "проверка прервана"
 
 // Clean means the site opened normally on this path: at least 4 tries in 5
 // opened and nothing froze.
@@ -198,13 +205,37 @@ func (p *Prober) Resolve(ctx context.Context, host string) (net.IP, string) {
 	}
 	for _, ip := range ips {
 		if v4 := ip.To4(); v4 != nil { // IPv6 is not routed for tunnels here
-			if v4.IsPrivate() || v4.IsLoopback() || v4.IsUnspecified() || v4.IsLinkLocalUnicast() || v4.IsMulticast() {
+			if !public(v4) {
 				return nil, "bogus"
 			}
 			return v4, ""
 		}
 	}
 	return nil, "nxdomain"
+}
+
+// notPublic are IPv4 ranges no public site lives in, beyond what net.IP's
+// own checks cover: a DNS answer there is a stub (or a fake-IP resolver).
+var notPublic = func() []*net.IPNet {
+	var out []*net.IPNet
+	for _, c := range []string{"0.0.0.0/8", "100.64.0.0/10", "192.0.0.0/24", "198.18.0.0/15", "240.0.0.0/4"} {
+		_, n, _ := net.ParseCIDR(c)
+		out = append(out, n)
+	}
+	return out
+}()
+
+// public: an address a site on the internet can have.
+func public(v4 net.IP) bool {
+	if v4.IsPrivate() || v4.IsLoopback() || v4.IsUnspecified() || v4.IsLinkLocalUnicast() || v4.IsMulticast() {
+		return false
+	}
+	for _, n := range notPublic {
+		if n.Contains(v4) {
+			return false
+		}
+	}
+	return true
 }
 
 func (p *Prober) dial(ctx context.Context, via Via, addr string) (net.Conn, error) {
@@ -302,10 +333,24 @@ var explicitMarkers = []string{
 	"недоступен в вашем регионе",
 }
 
+// locationMarkers: a redirect to a page about the country says it too.
+var locationMarkers = []string{
+	"unsupported_country", "unsupported-country", "not-available-in-your-country",
+	"unavailable-in-your-country", "not_available_in_your_country", "geoblock", "geo-block", "geo_block",
+}
+
 // geoSignal reads an HTTP answer for "this is about where you are". Only a
 // page that says so is explicit; a challenge or a bare 403 is weaker evidence
 // and is only believed once another path opens the same site.
 func geoSignal(status int, h http.Header, body string) Signal {
+	if status >= 300 && status < 400 {
+		loc := strings.ToLower(h.Get("Location"))
+		for _, m := range locationMarkers {
+			if strings.Contains(loc, m) {
+				return SignalExplicit
+			}
+		}
+	}
 	if status < 400 {
 		return SignalNone
 	}
