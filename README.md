@@ -110,7 +110,7 @@ GP Horizon объединяет оба подхода на роутере Keenet
   Keenetic, пока nuxk не начнёт отвечать снова.
 
 **Подбор стратегий nfqws2** *(фул)*
-- Плагин на ядре [GP Access Control Plane](https://github.com/balbomush/GP-access-control-plane)
+- Плагин на ядре [GP Plane](https://github.com/balbomush/GP-plane)
   с zapret2 blockcheck2: прогоны с Pi через роутер.
 - Домены из списков GP Horizon, категорий v2fly, списков GP или вручную; три режима
   прогона; живой журнал и ход; история с причиной завершения; фильтры стратегий; бэкапы
@@ -403,7 +403,7 @@ GP Horizon управляет программами других авторов
 | usque | [Diniboy1123/usque](https://github.com/Diniboy1123/usque); пакет — форк [side-effect-tm/usque-keenetic](https://github.com/side-effect-tm/usque-keenetic) в [`engines/nuxk-usque`](engines/nuxk-usque) | Клиент Cloudflare WARP |
 | xray-core | [XTLS/Xray-core](https://github.com/XTLS/Xray-core) | Клиент VLESS |
 | SmartDNS | [pymumu/smartdns](https://github.com/pymumu/smartdns) | DNS-сервер (бета) |
-| GP Access Control Plane | [balbomush/GP-access-control-plane](https://github.com/balbomush/GP-access-control-plane) (MIT) | Ядро подбора стратегий |
+| GP Plane (бывший GP Access Control Plane) | [balbomush/GP-plane](https://github.com/balbomush/GP-plane) (MIT) | Ядро подбора стратегий |
 | zapret2 | [bol-van/zapret2](https://github.com/bol-van/zapret2) | blockcheck2 и nfqws2 в подборе стратегий |
 
 ## Лицензия
