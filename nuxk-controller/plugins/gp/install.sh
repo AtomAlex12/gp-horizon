@@ -1,5 +1,6 @@
 #!/bin/sh
-# nuxk plugin recipe: GP Access Control Plane core + the zapret2 it drives.
+# nuxk plugin recipe: GP Plane core (balbomush/GP-plane, formerly
+# GP-access-control-plane) + the zapret2 it drives.
 #
 #   install.sh <gp-tag> <dest>     (run by `nuxk-controller supervise`)
 #
@@ -17,7 +18,7 @@ say() { printf '== %s\n' "$*"; }
 get() { curl -fsSL --retry 3 --retry-delay 2 -o "$1" "$2"; }
 
 say "GP $V"
-get gp.tar.gz "https://github.com/balbomush/GP-access-control-plane/archive/refs/tags/$V.tar.gz"
+get gp.tar.gz "https://github.com/balbomush/GP-plane/archive/refs/tags/$V.tar.gz"
 mkdir gp
 tar -xzf gp.tar.gz -C gp --strip-components=1
 rm gp.tar.gz
