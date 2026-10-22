@@ -106,7 +106,7 @@
       ? Math.min(settings.ttfb_max_ms, Math.round(settings.ttfb_factor * reference.ttfb_ms) + 500)
       : settings.ttfb_max_ms;
     // the share of the reference's speed: only for a site about as near as the reference
-    // (the agent applies it only when the reference's connect time is known)
+    // (the agent applies it only when the reference's TLS handshake time is known)
     const near = reference.kbps && reference.tls_ms ? Math.round((reference.kbps * settings.kbps_share) / 100) : 0;
     return { ttfb, near: near > settings.kbps_min ? near : 0, nearMs: 2 * (reference.tls_ms ?? 0) + 20 };
   });
