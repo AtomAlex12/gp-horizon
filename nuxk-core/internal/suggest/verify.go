@@ -157,8 +157,12 @@ func (s *Service) applied(it Item) (note string, stop bool) {
 	if s.Router == nil {
 		return "Проверка ждёт: маршрутизация выключена (PLANE в nuxk.conf).", false
 	}
-	if s.Router.Covered(it.Domain) == "" {
+	where := s.Router.Covered(it.Domain)
+	if where == "" {
 		return "Домен убран из списков — проверка остановлена.", true
+	}
+	if s.Router.ModeOf(it.Domain) == "" { // none of nuxk's lists: the person's own Keenetic group
+		return "Домен теперь в другом списке (" + where + ") — nuxk такие не проверяет, проверка остановлена.", true
 	}
 	st := s.Router.Status()
 	if !st.Apply {

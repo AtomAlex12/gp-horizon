@@ -890,8 +890,8 @@ export interface components {
             domain: string;
             /** @description it opened directly when last measured; false = only the fixed limits apply */
             ok: boolean;
-            /** @description median TCP connect: the share of the reference's speed applies only to a site whose connect time is within 2× this + 20 ms (a short download's speed follows the distance) */
-            connect_ms?: number;
+            /** @description median TLS handshake: the share of the reference's speed applies only to a site whose handshake is within 2× this + 20 ms (a short download's speed follows the distance; the handshake, not TCP connect, because a tunnel may complete TCP locally) */
+            tls_ms?: number;
             ttfb_ms?: number;
             /** @description absent = not measurable */
             kbps?: number;

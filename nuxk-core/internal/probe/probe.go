@@ -336,7 +336,9 @@ var explicitMarkers = []string{
 // locationMarkers: a redirect to a page about the country says it too.
 var locationMarkers = []string{
 	"unsupported_country", "unsupported-country", "not-available-in-your-country",
-	"unavailable-in-your-country", "not_available_in_your_country", "geoblock", "geo-block", "geo_block",
+	"unavailable-in-your-country", "not_available_in_your_country", "unavailable-in-region",
+	"not-available-in-region", "unsupported-region", "unsupported_region", "region-restricted",
+	"geoblock", "geo-block", "geo_block", "geo-restricted",
 }
 
 // geoSignal reads an HTTP answer for "this is about where you are". Only a

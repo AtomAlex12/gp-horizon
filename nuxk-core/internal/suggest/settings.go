@@ -35,7 +35,9 @@ const ttfbSlack = 500
 // A short download's speed is bound by the round trip (TCP slow start), so a
 // site across the world can't match one across town: the share of the
 // reference's speed applies only to a site about as near as the reference —
-// its connect time within 2× the reference's plus nearSlack.
+// its TLS handshake within 2× the reference's plus nearSlack. The handshake,
+// not the TCP connect: a tunnel's own network stack (xray's TUN) completes
+// TCP locally, while TLS still goes all the way to the site.
 const nearSlack = 20 // ms
 
 func near(siteMs, refMs int) bool { return refMs > 0 && siteMs > 0 && siteMs <= 2*refMs+nearSlack }
@@ -68,12 +70,12 @@ func (s Settings) check() (Settings, error) {
 // Reference is the well-reachable site's direct measurement: the yardstick
 // for "slow" that moves with the line itself.
 type Reference struct {
-	Domain    string `json:"domain"`
-	OK        bool   `json:"ok"` // it opened directly when last measured
-	ConnectMs int    `json:"connect_ms,omitempty"`
-	TTFBMs    int    `json:"ttfb_ms,omitempty"`
-	Kbps      int    `json:"kbps,omitempty"`
-	At        int64  `json:"at,omitempty"` // when measured (unix); 0 = not yet
+	Domain string `json:"domain"`
+	OK     bool   `json:"ok"` // it opened directly when last measured
+	TLSMs  int    `json:"tls_ms,omitempty"`
+	TTFBMs int    `json:"ttfb_ms,omitempty"`
+	Kbps   int    `json:"kbps,omitempty"`
+	At     int64  `json:"at,omitempty"` // when measured (unix); 0 = not yet
 }
 
 // Settings now.
@@ -116,7 +118,7 @@ func (s *Service) bar(ctx context.Context) bar {
 	defer cancel()
 	if ip, why := s.P.Resolve(rctx, ref.Domain); why == "" {
 		if m := s.P.Way(rctx, ref.Domain, ip, probe.ViaDirect); m.Clean() {
-			ref.OK, ref.ConnectMs, ref.TTFBMs, ref.Kbps = true, m.ConnectMs, m.TTFBMs, m.Kbps
+			ref.OK, ref.TLSMs, ref.TTFBMs, ref.Kbps = true, m.TLSMs, m.TTFBMs, m.Kbps
 		}
 	}
 	if !ref.OK {
@@ -166,7 +168,7 @@ func (b bar) judge(m probe.Result) (bool, string) {
 		if m.Kbps < b.KbpsMin {
 			return false, "скорость " + speed(m.Kbps) + " (нужно от " + speed(b.KbpsMin) + ")"
 		}
-		if b.ref.OK && b.ref.Kbps > 0 && near(m.ConnectMs, b.ref.ConnectMs) && m.Kbps*100 < b.ref.Kbps*b.KbpsShare {
+		if b.ref.OK && b.ref.Kbps > 0 && near(m.TLSMs, b.ref.TLSMs) && m.Kbps*100 < b.ref.Kbps*b.KbpsShare {
 			return false, fmt.Sprintf("скорость %s — меньше %d%% эталона (%s: %s)", speed(m.Kbps), b.KbpsShare, b.ref.Domain, speed(b.ref.Kbps))
 		}
 	}

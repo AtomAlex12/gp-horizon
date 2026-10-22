@@ -246,3 +246,41 @@ func TestVerifyWaitDoesNotRewrite(t *testing.T) {
 		t.Fatalf("saves %d, item %+v", cs.saves, it)
 	}
 }
+
+// The check ran out of its time: no verdict, a note, the next look soon.
+func TestVerifyOverBudget(t *testing.T) {
+	s, p, _, c := accepted(t, "warp")
+	defer func(b time.Duration) { probeBudget = b }(probeBudget)
+	probeBudget = 50 * time.Millisecond
+	p.hang = map[probe.Via]bool{probe.ViaWarp: true}
+	c.advance(verifyAfter)
+	s.verifyDue(context.Background())
+	if it := item(t, s, "x.example"); it.VerifiedAt != 0 || it.VerifyDue != c.t.Add(verifyWait).Unix() || !strings.Contains(it.VerifyNote, "5 минут") {
+		t.Fatalf("%+v", it)
+	}
+}
+
+// The agent stopping while the way is measured leaves no verdict either.
+func TestVerifyStoppingWhileMeasuring(t *testing.T) {
+	s, p, _, c := accepted(t, "warp")
+	ctx, cancel := context.WithCancel(context.Background())
+	p.onWay = func(probe.Via) { cancel() }
+	c.advance(verifyAfter)
+	due := item(t, s, "x.example").VerifyDue
+	s.verifyDue(ctx)
+	if it := item(t, s, "x.example"); it.VerifiedAt != 0 || it.VerifyNote != "" || it.VerifyDue != due || len(p.calls) != 1 {
+		t.Fatalf("%+v calls %v", it, p.calls)
+	}
+}
+
+// Moved into the person's own Keenetic group: nuxk doesn't check those.
+func TestVerifyStopsInAForeignList(t *testing.T) {
+	s, p, rt, c := accepted(t, "warp")
+	rt.added = nil
+	rt.covered = map[string]string{"x.example": "ваш список Keenetic «AI»"}
+	c.advance(verifyAfter)
+	s.verifyDue(context.Background())
+	if it := item(t, s, "x.example"); it.VerifyDue != 0 || !strings.Contains(it.VerifyNote, "«AI»") || len(p.calls) != 0 {
+		t.Fatalf("%+v calls %v", it, p.calls)
+	}
+}

@@ -968,7 +968,7 @@ components:
       properties:
         domain: { type: string }
         ok: { type: boolean, description: it opened directly when last measured; false = only the fixed limits apply }
-        connect_ms: { type: integer, description: "median TCP connect: the share of the reference's speed applies only to a site whose connect time is within 2× this + 20 ms (a short download's speed follows the distance)" }
+        tls_ms: { type: integer, description: "median TLS handshake: the share of the reference's speed applies only to a site whose handshake is within 2× this + 20 ms (a short download's speed follows the distance; the handshake, not TCP connect, because a tunnel may complete TCP locally)" }
         ttfb_ms: { type: integer }
         kbps: { type: integer, description: absent = not measurable }
         at: { type: integer, description: "when measured (unix); absent = not yet" }

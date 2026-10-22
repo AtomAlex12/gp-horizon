@@ -56,7 +56,8 @@
       <div class="rec">
         <span class="lbl">Принято</span>
         <span class="mode {s.accepted}"><b>{modeTitle(s.accepted)}</b></span>
-        <span class="hint">список «Подбор: {modeTitle(s.accepted)}»{s.accepted_at ? ` · ${ago(s.accepted_at)}` : ''}</span>
+        <!-- the «Подбор» list, or the person's own one it was moved to -->
+        <span class="hint">в списке {modeTitle(s.accepted)} («Списки»){s.accepted_at ? ` · ${ago(s.accepted_at)}` : ''}</span>
       </div>
       <div class="rec">
         <span class="lbl">Проверка</span>
@@ -94,7 +95,7 @@
       {:else if s.verdict === 'dns-block'}
         <p class="hint">Маршрут тут не поможет — нужен защищённый DNS.</p>
       {:else if !s.verdict || s.verdict === 'unknown'}
-        <p class="hint">Причину определить не удалось — принимать пока нечего.</p>
+        <p class="hint">Принимать пока нечего — см. причину выше.</p>
       {/if}
     {/if}
 

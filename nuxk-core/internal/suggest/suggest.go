@@ -33,7 +33,6 @@ const (
 	// a scan doesn't redo what was checked recently
 	scanFresh = time.Hour
 	// one domain's whole ladder, every way's samples included
-	probeBudget = 5 * time.Minute
 	// verifyAfter: the plane reconciles an accepted domain within this
 	verifyAfter = 2 * time.Minute
 	// accepted ways are measured again this often
@@ -43,6 +42,10 @@ const (
 	// the housekeeping tick: due verifications, discovery
 	tickEvery = 30 * time.Second
 )
+
+// probeBudget: one domain's whole ladder, every way's samples included (a
+// var: tests run out of it on purpose).
+var probeBudget = 5 * time.Minute
 
 type State string
 
@@ -285,7 +288,11 @@ func (s *Service) process(ctx context.Context, domain string) {
 	}
 	s.items[domain] = &it
 	s.saveLocked()
-	slog.Info("suggest: checked", "domain", domain, "source", it.Source, "verdict", it.Verdict, "mode", it.Mode, "alt", it.Alt, "confirmed", it.Confirmed)
+	log := slog.Info
+	if it.Source == SourceDNS { // what the household opens stays out of the normal log
+		log = slog.Debug
+	}
+	log("suggest: checked", "domain", domain, "source", it.Source, "verdict", it.Verdict, "mode", it.Mode, "alt", it.Alt, "confirmed", it.Confirmed)
 }
 
 // quiet: nothing in it for the person — it opens, or it is slow or unclear
@@ -482,8 +489,14 @@ func (s *Service) saveLocked() {
 			keep = append(keep, it)
 		}
 	}
+	rank := func(it *Item) int {
+		if s.accepting[it.Domain] { // on its way into the plane: its record must stay
+			return 0
+		}
+		return keepRank(it)
+	}
 	sort.Slice(keep, func(i, j int) bool {
-		if a, b := keepRank(keep[i]), keepRank(keep[j]); a != b {
+		if a, b := rank(keep[i]), rank(keep[j]); a != b {
 			return a < b
 		}
 		return keep[i].CheckedAt > keep[j].CheckedAt

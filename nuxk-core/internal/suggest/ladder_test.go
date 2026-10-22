@@ -127,8 +127,8 @@ func TestLadderDNS(t *testing.T) {
 
 func TestJudge(t *testing.T) {
 	set := DefaultSettings()
-	withRef := bar{set, Reference{Domain: "ya.ru", OK: true, ConnectMs: 10, TTFBMs: 100, Kbps: 20000}}
-	at := func(connectMs int, r probe.Result) probe.Result { r.ConnectMs = connectMs; return r }
+	withRef := bar{set, Reference{Domain: "ya.ru", OK: true, TLSMs: 10, TTFBMs: 100, Kbps: 20000}}
+	at := func(tlsMs int, r probe.Result) probe.Result { r.TLSMs = tlsMs; return r }
 	noRef := bar{set, Reference{Domain: "ya.ru"}}
 	for _, c := range []struct {
 		name string
@@ -157,11 +157,44 @@ func TestJudge(t *testing.T) {
 		{"30% of the reference", withRef, at(40, opened(300, 6000)), true},
 		{"far away: only the floor", withRef, at(41, opened(300, 2000)), true},
 		{"far away, below the floor", withRef, at(200, opened(300, 1999)), false},
-		{"connect time unknown: only the floor", withRef, opened(300, 2000), true},
+		{"handshake time unknown: only the floor", withRef, opened(300, 2000), true},
+		{"a tunnel that completes TCP itself: judged by the handshake", withRef, at(200, func() probe.Result { r := opened(300, 2000); r.ConnectMs = 1; return r }()), true},
 		{"interrupted", noRef, probe.Result{Skipped: probe.Interrupted, Tries: 1, Opened: 1}, false},
 	} {
 		if ok, why := c.b.judge(c.m); ok != c.ok || ok != (why == "") {
 			t.Errorf("%s: got %v %q, want %v", c.name, ok, why, c.ok)
 		}
+	}
+}
+
+// A page cut short mid-way is the provider's doing — unless it is the site's
+// own error page.
+func TestCutPage(t *testing.T) {
+	cut := func(status int) probe.Result {
+		return probe.Result{TCP: true, TLS: true, Status: status, Tries: 2, Cut: true, Bytes: 20 << 10}
+	}
+	p := newFake()
+	p.set("x.example", probe.ViaDirect, cut(200))
+	p.set("x.example", probe.ViaWarp, opened(300, 0))
+	it := decide(context.Background(), p, bar{DefaultSettings(), Reference{}}, true, "x.example")
+	if it.Verdict != "freeze" || it.Mode != "desync" || !strings.Contains(it.Reason, "обрывается") || !strings.Contains(it.Paths[0].Result, "обрывается") {
+		t.Fatalf("cut 200: %+v", it)
+	}
+	p.set("x.example", probe.ViaDirect, cut(502))
+	if it := decide(context.Background(), p, bar{DefaultSettings(), Reference{}}, true, "x.example"); it.Verdict != "unknown" || it.Mode != "" {
+		t.Fatalf("cut 502: %+v", it)
+	}
+}
+
+// A refusal forgiven by the 4-in-5 rule doesn't print as "opens (HTTP 403)".
+func TestDescribeOpenedAfterARefusal(t *testing.T) {
+	m := probe.Result{TLS: true, Status: 403, Signal: probe.SignalChallenge, Tries: 5, Opened: 4, TTFBMs: 300}
+	ok, why := bar{DefaultSettings(), Reference{}}.judge(m)
+	if p := describe(judged{m, ok, why}); !ok || p.Result != "открывается" {
+		t.Fatalf("%v %+v", ok, p)
+	}
+	m = opened(300, 0)
+	if p := describe(judged{m, true, ""}); p.Result != "открывается (HTTP 200)" {
+		t.Fatalf("%+v", p)
 	}
 }

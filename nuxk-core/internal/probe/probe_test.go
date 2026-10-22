@@ -501,3 +501,11 @@ func TestPublic(t *testing.T) {
 		}
 	}
 }
+
+func TestRedirectToARegionPage(t *testing.T) {
+	h := http.Header{}
+	h.Set("Location", "https://www.example.test/app-unavailable-in-region")
+	if s := geoSignal(302, h, ""); s != SignalExplicit {
+		t.Errorf("region page: %q", s)
+	}
+}

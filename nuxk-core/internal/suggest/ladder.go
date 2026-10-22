@@ -116,7 +116,7 @@ func (l *ladder) afterDirect(ctx context.Context) {
 		l.provider(ctx, probe.VerdictFreeze, true, "Соединение устанавливается, но замирает после первых ~16 КБ — так ТСПУ режет зарубежные хостинги и CDN.")
 	case d.Opened > 0:
 		l.provider(ctx, probe.VerdictSlow, true, "Напрямую открывается не каждый раз ("+j.why+").")
-	case d.Cut:
+	case d.Cut && d.Status < 500: // a broken site's own error page cut short is the site's fault
 		l.provider(ctx, probe.VerdictFreeze, true, fmt.Sprintf("Ответ начинает приходить, но соединение обрывается посреди страницы (после %d КБ) — так ТСПУ режет зарубежные хостинги и CDN.", d.Bytes>>10))
 	case d.TLS && d.Status > 0:
 		l.it.Verdict = string(probe.VerdictUnknown)
@@ -277,7 +277,11 @@ func describe(j judged) Path {
 	case m.Skipped != "":
 		p.Result, p.Ms = "не проверялся: "+m.Skipped, 0
 	case j.ok:
-		p.Result = fmt.Sprintf("открывается (HTTP %d)", m.Status)
+		p.Result = "открывается"
+		// the status is the first try's: a refusal forgiven by the 4-in-5 rule isn't "opens (HTTP 403)"
+		if m.Status > 0 && m.Status < 400 && m.Signal == probe.SignalNone {
+			p.Result += fmt.Sprintf(" (HTTP %d)", m.Status)
+		}
 	case m.Clean():
 		p.Result = "открывается, но " + j.why
 	case m.Frozen:

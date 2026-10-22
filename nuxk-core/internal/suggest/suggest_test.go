@@ -65,7 +65,9 @@ type fakeProber struct {
 	dns   map[string]string
 	ways  map[string]map[probe.Via]probe.Result
 	skip  map[probe.Via]string
-	calls []string // "domain via"
+	hang  map[probe.Via]bool // the way takes until ctx ends, then is Interrupted
+	onWay func(probe.Via)    // called as a way is walked (outside the lock)
+	calls []string           // "domain via"
 }
 
 func newFake() *fakeProber {
@@ -94,10 +96,22 @@ func (f *fakeProber) Resolve(_ context.Context, d string) (net.IP, string) {
 	return net.ParseIP("203.0.113.1"), ""
 }
 
-func (f *fakeProber) Way(_ context.Context, d string, _ net.IP, via probe.Via) probe.Result {
+func (f *fakeProber) Way(ctx context.Context, d string, _ net.IP, via probe.Via) probe.Result {
+	if f.onWay != nil {
+		f.onWay(via)
+	}
+	f.mu.Lock()
+	hang := f.hang[via]
+	f.mu.Unlock()
+	if hang {
+		<-ctx.Done()
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, d+" "+string(via))
+	if hang {
+		return probe.Result{Via: via, Skipped: probe.Interrupted}
+	}
 	if why := f.skip[via]; why != "" {
 		return probe.Result{Via: via, Skipped: why}
 	}
@@ -486,5 +500,21 @@ func TestQuiet(t *testing.T) {
 		if got := quiet(c.it); got != c.quiet {
 			t.Errorf("%+v: got %v", c.it, got)
 		}
+	}
+}
+
+// A ladder that ran out of its time proves nothing: no suggestion, a reason
+// that says so.
+func TestProcessOverBudget(t *testing.T) {
+	defer func(b time.Duration) { probeBudget = b }(probeBudget)
+	probeBudget = 50 * time.Millisecond
+	p := newFake()
+	p.set("x.example", probe.ViaDirect, sniCut())
+	p.hang = map[probe.Via]bool{probe.ViaWarp: true}
+	s, _, _ := newService(t, p, &fakeRouter{}, true)
+	s.Check([]string{"x.example"}, true)
+	drain(s)
+	if it := item(t, s, "x.example"); it.State != StateReady || it.Verdict != "unknown" || it.Mode != "" || it.Alt != "" || !strings.Contains(it.Reason, "5 минут") {
+		t.Fatalf("%+v", it)
 	}
 }

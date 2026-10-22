@@ -305,7 +305,7 @@
               <span class="spacer"></span>
               {#if s.accepted}
                 <!-- still in «Подбор»: domains already in a list aren't checked -->
-                <span class="hint">в списке «Подбор: {modeTitle(s.accepted)}» — чтобы проверить заново, уберите его оттуда</span>
+                <span class="hint">в списке {modeTitle(s.accepted)} («Списки») — чтобы проверить заново, уберите его оттуда</span>
               {:else}
                 <button class="ghost sm" onclick={() => recheck(s.domain)} disabled={sending} aria-label="Проверить {s.domain} снова">
                   Проверить снова
@@ -324,7 +324,7 @@
         <h2>Принятые</h2>
         <span class="chip mono">{accepted.length}</span>
         <span class="spacer"></span>
-        <span class="hint">проверяются через ~2 мин после применения, потом раз в сутки</span>
+        <span class="hint">проверяются, как только роутер применил список (через 2–12 мин после «Принять»), потом раз в сутки</span>
       </div>
       <div class="items">
         {#each accepted as s (s.domain)}

@@ -106,8 +106,9 @@
       ? Math.min(settings.ttfb_max_ms, Math.round(settings.ttfb_factor * reference.ttfb_ms) + 500)
       : settings.ttfb_max_ms;
     // the share of the reference's speed: only for a site about as near as the reference
-    const near = reference.kbps ? Math.round((reference.kbps * settings.kbps_share) / 100) : 0;
-    return { ttfb, near: near > settings.kbps_min ? near : 0 };
+    // (the agent applies it only when the reference's connect time is known)
+    const near = reference.kbps && reference.tls_ms ? Math.round((reference.kbps * settings.kbps_share) / 100) : 0;
+    return { ttfb, near: near > settings.kbps_min ? near : 0, nearMs: 2 * (reference.tls_ms ?? 0) + 20 };
   });
 </script>
 
@@ -193,7 +194,9 @@
         <p class="hint">
           С этим эталоном сейчас: первый байт — не дольше {msText(now.ttfb)}, скорость — {settings.kbps_min
             ? `не ниже ${mbit(settings.kbps_min)}`
-            : 'без нижней границы'}{now.near ? `, у сайтов так же близких, как эталон, — не ниже ${mbit(now.near)}` : ''}.
+            : 'без нижней границы'}{now.near
+            ? `, у сайтов так же близких, как эталон (соединение устанавливается не дольше ${now.nearMs} мс), — не ниже ${mbit(now.near)}`
+            : ''}.
         </p>
       {/if}
 
