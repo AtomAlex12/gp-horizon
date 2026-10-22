@@ -184,7 +184,7 @@ flowchart LR
 | Адаптеры движков | роутер | init-скрипты, через которые агент управляет nfqws2, usque, xray и SmartDNS по единому интерфейсу. |
 | `nuxk-controller` | Pi | Полный веб-интерфейс, история графиков, прокси к агенту, серверы VLESS, хост плагинов, обновление Pi. |
 | `nuxk-web` | оба | Веб-интерфейс на Svelte 5: сборка `full` для Pi и `lite` для роутера. |
-| Плагин GP | Pi | Ядро GP Access Control Plane и zapret2 в контейнере контроллера. |
+| Плагин GP | Pi | Ядро GP Plane и zapret2 в контейнере контроллера. |
 
 Контракт между контроллером и агентом —
 [`nuxk-core/api/openapi.yaml`](nuxk-core/api/openapi.yaml). CI проверяет, что спецификация
