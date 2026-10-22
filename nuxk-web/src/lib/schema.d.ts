@@ -649,10 +649,275 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/suggest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Suggestions so far, which ways out can be probed, how many domains are still being checked, the settings and the reference
+         * @description Advise only: nothing here changes routing. Suggestions come from the person's checks,
+         *     the built-in scan and — while protected DNS is on and discovery is enabled — the names
+         *     the router asks about often (`source: dns`; those with nothing to tell are `hidden`).
+         */
+        get: operations["suggest"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/suggest/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Probe these domains in the background (redoes ones already checked)
+         * @description Each domain is measured directly (several tries, first byte, speed, the ~16 KB freeze);
+         *     only if that isn't good enough are other ways measured, cheapest first, stopping at the
+         *     first good enough one. A site refusing the country is tried through VLESS only (WARP
+         *     leaves the network in Moscow); a provider block gets DPI (nfqws2, unconfirmed until
+         *     accepted), then WARP, then VLESS. Domains already in a nuxk list or in the user's own
+         *     Keenetic routing are skipped.
+         */
+        post: operations["suggestCheck"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/suggest/scan": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Probe the built-in list of popular services that refuse Russian addresses
+         * @description Leaves alone domains checked within the hour, accepted or dismissed.
+         */
+        post: operations["suggestScan"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/suggest/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Set what counts as "good enough", the reference site and discovery
+         * @description What the body leaves out stays as it is. A new reference is measured with the next check.
+         */
+        put: operations["suggestSettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/suggest/{domain}/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Put the domain into the plane's «Подбор» list
+         * @description Nothing changes on the router unless the plane is in apply mode (PLANE_APPLY=1).
+         *     `mode` may be the suggested one (default) or the verified alternative. About two
+         *     minutes later (once the plane has applied it), and then daily, the accepted way is
+         *     measured again: see `verified`, `verify_note`, `next`, `interim`. If the domain is later
+         *     moved to another of nuxk's lists by hand, the check follows it.
+         *
+         *     The first «DPI» list (mode `desync` while `GET /plane` says `desync_managed: false`)
+         *     makes nuxk the owner of nfqws2's own site list: with apply on, `user.list` is then
+         *     written from nuxk's DPI lists, and what was typed into it by hand goes.
+         */
+        post: operations["suggestAccept"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/suggest/{domain}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Dismiss a suggestion; a scan won't bring it back, and it is never measured again on its own */
+        delete: operations["suggestDismiss"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        SuggestPath: {
+            /**
+             * @description direct = the provider's path as it is (past nfqws2); desync = through nfqws2 (measured after acceptance); dns = the name didn't resolve
+             * @enum {string}
+             */
+            via: "direct" | "desync" | "vless" | "warp" | "dns";
+            /** @description what this way out did, in words for the user */
+            result: string;
+            /** @description median whole try */
+            ms?: number;
+            /** @description tries made (fewer than 5 once the way can no longer come out clean) */
+            tries: number;
+            /** @description tries where the site opened normally */
+            opened: number;
+            /** @description median time to the answer's first byte; absent = unknown */
+            ttfb_ms?: number;
+            /** @description median download speed, kbit/s; absent = not measurable (the page is too small) */
+            kbps?: number;
+            /** @description the connection stalled after the first ~16 KB */
+            frozen?: boolean;
+            /** @description good enough by the settings: ≥ 4 of 5 opened, not frozen, first byte and speed within the limits */
+            acceptable: boolean;
+        };
+        SuggestPathInfo: {
+            /** @enum {string} */
+            via: "direct" | "vless" | "warp";
+            iface?: string;
+            /** @description can be probed right now */
+            usable: boolean;
+            /** @description why not */
+            why?: string;
+        };
+        Suggestion: {
+            domain: string;
+            /** @enum {string} */
+            state: "checking" | "ready" | "accepted" | "dismissed";
+            /**
+             * @description who asked: the person, the built-in scan, or discovery from the router's DNS questions
+             * @enum {string}
+             */
+            source: "user" | "scan" | "dns";
+            /**
+             * @description geoblock = the site refuses this country; sni-block / ip-block = the provider cuts it; freeze = the connection stalls after the first ~16 KB; slow = opens, but below the settings' limits; dns-block = DNS gives a stub (turn protected DNS on)
+             * @enum {string}
+             */
+            verdict?: "ok" | "geoblock" | "sni-block" | "ip-block" | "dns-block" | "freeze" | "slow" | "unknown";
+            /** @description the list to put the domain in; absent = routing wouldn't help or nothing can be said */
+            mode?: components["schemas"]["ListMode"];
+            /** @description another way that was measured and is good enough */
+            alt?: components["schemas"]["ListMode"];
+            /** @description the site really opened well enough through `mode`; false = a conclusion from the evidence, not tried (DPI) or below the limits */
+            confirmed: boolean;
+            /** @description the way to use while a strategy search runs (with next = search): measured and good enough */
+            interim?: components["schemas"]["ListMode"];
+            /**
+             * @description search = DPI with the known strategies didn't help: a strategy search (GP on the Raspberry Pi) is advised
+             * @enum {string}
+             */
+            next?: "search";
+            /** @description why */
+            reason?: string;
+            paths?: components["schemas"]["SuggestPath"][];
+            checked_at?: number;
+            /** @description found in DNS with nothing to do: it opens, or it is slow or unclear with nothing to route; kept so it isn't measured again for a week; the screen folds it away */
+            hidden?: boolean;
+            /** @description the list the person put it in (mode or alt) */
+            accepted?: components["schemas"]["ListMode"];
+            accepted_at?: number;
+            /** @description the accepted way was measured good enough after acceptance */
+            verified: boolean;
+            /** @description when the accepted way was last measured (unix); absent = not yet */
+            verified_at?: number;
+            /** @description when it will be measured next (unix): ~2 min after acceptance, then daily */
+            verify_due?: number;
+            /** @description what the check after acceptance found (or waits for), for the user */
+            verify_note?: string;
+        };
+        /** @description A way is good enough when at least 4 of 5 tries open it, it doesn't freeze, the median first byte is within ttfb_max_ms and within ttfb_factor × the reference's + 500 ms, and — only when speed was measurable — at least kbps_min and kbps_share % of the reference's. The first good enough way in the ladder wins, not the fastest. */
+        SuggestSettings: {
+            /** @description the first byte within this, always (5000) */
+            ttfb_max_ms: number;
+            /** @description ...and within this × the reference's first byte + 500 ms, when known (3) */
+            ttfb_factor: number;
+            /** @description speed, when measurable: at least this, kbit/s (2000) */
+            kbps_min: number;
+            /** @description ...and at least this percent of the reference's speed, when known and the site is about as near as the reference (30) */
+            kbps_share: number;
+            /** @description a well-reachable site measured directly, at most every 10 minutes (ya.ru) */
+            reference: string;
+            /** @description look for sites in the router's DNS questions — works only while protected DNS is on (true) */
+            discover: boolean;
+        };
+        /** @description Any of SuggestSettings' fields; what is left out stays as it is. */
+        SuggestSettingsUpdate: {
+            ttfb_max_ms?: number;
+            ttfb_factor?: number;
+            kbps_min?: number;
+            kbps_share?: number;
+            reference?: string;
+            discover?: boolean;
+        };
+        SuggestReference: {
+            domain: string;
+            /** @description it opened directly when last measured; false = only the fixed limits apply */
+            ok: boolean;
+            /** @description median TLS handshake: the share of the reference's speed applies only to a site whose handshake is within 2× this + 20 ms (a short download's speed follows the distance; the handshake, not TCP connect, because a tunnel may complete TCP locally) */
+            tls_ms?: number;
+            ttfb_ms?: number;
+            /** @description absent = not measurable */
+            kbps?: number;
+            /** @description when measured (unix); absent = not yet */
+            at?: number;
+        };
+        SuggestOverview: {
+            items: components["schemas"]["Suggestion"][] | null;
+            paths: components["schemas"]["SuggestPathInfo"][] | null;
+            /** @description domains queued or being probed */
+            busy: number;
+            /** @description nfqws2 is wired */
+            desync: boolean;
+            settings: components["schemas"]["SuggestSettings"];
+            reference: components["schemas"]["SuggestReference"];
+            /** @description discovery is on and sees the router's DNS questions (protected DNS is on) */
+            discovering: boolean;
+        };
+        SuggestSkip: {
+            domain: string;
+            reason: string;
+        };
+        SuggestQueued: {
+            queued: string[];
+            skipped: components["schemas"]["SuggestSkip"][];
+        };
         Ok: {
             status: string;
         };
@@ -2272,6 +2537,164 @@ export interface operations {
                 };
             };
             401: components["responses"]["Error"];
+        };
+    };
+    suggest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description overview */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuggestOverview"];
+                };
+            };
+            404: components["responses"]["Error"];
+        };
+    };
+    suggestCheck: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    domains: string[];
+                };
+            };
+        };
+        responses: {
+            /** @description queued; poll GET /suggest */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuggestQueued"];
+                };
+            };
+            400: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    suggestScan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description queued; poll GET /suggest */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuggestQueued"];
+                };
+            };
+            404: components["responses"]["Error"];
+        };
+    };
+    suggestSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SuggestSettingsUpdate"];
+            };
+        };
+        responses: {
+            /** @description the settings now */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SuggestSettings"];
+                };
+            };
+            400: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+        };
+    };
+    suggestAccept: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                domain: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    mode?: components["schemas"]["ListMode"];
+                };
+            };
+        };
+        responses: {
+            /** @description added to the list */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Ok"];
+                };
+            };
+            400: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            /** @description routing wouldn't help for this domain */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
+        };
+    };
+    suggestDismiss: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                domain: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description dismissed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Ok"];
+                };
+            };
+            404: components["responses"]["Error"];
         };
     };
 }

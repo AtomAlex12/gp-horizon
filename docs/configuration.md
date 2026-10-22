@@ -136,7 +136,7 @@ PLANE_IFACE_VLESS="OpkgTun1"
 | `/opt/bin/nuxk` | Команда `nuxk` (копия `nuxk-lite.sh`). |
 | `/opt/etc/init.d/S99nuxk-core` | Init-скрипт агента. |
 | `/opt/etc/nuxk/nuxk.conf` | Конфигурация агента (`0600`). |
-| `/opt/etc/nuxk/` | Состояние: списки (`plane.json`), желаемые состояния движков, настройки DNS и обновлений, конфигурация xray (`0600`). |
+| `/opt/etc/nuxk/` | Состояние: списки (`plane.json`), желаемые состояния движков, настройки DNS и обновлений, советы «Решений» с их настройками (`suggest.json`), конфигурация xray (`0600`). |
 | `/opt/etc/nuxk/engines/S51nfqws2-nuxk` | Адаптер nfqws2. |
 | `/opt/share/www/nuxk/` | Лёгкий веб-интерфейс. |
 | `/opt/var/log/nuxk-core.log`, `.log.1` | Журнал агента, не более 2 × 512 КиБ. |

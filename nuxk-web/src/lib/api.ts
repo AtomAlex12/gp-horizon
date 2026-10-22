@@ -69,6 +69,13 @@ export type DNSCheck = S['DNSCheck'];
 export type DNSCheckItem = S['DNSCheckItem'];
 export type DNSStats = S['DNSStats'];
 export type DNSQuery = S['DNSQuery'];
+export type Suggestion = S['Suggestion'];
+export type SuggestOverview = S['SuggestOverview'];
+export type SuggestQueued = S['SuggestQueued'];
+export type SuggestPath = S['SuggestPath'];
+export type SuggestPathInfo = S['SuggestPathInfo'];
+export type SuggestSettings = S['SuggestSettings'];
+export type SuggestReference = S['SuggestReference'];
 
 // nuxk-controller's own API (not part of the agent contract).
 // GET /ctl/v1/logs — the controller's log (src: its web/API, or the plugin host)
@@ -190,6 +197,14 @@ export const api = {
   flushDnsCache: () => req<DNSStatus>('POST', v1('/dns/cache/flush')),
   dnsStats: () => req<DNSStats>('GET', v1('/dns/stats')),
   dnsLog: (q = '', n = 200) => req<{ items: DNSQuery[] }>('GET', v1(`/dns/log?n=${n}&q=${encodeURIComponent(q)}`)),
+  suggest: () => req<SuggestOverview>('GET', v1('/suggest')),
+  suggestCheck: (domains: string[]) => req<SuggestQueued>('POST', v1('/suggest/check'), { domains }),
+  suggestScan: () => req<SuggestQueued>('POST', v1('/suggest/scan')),
+  suggestAccept: (domain: string, mode?: ListMode) =>
+    req<S['Ok']>('POST', v1(`/suggest/${encodeURIComponent(domain)}/accept`), mode ? { mode } : undefined),
+  suggestDismiss: (domain: string) => req<S['Ok']>('DELETE', v1(`/suggest/${encodeURIComponent(domain)}`)),
+  // what the body leaves out stays as it is; 400 bad_settings carries a message for the person
+  suggestSettings: (s: Partial<SuggestSettings>) => req<SuggestSettings>('PUT', v1('/suggest/settings'), s),
 
   // controller only (404 when the UI is served by the agent itself)
   agent: () => req<AgentState>('GET', '/ctl/v1/agent'),
