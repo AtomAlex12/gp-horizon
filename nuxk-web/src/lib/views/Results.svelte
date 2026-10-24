@@ -1,9 +1,12 @@
 <script lang="ts">
   // «Результаты»: GP's run history, newest first. A row opens the run: why it
-  // ended, its log, its settings, and «Повторить» — the same domains back in
-  // «Прогоны».
+  // ended, its log, its settings, the strategies it found, and «Повторить» —
+  // the same domains back in «Прогоны».
+  import GpResults from '@gp-plane/gp-ui';
+  import { validCandidates, type Candidate } from '@gp-plane/gp-ui/format';
   import { gp, runVerdict, RUN_STATUS_LABEL, RUN_STATUS_CHIP, RUN_MODE_LABEL, type RunHistoryItem, type RunLogTail, type RunSettingsPatch } from '../gp';
   import { runDraft } from '../gpdraft.svelte';
+  import { copyText } from '../clipboard';
   import { fmtDur } from '../ui';
 
   let { go }: { go: (tab: string) => void } = $props();
@@ -13,6 +16,11 @@
   let open = $state<string | null>(null);
   let runLog = $state<RunLogTail | null>(null);
   let logErr = $state('');
+  // the open run's own finds, shown by GP Plane's shared component (gp-ui):
+  // the list and exact copying are its, loading and the clipboard ours
+  let found = $state<Candidate[]>([]);
+  let foundBusy = $state(false);
+  let foundErr = $state('');
 
   async function load() {
     try {
@@ -36,10 +44,29 @@
     open = r.run_id;
     runLog = null;
     logErr = '';
+    void loadFound(r);
     try {
       runLog = await gp.runLog(r.run_id);
     } catch (e) {
       logErr = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  // candidates of the run's domains that this run itself saw work
+  async function loadFound(r: RunHistoryItem) {
+    found = [];
+    foundErr = '';
+    foundBusy = true;
+    try {
+      const list = r.domains?.length
+        ? (await gp.candidates({ domains: r.domains })).candidates.filter((c) => (c.seen ?? []).some((s) => s.run_id === r.run_id))
+        : [];
+      if (!validCandidates(list)) throw new Error('GP прислал стратегии в неожиданном виде');
+      if (open === r.run_id) found = list;
+    } catch (e) {
+      if (open === r.run_id) foundErr = 'Стратегии прогона: ' + (e instanceof Error ? e.message : String(e));
+    } finally {
+      if (open === r.run_id) foundBusy = false;
     }
   }
 
@@ -124,6 +151,9 @@
                         <details open={failed(r)}><summary class="hint">ошибки GP (stderr)</summary><pre class="log">{tail(runLog.stderr_tail, 40)}</pre></details>
                       {/if}
                     {/if}
+                    <div class="gpui">
+                      <GpResults candidates={found} loading={foundBusy} error={foundErr} onCopy={copyText} />
+                    </div>
                   </div>
                 </td>
               </tr>
@@ -161,6 +191,29 @@
     font-size: 11.5px;
     color: var(--muted);
     word-break: break-word;
+  }
+  /* GP Plane's component brings light colours of its own: put it in ours */
+  .gpui :global(section) {
+    border-top: 1px solid var(--line);
+    padding-top: 8px;
+  }
+  .gpui :global(h2) {
+    font-size: 13px;
+    margin: 0 0 6px;
+  }
+  .gpui :global(h3) {
+    font-size: 12.5px;
+    margin: 0 0 4px;
+  }
+  .gpui :global(article) {
+    border-color: var(--line);
+    background: var(--surface);
+  }
+  .gpui :global(pre) {
+    background: var(--surface-2);
+    color: var(--ink);
+    font-family: var(--font-mono);
+    font-size: 11.5px;
   }
   .log {
     margin: 0;

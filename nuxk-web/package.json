@@ -4,6 +4,7 @@
   "version": "0.5.1-beta.1",
   "type": "module",
   "scripts": {
+    "vendor": "sh scripts/gp-ui.sh",
     "dev": "vite",
     "build": "svelte-check --tsconfig ./tsconfig.json && vite build",
     "build:lite": "vite build --mode lite --outDir dist-lite",
@@ -14,6 +15,7 @@
     "gen:gp": "openapi-typescript ../nuxk-controller/plugins/gp/openapi.json -o src/lib/gp-schema.d.ts"
   },
   "devDependencies": {
+    "@gp-plane/gp-ui": "file:vendor/gp-plane-gp-ui-0.1.0-s2a.1.tgz",
     "@sveltejs/vite-plugin-svelte": "^5.0.3",
     "@tsconfig/svelte": "^5.0.4",
     "openapi-typescript": "7.13.0",

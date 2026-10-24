@@ -51,7 +51,7 @@ make check                 # всё: версия, go test/vet/gofmt, svelte-che
 make release               # всё, что скачивают установщики, в dist/ (нужен интернет: usque из GitHub)
 
 cd nuxk-core && go run . -config testdata/nuxk.conf -debug   # агент с мок-движками, :4141
-cd nuxk-web  && npm install && npm run dev                   # веб :5173, /api → :4141
+cd nuxk-web  && npm run vendor && npm ci && npm run dev      # веб :5173, /api → :4141
 cd nuxk-web  && npm run gen:api                              # типы из openapi.yaml
 cd nuxk-core && go test -race ./...
 sh engines/nuxk-nfqws2/shim_test.sh

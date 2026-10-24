@@ -28,8 +28,8 @@ node_modules/
 /nuxk-core/testdata/mock.xray-meta
 /nuxk-controller/.data/
 
-# committed before the first release (npm install for now)
-/nuxk-web/package-lock.json
+# GP Plane's shared UI package, fetched by nuxk-web/scripts/gp-ui.sh (SHA256-checked)
+/nuxk-web/vendor/
 
 # editor / os
 .DS_Store

@@ -17,8 +17,9 @@
 # --- stage: web (same pattern as deploy/dev) --------------------------------
 FROM node:22-alpine AS web
 WORKDIR /src
-COPY nuxk-web/package.json nuxk-web/package-lock.jso[n] ./
-RUN npm install --no-audit --no-fund
+COPY nuxk-web/package.json nuxk-web/package-lock.json ./
+COPY nuxk-web/scripts/gp-ui.sh scripts/
+RUN sh scripts/gp-ui.sh && npm ci --no-audit --no-fund
 COPY nuxk-web/ ./
 ARG VITE_API_TOKEN=proto-nuxk-token
 RUN npm run build
