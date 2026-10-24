@@ -21,10 +21,12 @@
   let found = $state<Candidate[]>([]);
   let foundBusy = $state(false);
   let foundErr = $state('');
-  // 'run': GP marked which candidates this run saw; 'domains': it didn't
-  // (v0.4.4 leaves seen[].run_id empty) — the run's domains' candidates then
+  // 'run': GP marks which run saw a candidate (seen[].run_id) and these are
+  // this run's; 'domains': GP marks none (v0.4.4 and 0.4.5a1 leave run_id
+  // empty) — the run's domains' candidates then, and the screen says so
   let foundScope = $state<'run' | 'domains'>('run');
   let foundAll = $state(0);
+  let foundSeq = 0; // only the latest request for the open run counts
   const FOUND_MAX = 50; // a long list belongs to «Стратегии», with its filters
 
   async function load() {
@@ -57,26 +59,27 @@
     }
   }
 
-  // candidates this run saw work — or, when GP doesn't say which run saw
-  // them, every candidate of the run's domains, and the screen says so
+  // candidates this run saw work — or, when GP doesn't mark runs at all,
+  // every candidate of the run's domains, and the screen says so
   async function loadFound(r: RunHistoryItem) {
+    const n = ++foundSeq;
     found = [];
+    foundAll = 0;
     foundErr = '';
     foundBusy = true;
     try {
       const all = r.domains?.length ? (await gp.candidates({ domains: r.domains })).candidates : [];
-      const byRun = all.filter((c) => (c.seen ?? []).some((s) => s.run_id === r.run_id));
-      const list = byRun.length ? byRun : all;
+      const marked = all.some((c) => (c.seen ?? []).some((s) => s.run_id));
+      const list = marked ? all.filter((c) => (c.seen ?? []).some((s) => s.run_id === r.run_id)) : all;
       if (!validCandidates(list)) throw new Error('GP прислал стратегии в неожиданном виде');
-      if (open === r.run_id) {
-        foundScope = byRun.length ? 'run' : 'domains';
-        foundAll = list.length;
-        found = list.slice(0, FOUND_MAX);
-      }
+      if (n !== foundSeq) return;
+      foundScope = marked ? 'run' : 'domains';
+      foundAll = list.length;
+      found = list.slice(0, FOUND_MAX);
     } catch (e) {
-      if (open === r.run_id) foundErr = 'Стратегии прогона: ' + (e instanceof Error ? e.message : String(e));
+      if (n === foundSeq) foundErr = 'Стратегии прогона: ' + (e instanceof Error ? e.message : String(e));
     } finally {
-      if (open === r.run_id) foundBusy = false;
+      if (n === foundSeq) foundBusy = false;
     }
   }
 
@@ -161,20 +164,23 @@
                         <details open={failed(r)}><summary class="hint">ошибки GP (stderr)</summary><pre class="log">{tail(runLog.stderr_tail, 40)}</pre></details>
                       {/if}
                     {/if}
-                    {#if !foundBusy && !foundErr && foundAll}
+                    <div class="gpui">
+                      <GpResults candidates={found} loading={foundBusy} error={foundErr} onCopy={copyText} />
+                    </div>
+                    {#if !foundBusy && !foundErr && r.domains?.length}
                       <p class="hint">
-                        {foundScope === 'run'
-                          ? 'Стратегии, которые нашёл этот прогон.'
-                          : 'GP не отмечает, какой прогон нашёл стратегию, — показаны все найденные для доменов этого прогона.'}
+                        {#if foundScope === 'run'}
+                          {foundAll ? 'Стратегии, которые нашёл этот прогон.' : 'Этот прогон новых стратегий не нашёл.'}
+                        {:else if foundAll}
+                          GP не отмечает, какой прогон нашёл стратегию, — показаны все найденные для доменов этого прогона.
+                        {/if}
                         {#if foundAll > found.length}
-                          Здесь первые {found.length} из {foundAll}; все, с фильтрами и применением на роутере, — во вкладке
+                          Здесь первые {found.length} из {foundAll}, и «Скопировать все» копирует их; все, с фильтрами и
+                          применением на роутере, — во вкладке
                           <button class="linkbtn" onclick={() => go('strategies')}>«Стратегии»</button>.
                         {/if}
                       </p>
                     {/if}
-                    <div class="gpui">
-                      <GpResults candidates={found} loading={foundBusy} error={foundErr} onCopy={copyText} />
-                    </div>
                   </div>
                 </td>
               </tr>
@@ -229,6 +235,9 @@
   .gpui :global(article) {
     border-color: var(--line);
     background: var(--surface);
+  }
+  .gpui :global([role='alert']) {
+    color: var(--warn);
   }
   .gpui :global(pre) {
     background: var(--surface-2);

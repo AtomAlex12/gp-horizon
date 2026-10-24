@@ -28,7 +28,7 @@ core-check:
 	$(MAKE) -C nuxk-core fmt-check vet test
 
 web-check:
-	cd nuxk-web && sh scripts/gp-ui.sh && npm ci --no-audit --no-fund && npm run check:api && npm run check
+	cd nuxk-web && npm run vendor && npm ci --no-audit --no-fund && npm run check:api && npm run check
 
 # the router side: engine adapters and the lite installer, on a fake router
 install-check:
@@ -63,7 +63,7 @@ release: version-check
 	cd nuxk-controller && for arch in arm64 amd64; do \
 	  CGO_ENABLED=0 GOOS=linux GOARCH=$$arch go build -ldflags "-s -w -X main.version=$(VERSION) -X main.commit=$(COMMIT)" -o ../$(OUT)/nuxk-controller-linux-$$arch . || exit 1; \
 	done
-	cd nuxk-web && sh scripts/gp-ui.sh && npm ci --no-audit --no-fund && npm run build && npm run build:lite
+	cd nuxk-web && npm run vendor && npm ci --no-audit --no-fund && npm run build && npm run build:lite
 	tar -C nuxk-web/dist      -czf $(OUT)/nuxk-web-full-$(VERSION).tar.gz .
 	tar -C nuxk-web/dist-lite -czf $(OUT)/nuxk-web-lite-$(VERSION).tar.gz .
 	cp CHANGELOG.md $(OUT)/

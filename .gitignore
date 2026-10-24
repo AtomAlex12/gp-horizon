@@ -28,7 +28,7 @@ node_modules/
 /nuxk-core/testdata/mock.xray-meta
 /nuxk-controller/.data/
 
-# GP Plane's shared UI package, fetched by nuxk-web/scripts/gp-ui.sh (SHA256-checked)
+# GP Plane's shared UI package, fetched by nuxk-web/scripts/gp-ui.mjs (SHA256-checked)
 /nuxk-web/vendor/
 
 # editor / os

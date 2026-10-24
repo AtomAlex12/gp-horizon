@@ -11,10 +11,10 @@
 FROM node:22-alpine AS web
 WORKDIR /src
 # the lock is in the repo: `npm ci`; GP Plane's shared UI package comes from
-# scripts/gp-ui.sh (SHA256-checked) before it
+# scripts/gp-ui.mjs (SHA256-checked) before it
 COPY nuxk-web/package.json nuxk-web/package-lock.json ./
-COPY nuxk-web/scripts/gp-ui.sh scripts/
-RUN sh scripts/gp-ui.sh && npm ci --no-audit --no-fund
+COPY nuxk-web/scripts/gp-ui.mjs scripts/
+RUN node scripts/gp-ui.mjs && npm ci --no-audit --no-fund
 COPY nuxk-web/ ./
 ARG VITE_API_TOKEN=dev-nuxk-token
 RUN npm run build            # -> /src/dist
