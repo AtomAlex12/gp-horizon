@@ -21,6 +21,11 @@
   let found = $state<Candidate[]>([]);
   let foundBusy = $state(false);
   let foundErr = $state('');
+  // 'run': GP marked which candidates this run saw; 'domains': it didn't
+  // (v0.4.4 leaves seen[].run_id empty) — the run's domains' candidates then
+  let foundScope = $state<'run' | 'domains'>('run');
+  let foundAll = $state(0);
+  const FOUND_MAX = 50; // a long list belongs to «Стратегии», with its filters
 
   async function load() {
     try {
@@ -52,17 +57,22 @@
     }
   }
 
-  // candidates of the run's domains that this run itself saw work
+  // candidates this run saw work — or, when GP doesn't say which run saw
+  // them, every candidate of the run's domains, and the screen says so
   async function loadFound(r: RunHistoryItem) {
     found = [];
     foundErr = '';
     foundBusy = true;
     try {
-      const list = r.domains?.length
-        ? (await gp.candidates({ domains: r.domains })).candidates.filter((c) => (c.seen ?? []).some((s) => s.run_id === r.run_id))
-        : [];
+      const all = r.domains?.length ? (await gp.candidates({ domains: r.domains })).candidates : [];
+      const byRun = all.filter((c) => (c.seen ?? []).some((s) => s.run_id === r.run_id));
+      const list = byRun.length ? byRun : all;
       if (!validCandidates(list)) throw new Error('GP прислал стратегии в неожиданном виде');
-      if (open === r.run_id) found = list;
+      if (open === r.run_id) {
+        foundScope = byRun.length ? 'run' : 'domains';
+        foundAll = list.length;
+        found = list.slice(0, FOUND_MAX);
+      }
     } catch (e) {
       if (open === r.run_id) foundErr = 'Стратегии прогона: ' + (e instanceof Error ? e.message : String(e));
     } finally {
@@ -150,6 +160,17 @@
                       {#if runLog.stderr_tail}
                         <details open={failed(r)}><summary class="hint">ошибки GP (stderr)</summary><pre class="log">{tail(runLog.stderr_tail, 40)}</pre></details>
                       {/if}
+                    {/if}
+                    {#if !foundBusy && !foundErr && foundAll}
+                      <p class="hint">
+                        {foundScope === 'run'
+                          ? 'Стратегии, которые нашёл этот прогон.'
+                          : 'GP не отмечает, какой прогон нашёл стратегию, — показаны все найденные для доменов этого прогона.'}
+                        {#if foundAll > found.length}
+                          Здесь первые {found.length} из {foundAll}; все, с фильтрами и применением на роутере, — во вкладке
+                          <button class="linkbtn" onclick={() => go('strategies')}>«Стратегии»</button>.
+                        {/if}
+                      </p>
                     {/if}
                     <div class="gpui">
                       <GpResults candidates={found} loading={foundBusy} error={foundErr} onCopy={copyText} />
