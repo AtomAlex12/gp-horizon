@@ -22,7 +22,7 @@ if (existsSync(file) && sha256(readFileSync(file)) === SUM) process.exit(0);
 let body;
 for (let i = 1; !body; i++) {
   try {
-    const r = await fetch(SRC);
+    const r = await fetch(SRC, { signal: AbortSignal.timeout(60_000) });
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     body = Buffer.from(await r.arrayBuffer());
   } catch (e) {

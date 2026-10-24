@@ -167,7 +167,7 @@
                     <div class="gpui">
                       <GpResults candidates={found} loading={foundBusy} error={foundErr} onCopy={copyText} />
                     </div>
-                    {#if !foundBusy && !foundErr && r.domains?.length}
+                    {#if !foundBusy && !foundErr && r.domains?.length && (foundAll || foundScope === 'run')}
                       <p class="hint">
                         {#if foundScope === 'run'}
                           {foundAll ? 'Стратегии, которые нашёл этот прогон.' : 'Этот прогон новых стратегий не нашёл.'}
