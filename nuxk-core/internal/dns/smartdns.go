@@ -401,7 +401,7 @@ func (s *Service) smartConf() string {
 	set := s.Settings()
 	iface := ""
 	if set.Via != ViaDirect {
-		iface = s.sd.o.WarpIface()
+		iface = s.smartWarpIface()
 	}
 	host, _, _ := net.SplitHostPort(s.o.Listen)
 	allow := []string{"127.0.0.1"}
@@ -426,9 +426,22 @@ func (s *Service) smartState() *SmartDNSState {
 	}
 	st := &SmartDNSState{Installed: s.sd.installed(), Version: s.sd.ver()}
 	st.Running, st.Error = s.sd.state()
-	if s.Settings().Via != ViaDirect {
-		st.Iface = s.sd.o.WarpIface()
-	}
+	// Report the last successfully applied configuration, not a requested
+	// fallback that the init script may have failed to apply.
+	st.Iface = s.sd.configuredIface()
 	st.Fallback = st.Iface != ""
 	return st
+}
+
+// configuredIface is known only after a successful configuration application.
+func (d *smartDNS) configuredIface() string {
+	d.mu.Lock()
+	fields := strings.Fields(d.applied)
+	d.mu.Unlock()
+	for i, field := range fields {
+		if field == "-interface" && i+1 < len(fields) {
+			return fields[i+1]
+		}
+	}
+	return ""
 }

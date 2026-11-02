@@ -34,3 +34,15 @@ func TestWarpIfaceOnlyWhileConnected(t *testing.T) {
 		}
 	}
 }
+
+// A live process and a connected interface are insufficient when its last
+// traffic probe failed: DNS must not remain dependent on that tunnel.
+func TestWarpIfaceRejectsFailedProbe(t *testing.T) {
+	snap := core.Snapshot{Engines: []core.EngineState{{Info: engine.Info{
+		Kind: engine.KindUsque, Running: true, Health: engine.HealthDegraded, Iface: "opkgtun0",
+		Detail: map[string]string{"tunnel_state": "connected"},
+	}, Probe: &engine.Probe{OK: false}}}}
+	if got := warpIface(snap, config.Defaults()); got != "" {
+		t.Fatalf("failed WARP probe still selected %q", got)
+	}
+}
