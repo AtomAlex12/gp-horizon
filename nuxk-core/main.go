@@ -360,7 +360,7 @@ func warpIface(snap core.Snapshot, cfg config.Config) string {
 // can't tell. A tunnel that says it's down carries nothing, whatever its
 // interface shows.
 func tunnelUp(e core.EngineState) bool {
-	if !e.Running || e.Health == engine.HealthDown {
+	if !e.Running || e.Health == engine.HealthDown || (e.Health == engine.HealthDegraded && e.Probe != nil && !e.Probe.OK) {
 		return false
 	}
 	switch e.Detail["tunnel_state"] {
