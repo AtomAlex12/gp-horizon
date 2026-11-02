@@ -726,7 +726,7 @@ export interface paths {
         get?: never;
         /**
          * Set what counts as "good enough", the reference site and discovery
-         * @description What the body leaves out stays as it is. A new reference is measured with the next check.
+         * @description What the body leaves out stays as it is. A new reference is measured with the next check. If persistence fails, the previous settings and reference remain active.
          */
         put: operations["suggestSettings"];
         post?: never;
@@ -752,6 +752,9 @@ export interface paths {
          *     minutes later (once the plane has applied it), and then daily, the accepted way is
          *     measured again: see `verified`, `verify_note`, `next`, `interim`. If the domain is later
          *     moved to another of nuxk's lists by hand, the check follows it.
+         *
+         *     A stale suggestion is rejected with `409 domain_covered` if this domain or its parent
+         *     is already in a current nuxk list or a known foreign Keenetic group. No list is changed.
          *
          *     The first «DPI» list (mode `desync` while `GET /plane` says `desync_managed: false`)
          *     makes nuxk the owner of nfqws2's own site list: with apply on, `user.list` is then
@@ -2633,6 +2636,15 @@ export interface operations {
             };
             400: components["responses"]["Error"];
             404: components["responses"]["Error"];
+            /** @description settings could not be persisted; previous values retained */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     suggestAccept: {
@@ -2663,7 +2675,7 @@ export interface operations {
             };
             400: components["responses"]["Error"];
             404: components["responses"]["Error"];
-            /** @description routing wouldn't help for this domain */
+            /** @description routing wouldn't help, or the domain is already covered by a current list */
             409: {
                 headers: {
                     [name: string]: unknown;

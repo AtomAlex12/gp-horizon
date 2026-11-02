@@ -482,7 +482,7 @@ func keepRank(it *Item) int {
 
 // saveLocked persists everything but in-flight checks; past maxItems the
 // least needed go (see keepRank), oldest first. Caller holds s.mu.
-func (s *Service) saveLocked() {
+func (s *Service) saveLocked() error {
 	var keep []*Item
 	for _, it := range s.items {
 		if it.State != StateChecking {
@@ -513,5 +513,7 @@ func (s *Service) saveLocked() {
 	}
 	if err := s.Store.SaveJSON(stateKey, f); err != nil {
 		slog.Warn("suggest: save failed", "err", err)
+		return err
 	}
+	return nil
 }

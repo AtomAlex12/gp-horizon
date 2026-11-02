@@ -94,11 +94,15 @@ func (s *Service) SetSettings(set Settings) (Settings, error) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	previous, reference := s.set, s.ref
 	if set.Reference != s.set.Reference {
 		s.ref = Reference{Domain: set.Reference}
 	}
 	s.set = set
-	s.saveLocked()
+	if err := s.saveLocked(); err != nil {
+		s.set, s.ref = previous, reference
+		return previous, err
+	}
 	slog.Info("suggest: settings", "ttfb_max_ms", set.TTFBMaxMs, "ttfb_factor", set.TTFBFactor,
 		"kbps_min", set.KbpsMin, "kbps_share", set.KbpsShare, "reference", set.Reference, "discover", set.Discover)
 	return set, nil

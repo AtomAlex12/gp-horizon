@@ -92,6 +92,8 @@ func (d Deps) handleSuggestAccept(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "not_found", err.Error())
 	case errors.Is(err, suggest.ErrNoMode):
 		writeErr(w, http.StatusConflict, "nothing_to_route", err.Error())
+	case errors.Is(err, plane.ErrDomainCovered):
+		writeErr(w, http.StatusConflict, "domain_covered", err.Error())
 	case errors.Is(err, suggest.ErrBadMode), errors.Is(err, plane.ErrBadList):
 		writeErr(w, http.StatusBadRequest, "bad_mode", err.Error())
 	case errors.Is(err, suggest.ErrNoPlane):

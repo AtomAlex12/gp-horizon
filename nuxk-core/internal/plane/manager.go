@@ -3,6 +3,7 @@ package plane
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"slices"
 	"sort"
@@ -63,7 +64,7 @@ type Manager struct {
 	Cfg   Config
 
 	kick   chan struct{}
-	edit   sync.Mutex // read-modify-write of the desired lists (AddAuto)
+	edit   sync.Mutex // serializes every desired-list update
 	run    sync.Mutex // one reconcile at a time; guards pushed
 	pushed []string   // last desync list nfqws2 accepted; nil = not pushed yet
 	mu     sync.Mutex // guards st and ifaces: Status never waits for a slow pass
@@ -111,6 +112,13 @@ var ErrBadOnDown = errors.New("on_down must be direct or block")
 
 // SetDesired replaces the desired lists and reconciles right away.
 func (m *Manager) SetDesired(d Desired) error {
+	m.edit.Lock()
+	defer m.edit.Unlock()
+	return m.setDesiredLocked(d)
+}
+
+// setDesiredLocked commits a complete snapshot while the caller holds edit.
+func (m *Manager) setDesiredLocked(d Desired) error {
 	if d.OnDown == "" {
 		d.OnDown = OnDownDirect
 	}
@@ -147,6 +155,8 @@ func (m *Manager) Import(groups []string, mode Mode) (Desired, error) {
 	if !mode.Valid() {
 		return Desired{}, ErrBadList
 	}
+	m.edit.Lock()
+	defer m.edit.Unlock()
 	st := m.Status()
 	d, err := m.Desired()
 	if err != nil {
@@ -169,11 +179,13 @@ func (m *Manager) Import(groups []string, mode Mode) (Desired, error) {
 			}
 		}
 	}
-	return d, m.SetDesired(d)
+	return d, m.setDesiredLocked(d)
 }
 
 // AutoSource marks lists the route-suggestion screen fills ("suggest:<mode>").
 const AutoSource = "suggest"
+
+var ErrDomainCovered = errors.New("домен уже находится в списке: обновите предложение")
 
 var autoTitle = map[Mode]string{ModeDesync: "Подбор: DPI", ModeWarp: "Подбор: WARP", ModeVless: "Подбор: VLESS"}
 
@@ -181,14 +193,19 @@ var autoTitle = map[Mode]string{ModeDesync: "Подбор: DPI", ModeWarp: "По
 // first use). The usual plane rules apply: nothing changes on the router unless
 // the plane is in apply mode.
 func (m *Manager) AddAuto(mode Mode, domain string) error {
-	if !mode.Valid() {
+	normalized := Normalize([]string{domain})
+	if !mode.Valid() || len(normalized) != 1 {
 		return ErrBadList
 	}
+	domain = normalized[0]
 	m.edit.Lock()
 	defer m.edit.Unlock()
 	d, err := m.Desired()
 	if err != nil {
 		return err
+	}
+	if why := m.covered(d, domain); why != "" {
+		return fmt.Errorf("%w: %s", ErrDomainCovered, why)
 	}
 	src := AutoSource + ":" + string(mode)
 	added := false
@@ -201,7 +218,7 @@ func (m *Manager) AddAuto(mode Mode, domain string) error {
 	if !added {
 		d.Lists = append(d.Lists, List{Name: autoTitle[mode], Mode: mode, Domains: []string{domain}, Source: src})
 	}
-	return m.SetDesired(d)
+	return m.setDesiredLocked(d)
 }
 
 // Covered says where a domain is already routed — one of nuxk's lists, or one
@@ -209,11 +226,14 @@ func (m *Manager) AddAuto(mode Mode, domain string) error {
 // domain covers its subdomains (the firmware does).
 func (m *Manager) Covered(domain string) string {
 	domain = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(domain), "."))
-	if d, err := m.Desired(); err == nil {
-		for _, l := range d.Lists {
-			if listCovers(l.Domains, domain) {
-				return "список «" + l.Name + "»"
-			}
+	d, _ := m.Desired()
+	return m.covered(d, domain)
+}
+
+func (m *Manager) covered(d Desired, domain string) string {
+	for _, l := range d.Lists {
+		if listCovers(l.Domains, domain) {
+			return "список «" + l.Name + "»"
 		}
 	}
 	for _, f := range m.Status().Foreign {
