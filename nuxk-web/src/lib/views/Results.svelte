@@ -1,9 +1,12 @@
 <script lang="ts">
   // «Результаты»: GP's run history, newest first. A row opens the run: why it
-  // ended, its log, its settings, and «Повторить» — the same domains back in
-  // «Прогоны».
+  // ended, its log, its settings, the strategies it found, and «Повторить» —
+  // the same domains back in «Прогоны».
+  import GpResults from '@gp-plane/gp-ui';
+  import { validCandidates, type Candidate } from '@gp-plane/gp-ui/format';
   import { gp, runVerdict, RUN_STATUS_LABEL, RUN_STATUS_CHIP, RUN_MODE_LABEL, type RunHistoryItem, type RunLogTail, type RunSettingsPatch } from '../gp';
   import { runDraft } from '../gpdraft.svelte';
+  import { copyText } from '../clipboard';
   import { fmtDur } from '../ui';
 
   let { go }: { go: (tab: string) => void } = $props();
@@ -13,6 +16,18 @@
   let open = $state<string | null>(null);
   let runLog = $state<RunLogTail | null>(null);
   let logErr = $state('');
+  // the open run's own finds, shown by GP Plane's shared component (gp-ui):
+  // the list and exact copying are its, loading and the clipboard ours
+  let found = $state<Candidate[]>([]);
+  let foundBusy = $state(false);
+  let foundErr = $state('');
+  // 'run': GP marks which run saw a candidate (seen[].run_id) and these are
+  // this run's; 'domains': GP marks none (v0.4.4 and 0.4.5a1 leave run_id
+  // empty) — the run's domains' candidates then, and the screen says so
+  let foundScope = $state<'run' | 'domains'>('run');
+  let foundAll = $state(0);
+  let foundSeq = 0; // only the latest request for the open run counts
+  const FOUND_MAX = 50; // a long list belongs to «Стратегии», with its filters
 
   async function load() {
     try {
@@ -36,10 +51,35 @@
     open = r.run_id;
     runLog = null;
     logErr = '';
+    void loadFound(r);
     try {
       runLog = await gp.runLog(r.run_id);
     } catch (e) {
       logErr = e instanceof Error ? e.message : String(e);
+    }
+  }
+
+  // candidates this run saw work — or, when GP doesn't mark runs at all,
+  // every candidate of the run's domains, and the screen says so
+  async function loadFound(r: RunHistoryItem) {
+    const n = ++foundSeq;
+    found = [];
+    foundAll = 0;
+    foundErr = '';
+    foundBusy = true;
+    try {
+      const all = r.domains?.length ? (await gp.candidates({ domains: r.domains })).candidates : [];
+      const marked = all.some((c) => (c.seen ?? []).some((s) => s.run_id));
+      const list = marked ? all.filter((c) => (c.seen ?? []).some((s) => s.run_id === r.run_id)) : all;
+      if (!validCandidates(list)) throw new Error('GP прислал стратегии в неожиданном виде');
+      if (n !== foundSeq) return;
+      foundScope = marked ? 'run' : 'domains';
+      foundAll = list.length;
+      found = list.slice(0, FOUND_MAX);
+    } catch (e) {
+      if (n === foundSeq) foundErr = 'Стратегии прогона: ' + (e instanceof Error ? e.message : String(e));
+    } finally {
+      if (n === foundSeq) foundBusy = false;
     }
   }
 
@@ -124,6 +164,23 @@
                         <details open={failed(r)}><summary class="hint">ошибки GP (stderr)</summary><pre class="log">{tail(runLog.stderr_tail, 40)}</pre></details>
                       {/if}
                     {/if}
+                    <div class="gpui">
+                      <GpResults candidates={found} loading={foundBusy} error={foundErr} onCopy={copyText} />
+                    </div>
+                    {#if !foundBusy && !foundErr && r.domains?.length && (foundAll || foundScope === 'run')}
+                      <p class="hint">
+                        {#if foundScope === 'run'}
+                          {foundAll ? 'Стратегии, которые нашёл этот прогон.' : 'Этот прогон новых стратегий не нашёл.'}
+                        {:else if foundAll}
+                          GP не отмечает, какой прогон нашёл стратегию, — показаны все найденные для доменов этого прогона.
+                        {/if}
+                        {#if foundAll > found.length}
+                          Здесь первые {found.length} из {foundAll}, и «Скопировать все» копирует их; все, с фильтрами и
+                          применением на роутере, — во вкладке
+                          <button class="linkbtn" onclick={() => go('strategies')}>«Стратегии»</button>.
+                        {/if}
+                      </p>
+                    {/if}
                   </div>
                 </td>
               </tr>
@@ -161,6 +218,32 @@
     font-size: 11.5px;
     color: var(--muted);
     word-break: break-word;
+  }
+  /* GP Plane's component brings light colours of its own: put it in ours */
+  .gpui :global(section) {
+    border-top: 1px solid var(--line);
+    padding-top: 8px;
+  }
+  .gpui :global(h2) {
+    font-size: 13px;
+    margin: 0 0 6px;
+  }
+  .gpui :global(h3) {
+    font-size: 12.5px;
+    margin: 0 0 4px;
+  }
+  .gpui :global(article) {
+    border-color: var(--line);
+    background: var(--surface);
+  }
+  .gpui :global([role='alert']) {
+    color: var(--warn);
+  }
+  .gpui :global(pre) {
+    background: var(--surface-2);
+    color: var(--ink);
+    font-family: var(--font-mono);
+    font-size: 11.5px;
   }
   .log {
     margin: 0;

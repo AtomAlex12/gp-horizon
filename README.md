@@ -362,7 +362,7 @@ Entware вы вводите в `ssh`, установщику он недосту
 
 ```sh
 cd nuxk-core && go run . -config testdata/nuxk.conf -debug   # агент с движками-заглушками, :4141
-cd nuxk-web  && npm install && npm run dev                   # веб-интерфейс :5173, /api → :4141
+cd nuxk-web  && npm run vendor && npm ci && npm run dev      # веб-интерфейс :5173, /api → :4141
 make check                                                   # всё, что выполняет CI
 ```
 

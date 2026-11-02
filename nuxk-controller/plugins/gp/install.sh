@@ -2,12 +2,14 @@
 # nuxk plugin recipe: GP Plane core (balbomush/GP-plane, formerly
 # GP-access-control-plane) + the zapret2 it drives.
 #
-#   install.sh <gp-tag> <dest>     (run by `nuxk-controller supervise`)
+#   install.sh <gp-tag|commit> <dest>     (run by `nuxk-controller supervise`)
 #
 # Everything is fetched on this device from the projects' own releases — nuxk
 # ships none of their code. Runs as root without any capability: it can
 # download and write <dest>, nothing else.
-#   GP:       the tag's source tarball; Python deps pinned by hash (GP's lock)
+#   GP:       the tag's source tarball — or, to test a build GP Plane hands
+#             over without a tag, a full commit SHA's; Python deps pinned by
+#             hash (GP's runtime lock, requirements/a5-transport.lock)
 #   zapret2:  the release tarball, every binary checked against its sha256sum.txt
 set -eu
 V="$1"
@@ -18,7 +20,11 @@ say() { printf '== %s\n' "$*"; }
 get() { curl -fsSL --retry 3 --retry-delay 2 -o "$1" "$2"; }
 
 say "GP $V"
-get gp.tar.gz "https://github.com/balbomush/GP-plane/archive/refs/tags/$V.tar.gz"
+ref="refs/tags/$V"
+if [ ${#V} -eq 40 ] && ! printf %s "$V" | grep -q '[^0-9a-f]'; then
+    ref="$V" # a commit: a test build, not a release
+fi
+get gp.tar.gz "https://github.com/balbomush/GP-plane/archive/$ref.tar.gz"
 mkdir gp
 tar -xzf gp.tar.gz -C gp --strip-components=1
 rm gp.tar.gz
@@ -26,8 +32,9 @@ rm gp.tar.gz
 [ -f gp/scripts/gp-root-helper.sh ] || { echo "в $V нет scripts/gp-root-helper.sh" >&2; exit 1; }
 
 say "Python-зависимости по хешам из lock-файла GP"
-lock=$(ls gp/requirements/*.lock 2>/dev/null | head -n 1 || true)
-[ -n "$lock" ] || { echo "в $V нет requirements/*.lock — без хешей не ставлю" >&2; exit 1; }
+# the core's runtime lock by name: GP Plane's other locks (tests, builds) are not for this
+lock=gp/requirements/a5-transport.lock
+[ -f "$lock" ] || { echo "в $V нет requirements/a5-transport.lock — без хешей не ставлю" >&2; exit 1; }
 python3 -m venv venv
 venv/bin/pip install --no-cache-dir --disable-pip-version-check --require-hashes --only-binary=:all: -r "$lock"
 
