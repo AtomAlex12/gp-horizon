@@ -16,7 +16,7 @@ func goodManifest() Manifest {
 	return Manifest{
 		Name: "gp", Title: "GP", DefaultVersion: "v0.4.2", Install: "install.sh",
 		Run: []string{"bin/run"}, Caps: []string{"NET_ADMIN"}, Listen: "127.0.0.1:8081", Health: "/api/health",
-		Releases: "github:balbomush/GP-access-control-plane", API: "gp",
+		Releases: "github:balbomush/GP-plane", API: "gp",
 	}
 }
 
