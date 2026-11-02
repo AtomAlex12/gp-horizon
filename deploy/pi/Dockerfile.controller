@@ -11,8 +11,9 @@
 
 FROM node:22-alpine AS web
 WORKDIR /src
-COPY nuxk-web/package.json nuxk-web/package-lock.jso[n] ./
-RUN npm install --no-audit --no-fund
+COPY nuxk-web/package.json nuxk-web/package-lock.json ./
+COPY nuxk-web/scripts/gp-ui.mjs scripts/
+RUN node scripts/gp-ui.mjs && npm ci --no-audit --no-fund
 COPY nuxk-web/ ./
 RUN npm run build                           # full build -> /src/dist, no token baked in
 

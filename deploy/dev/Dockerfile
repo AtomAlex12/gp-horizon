@@ -10,11 +10,11 @@
 # --- stage: web -------------------------------------------------------------
 FROM node:22-alpine AS web
 WORKDIR /src
-# package-lock.json is deferred from the repo until first release — use `npm
-# install`, not `npm ci`. The lockfile is copied when present (reproducible),
-# ignored when not.
-COPY nuxk-web/package.json nuxk-web/package-lock.jso[n] ./
-RUN npm install --no-audit --no-fund
+# the lock is in the repo: `npm ci`; GP Plane's shared UI package comes from
+# scripts/gp-ui.mjs (SHA256-checked) before it
+COPY nuxk-web/package.json nuxk-web/package-lock.json ./
+COPY nuxk-web/scripts/gp-ui.mjs scripts/
+RUN node scripts/gp-ui.mjs && npm ci --no-audit --no-fund
 COPY nuxk-web/ ./
 ARG VITE_API_TOKEN=dev-nuxk-token
 RUN npm run build            # -> /src/dist

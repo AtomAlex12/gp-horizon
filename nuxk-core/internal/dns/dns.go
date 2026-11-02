@@ -158,14 +158,18 @@ type Service struct {
 	answered  bool // a check has passed since the agent started
 	owe       bool // Keenetic refused to take nuxk's DNS back: tried again every check
 	// smartRestart: when a badly answering SmartDNS was last restarted
-	smartRestart time.Time
-	lastErr      string
-	consulted    bool
-	probe        string // the test question now in flight
-	clients      map[Path]*http.Client
-	stats        map[string]*PathStat
-	lastPath     string
-	resolver     int // index into the resolver order that answered last
+	smartRestart       time.Time
+	smartDirectUntil   time.Time
+	smartWarpGood      int
+	smartWarpProbeAt   time.Time
+	smartWarpCandidate string
+	lastErr            string
+	consulted          bool
+	probe              string // the test question now in flight
+	clients            map[Path]*http.Client
+	stats              map[string]*PathStat
+	lastPath           string
+	resolver           int // index into the resolver order that answered last
 
 	cache     *cache
 	fmu       sync.Mutex
@@ -827,6 +831,9 @@ func (s *Service) resume() {
 	if !s.Settings().Enabled {
 		return
 	}
+	if s.engine() == EngineSmartDNS {
+		s.holdSmartWarp() // bootstrap must not depend on a saved WARP binding
+	}
 	if err := s.start(); err != nil {
 		s.setErr(err.Error())
 	}
@@ -873,6 +880,12 @@ func (s *Service) tick(ctx context.Context) {
 		return
 	}
 	smart := s.engine() == EngineSmartDNS
+	if smart {
+		if s.sd.configuredIface() != "" && s.sd.o.WarpIface() == "" {
+			s.holdSmartWarp() // also hold after a failed engine probe or a disappearing interface
+		}
+		s.recoverSmartWarp(ctx)
+	}
 	// SmartDNS runs on its own: given its configuration again when that
 	// differs from what it runs with — WARP came up or went down — or when
 	// the agent has just started and doesn't know (the script leaves a
@@ -897,6 +910,9 @@ func (s *Service) tick(ctx context.Context) {
 	}
 	if err == nil {
 		err = s.healthy(cctx)
+	}
+	if err != nil && smart {
+		err = s.fallbackSmart(ctx, err)
 	}
 	if err != nil && smart {
 		s.mu.Lock()
@@ -1041,7 +1057,11 @@ func (s *Service) lookupWarm(ctx context.Context) error {
 		defer cancel()
 	}
 	for i := 0; i < tries; i++ {
-		if err = s.healthy(ctx); err == nil || ctx.Err() != nil {
+		err = s.healthy(ctx)
+		if err != nil && ctx.Err() == nil && s.engine() == EngineSmartDNS {
+			err = s.fallbackSmart(ctx, err)
+		}
+		if err == nil || ctx.Err() != nil {
 			break
 		}
 	}
