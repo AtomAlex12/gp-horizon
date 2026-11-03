@@ -241,7 +241,8 @@ func (s *Store) LoadJSON(name string, v any) error {
 	return json.Unmarshal(b, v)
 }
 
-// SaveJSON writes v as <name>.json atomically.
+// SaveJSON writes v as <name>.json atomically, readable by root only: the
+// files hold the household's domains (lists, suggestions, DNS settings).
 func (s *Store) SaveJSON(name string, v any) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -249,5 +250,5 @@ func (s *Store) SaveJSON(name string, v any) error {
 	if err != nil {
 		return err
 	}
-	return atomicWrite(filepath.Join(s.dir, name+".json"), b)
+	return atomicWriteMode(filepath.Join(s.dir, name+".json"), b, 0o600)
 }

@@ -1,7 +1,8 @@
-# Tag vX.Y.Z[-pre.N] on main → a GitHub release with everything the
-# installers download (`make release`), and the controller image on
-# ghcr.io built from those same files. The tag must equal v$(cat VERSION);
-# a "-" in it marks a pre-release (and keeps the image's :latest where it was).
+# Tag vX.Y.Z on main → a GitHub release with everything the installers
+# download (`make release`), and the controller image on ghcr.io built from
+# those same files. The tag must equal v$(cat VERSION); a "-" in it marks a
+# pre-release (and keeps the image's :latest where it was). A pre-release may
+# be tagged on dev, to test there; a stable one only on a commit of main.
 #
 # SHA256SUMS lists every file and the image's digest, and is signed with the
 # release key (secret NUXK_SIGNING_KEY, an OpenSSH ed25519 key): routers
@@ -22,6 +23,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # the stable-from-main check below needs main's history
       - uses: actions/setup-go@v5
         with:
           go-version: "1.24"
@@ -33,6 +36,13 @@ jobs:
           v=$(tr -d ' \n\r' < VERSION)
           [ "$GITHUB_REF_NAME" = "v$v" ] || { echo "tag $GITHUB_REF_NAME != v$v"; exit 1; }
           echo "VERSION=$v" >> "$GITHUB_ENV"
+      - name: a stable release only from main
+        run: |
+          case "$VERSION" in
+          *-*) echo "pre-release: may come from dev" ;;
+          *) git merge-base --is-ancestor "$GITHUB_SHA" origin/main ||
+               { echo "stable tag $GITHUB_REF_NAME is not on main"; exit 1; } ;;
+          esac
       - run: sudo apt-get install -y --no-install-recommends busybox
       - run: make check
       - name: the lite installer under busybox ash (the router's shell)

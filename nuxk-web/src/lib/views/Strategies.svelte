@@ -4,7 +4,9 @@
   // a profile in NFQWS_ARGS_CUSTOM for the chosen domains only, a backup of
   // nfqws2.conf, a restart of nfqws2 — and the old conf back if it won't start.
   import { api, type Strategy } from '../api';
+  import { strategyText } from '@gp-plane/gp-ui/format';
   import { gp, type StrategyCandidate } from '../gp';
+  import { copyText } from '../clipboard';
   import { ago, plural } from '../ui';
 
   let candidates = $state<StrategyCandidate[] | null>(null);
@@ -93,6 +95,19 @@
   function lastSeen(c: StrategyCandidate): string {
     const t = c.last_seen_at ?? (c.seen ?? []).map((x) => x.seen_at ?? '').sort().pop();
     return t ? new Date(t).toLocaleString('ru-RU', { dateStyle: 'short', timeStyle: 'short' }) : '—';
+  }
+
+  // copied the way GP Plane's own Web copies it (gp-ui's strategyText): the
+  // arguments exactly, order and quoting kept
+  let copied = $state('');
+  async function copy(c: StrategyCandidate) {
+    try {
+      await copyText(strategyText(c));
+      copied = c.id;
+      setTimeout(() => copied === c.id && (copied = ''), 2000);
+    } catch (e) {
+      err = 'Не удалось скопировать: ' + (e instanceof Error ? e.message : String(e));
+    }
   }
 
   const sid = (c: StrategyCandidate) => ('gp-' + c.id).replace(/[^A-Za-z0-9_.:-]/g, '-').slice(0, 80);
@@ -234,7 +249,8 @@
               <td title={ds.join('\n')}>{ds.slice(0, 2).join(', ')}{ds.length > 2 ? ` +${ds.length - 2}` : ''}</td>
               <td class="hint">{c.family ?? '—'}</td>
               <td class="hint">{lastSeen(c)}</td>
-              <td>
+              <td class="acts">
+                <button class="ghost sm" onclick={() => copy(c)} disabled={!strategyText(c)}>{copied === c.id ? 'Скопировано' : 'Копировать'}</button>
                 {#if blocker(c.args)}
                   <span class="hint" title="nuxk пишет на роутер только аргументы десинка без файлов и кода">{blocker(c.args)}</span>
                 {:else}
@@ -264,6 +280,9 @@
     color: var(--ink);
     text-decoration: none;
     background: var(--surface);
+  }
+  .acts button {
+    margin-right: 4px;
   }
   .args {
     font-size: 11.5px;

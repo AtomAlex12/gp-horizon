@@ -32,7 +32,7 @@ make docker            # → ghcr / gitea registry: nuxk-web:full
 FROM node:22-alpine AS build
 WORKDIR /app
 COPY nuxk-web/ .
-RUN npm ci && npm run build
+RUN npm run vendor && npm ci && npm run build
 FROM nginx:alpine
 COPY --from=build /app/dist /usr/share/nginx/html
 # runtime: point at a controller
