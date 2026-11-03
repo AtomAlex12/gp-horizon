@@ -206,6 +206,28 @@ func TestVerifyDNSFailureKeepsTheResult(t *testing.T) {
 	}
 }
 
+func TestVerifySkippedKeepsTheResult(t *testing.T) {
+	s, p, _, c := accepted(t, "desync")
+	p.set("x.example", probe.ViaDesync, opened(400, 0))
+	c.advance(verifyAfter)
+	s.verifyDue(context.Background())
+	before := item(t, s, "x.example")
+	p.reset()
+	p.skip[probe.ViaDesync] = "превышен предел заголовков"
+	c.advance(reverifyEvery)
+	s.verifyDue(context.Background())
+	got := item(t, s, "x.example")
+	if !got.Verified || got.VerifiedAt != before.VerifiedAt || got.Next != "" ||
+		got.VerifyDue != c.t.Add(verifyWait).Unix() || !strings.Contains(got.VerifyNote, p.skip[probe.ViaDesync]) {
+		t.Fatalf("skipped verification replaced a real result: %+v", got)
+	}
+	for _, call := range p.calls {
+		if strings.HasPrefix(call, "x.example ") && call != "x.example desync" {
+			t.Fatalf("skipped verification compared another path: %v", p.calls)
+		}
+	}
+}
+
 // The agent stopping mid-check leaves no verdict behind.
 func TestVerifyStoppingLeavesItDue(t *testing.T) {
 	s, _, _, c := accepted(t, "warp")

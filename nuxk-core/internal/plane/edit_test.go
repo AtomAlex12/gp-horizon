@@ -8,6 +8,13 @@ import (
 )
 
 func TestAddAutoRejectsAlreadyCoveredDomain(t *testing.T) {
+	mChild := NewManager(slowBackend{}, &jsonStore{}, Config{})
+	if err := mChild.SetDesired(Desired{Lists: []List{{Name: "Manual", Mode: ModeVless, Domains: []string{"api.example.com"}}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := mChild.AddAuto(ModeWarp, "example.com"); err == nil {
+		t.Error("accepted a parent that overlaps a manually routed subdomain")
+	}
 	for _, domain := range []string{"example.com", "api.example.com"} {
 		t.Run(domain, func(t *testing.T) {
 			m := NewManager(slowBackend{}, &jsonStore{}, Config{})
