@@ -40,6 +40,41 @@ tags:
   - { name: suggest, description: "route suggestions: probe a domain, say why it doesn't open and which way out works" }
 
 paths:
+  /api/v1/nfqws2/files:
+    get:
+      tags: [agent]
+      operationId: nfqwsFiles
+      parameters:
+        - {name: section, in: query, required: true, schema: {type: string, enum: [config, lists, scripts, interfaces]}}
+        - {name: name, in: query, schema: {type: string}}
+      responses:
+        "200":
+          description: File catalogue or content
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: array
+                    items:
+                      type: object
+                      required: [name, group, read_only]
+                      properties:
+                        name: {type: string}
+                        group: {type: string}
+                        read_only: {type: boolean}
+                  - type: array
+                    items:
+                      type: object
+                      required: [name, label, type]
+                      properties:
+                        name: {type: string}
+                        label: {type: string}
+                        type: {type: string}
+                  - type: object
+                    required: [text]
+                    properties:
+                      text: {type: string}
+
   /api/v1/healthz:
     get:
       tags: [agent]

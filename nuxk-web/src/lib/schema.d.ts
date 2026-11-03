@@ -4,6 +4,22 @@
  */
 
 export interface paths {
+    "/api/v1/nfqws2/files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["nfqwsFiles"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/healthz": {
         parameters: {
             query?: never;
@@ -1472,6 +1488,39 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    nfqwsFiles: {
+        parameters: {
+            query: {
+                section: "config" | "lists" | "scripts" | "interfaces";
+                name?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description File catalogue or content */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        name: string;
+                        group: string;
+                        read_only: boolean;
+                    }[] | {
+                        name: string;
+                        label: string;
+                        type: string;
+                    }[] | {
+                        text: string;
+                    };
+                };
+            };
+        };
+    };
     healthz: {
         parameters: {
             query?: never;

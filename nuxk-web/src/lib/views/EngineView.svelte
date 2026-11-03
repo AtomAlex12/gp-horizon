@@ -3,6 +3,7 @@
   // the left, what the engine carries on the right, raw details below.
   import { api, type EngineKind, type ListMode, type ProbeSites } from '../api';
   import { status, refresh, node } from '../status.svelte';
+  import NfqwsWorkspace from '../NfqwsWorkspace.svelte';
   import NfqwsRouting from '../NfqwsRouting.svelte';
   import XrayConfig from '../XrayConfig.svelte';
   import XrayServers from '../XrayServers.svelte';
@@ -143,6 +144,7 @@
     </section>
 
     {#if kind === 'nfqws2'}
+      <NfqwsWorkspace />
       <section class="card">
         <div class="card-head">
           <h2>Список DPI</h2>

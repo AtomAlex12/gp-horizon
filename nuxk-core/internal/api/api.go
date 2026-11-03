@@ -21,26 +21,28 @@ import (
 	"nuxk.dev/horizon/core/internal/logbuf"
 	"nuxk.dev/horizon/core/internal/node"
 	"nuxk.dev/horizon/core/internal/plane"
+	"nuxk.dev/horizon/core/internal/plane/keenetic"
 	"nuxk.dev/horizon/core/internal/suggest"
 	"nuxk.dev/horizon/core/internal/update"
 )
 
 type Deps struct {
-	Version string
-	Commit  string
-	Engines *engine.Registry
-	Hub     *core.Hub
-	Ctl     *core.Controller // every state change goes through it — see core.Controller
-	Plane   *plane.Manager   // nil when PLANE is off
-	Suggest *suggest.Service // route suggestions; nil = off
-	WebRoot string           // static nuxk-web build; "" = API only
-	Token   string           // bearer token for programs (the controller); "" = none
-	Auth    *auth.Guard      // browser login with the box's root account; nil = off
-	Node    *node.Node       // /info, /metrics
-	Logs    *logbuf.Ring     // /logs, log events on /events
-	Debug   *logbuf.Debug    // /logs/debug: debug entries in Logs for a while; nil = off
-	Update  *update.Updater  // /update: new releases, the router updated from the panel; nil = off
-	DNS     *dns.Service     // /dns: protected DNS through the tunnels; nil = off
+	Keenetic *keenetic.Backend
+	Version  string
+	Commit   string
+	Engines  *engine.Registry
+	Hub      *core.Hub
+	Ctl      *core.Controller // every state change goes through it — see core.Controller
+	Plane    *plane.Manager   // nil when PLANE is off
+	Suggest  *suggest.Service // route suggestions; nil = off
+	WebRoot  string           // static nuxk-web build; "" = API only
+	Token    string           // bearer token for programs (the controller); "" = none
+	Auth     *auth.Guard      // browser login with the box's root account; nil = off
+	Node     *node.Node       // /info, /metrics
+	Logs     *logbuf.Ring     // /logs, log events on /events
+	Debug    *logbuf.Debug    // /logs/debug: debug entries in Logs for a while; nil = off
+	Update   *update.Updater  // /update: new releases, the router updated from the panel; nil = off
+	DNS      *dns.Service     // /dns: protected DNS through the tunnels; nil = off
 }
 
 // Route is one API endpoint. Routes is the single list the mux is built from
@@ -52,6 +54,7 @@ type Route struct {
 }
 
 var Routes = []Route{
+	{"GET /api/v1/nfqws2/files", false, func(d Deps) http.HandlerFunc { return d.handleNfqwsFiles }},
 	{"GET /api/v1/healthz", true, func(Deps) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
