@@ -425,7 +425,12 @@ func TestFreezeOnDownload(t *testing.T) {
 func TestDirectAndDesyncAreDistinctWays(t *testing.T) {
 	p, vias := wayProber(site(t, 200, "ok"), nil)
 	p.Samples, p.NoFreeze = 1, true
-	p.Avail = func(Via) string { return "нет" } // no tunnel is up; direct and desync need none
+	p.Avail = func(v Via) string {
+		if tunnel(v) {
+			return "нет"
+		}
+		return ""
+	}
 	ctx := context.Background()
 	d := p.Way(ctx, "x.test", testIP, ViaDirect)
 	s := p.Way(ctx, "x.test", testIP, ViaDesync)

@@ -204,7 +204,7 @@ func (m *Manager) AddAuto(mode Mode, domain string) error {
 	if err != nil {
 		return err
 	}
-	if why := m.covered(d, domain); why != "" {
+	if why := m.covered(d, domain, true); why != "" {
 		return fmt.Errorf("%w: %s", ErrDomainCovered, why)
 	}
 	src := AutoSource + ":" + string(mode)
@@ -227,17 +227,30 @@ func (m *Manager) AddAuto(mode Mode, domain string) error {
 func (m *Manager) Covered(domain string) string {
 	domain = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(domain), "."))
 	d, _ := m.Desired()
-	return m.covered(d, domain)
+	return m.covered(d, domain, false)
 }
 
-func (m *Manager) covered(d Desired, domain string) string {
+func (m *Manager) covered(d Desired, domain string, includeChildren bool) string {
+	matches := func(entries []string) bool {
+		if listCovers(entries, domain) {
+			return true
+		}
+		if includeChildren {
+			for _, entry := range entries {
+				if strings.HasSuffix(strings.ToLower(entry), "."+domain) {
+					return true
+				}
+			}
+		}
+		return false
+	}
 	for _, l := range d.Lists {
-		if listCovers(l.Domains, domain) {
+		if matches(l.Domains) {
 			return "список «" + l.Name + "»"
 		}
 	}
 	for _, f := range m.Status().Foreign {
-		if listCovers(f.Domains, domain) {
+		if matches(f.Domains) {
 			return "ваш список Keenetic «" + firstNonEmpty(f.Description, f.Group) + "»"
 		}
 	}

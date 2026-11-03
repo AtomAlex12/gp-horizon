@@ -14,20 +14,35 @@ func bindControl(iface string) func(network, address string, c syscall.RawConn) 
 		if err := c.Control(func(fd uintptr) {
 			serr = syscall.SetsockoptString(int(fd), syscall.SOL_SOCKET, syscall.SO_BINDTODEVICE, iface)
 		}); err != nil {
-			return err
+			return setupFailure("не удалось привязать сокет к интерфейсу", err)
 		}
-		return serr
+		return setupFailure("не удалось привязать сокет к интерфейсу", serr)
 	}
 }
 
-// markControl puts a firewall mark on a socket before it connects. Setting a
-// mark needs root (CAP_NET_ADMIN); without it the probe goes out unmarked —
-// still a measurement, just through nfqws2 — rather than not at all.
+// markControl requires the bypass mark before opening a direct connection.
 func markControl(mark uint32) func(network, address string, c syscall.RawConn) error {
 	return func(network, address string, c syscall.RawConn) error {
-		_ = c.Control(func(fd uintptr) {
-			_ = syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_MARK, int(mark))
-		})
-		return nil
+		var markErr error
+		if err := c.Control(func(fd uintptr) {
+			markErr = setMark(int(fd), mark)
+		}); err != nil {
+			return setupFailure("не удалось получить доступ к сокету", err)
+		}
+		return markErr
 	}
+}
+
+func setMark(fd int, mark uint32) error {
+	return setupFailure("не удалось установить метку сокета",
+		syscall.SetsockoptInt(fd, syscall.SOL_SOCKET, syscall.SO_MARK, int(mark)))
+}
+
+func markAvailable(mark uint32) error {
+	fd, err := syscall.Socket(syscall.AF_INET, syscall.SOCK_STREAM|syscall.SOCK_CLOEXEC, 0)
+	if err != nil {
+		return setupFailure("не удалось создать пробный сокет", err)
+	}
+	defer syscall.Close(fd)
+	return setMark(fd, mark)
 }

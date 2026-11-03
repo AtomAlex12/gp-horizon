@@ -5,15 +5,16 @@ package probe
 import (
 	"context"
 	"net"
-	"os"
 	"syscall"
 	"testing"
 	"time"
 )
 
-// Direct sockets carry nfqws2's mark, desync ones don't; and a mark that
-// can't be set (not root) must not stop the probe.
+// Direct sockets carry nfqws2's mark. Desync sockets are unmarked.
 func TestDirectMarkedDesyncNot(t *testing.T) {
+	if err := markAvailable(0x40000000); err != nil {
+		t.Skipf("requires permission to mark a socket: %v", err)
+	}
 	ln, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -37,9 +38,6 @@ func TestDirectMarkedDesyncNot(t *testing.T) {
 	direct, desync := mark(ViaDirect), mark(ViaDesync)
 	if desync != 0 {
 		t.Errorf("desync must go out unmarked, mark=%#x", desync)
-	}
-	if os.Geteuid() != 0 {
-		t.Skip("not root: the mark can't be set here; the dial still worked")
 	}
 	if direct != 0x40000000 {
 		t.Errorf("direct mark=%#x, want 0x40000000", direct)

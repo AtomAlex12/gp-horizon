@@ -61,7 +61,7 @@ const (
 type Result struct {
 	Via     Via
 	Iface   string
-	Skipped string // why the path was not probed (empty = it was)
+	Skipped string // why the measurement could not be completed
 
 	TCP     bool
 	TCPFail Fail
@@ -164,7 +164,7 @@ func (p *Prober) Check(ctx context.Context, domain string) Report {
 	}
 	rep.Addr = ip.String()
 	rep.Direct = p.Way(ctx, domain, ip, ViaDirect)
-	if rep.Direct.Clean() {
+	if rep.Direct.Clean() || rep.Direct.Skipped != "" {
 		return rep
 	}
 	for _, via := range []Via{ViaVless, ViaWarp} {
@@ -257,10 +257,19 @@ func (p *Prober) dial(ctx context.Context, via Via, addr string) (net.Conn, erro
 // tunnel: via leaves through an interface of its own.
 func tunnel(via Via) bool { return via != ViaDirect && via != ViaDesync }
 
-// unavailable says why a tunnel can't be probed, in words for the user.
+// unavailable says why a path can't be probed, in words for the user.
 func (p *Prober) unavailable(via Via) string {
 	if p.Avail != nil {
 		return p.Avail(via)
+	}
+	if via == ViaDirect {
+		if p.Dial != nil {
+			return ""
+		}
+		return setupReason(markAvailable(p.mark()))
+	}
+	if via == ViaDesync {
+		return ""
 	}
 	name := p.Ifaces[via]
 	if name == "" {
@@ -278,7 +287,8 @@ func (p *Prober) unavailable(via Via) string {
 
 // Paths lists the tunnel ways out and whether each can be probed right now.
 func (p *Prober) Paths() []PathState {
-	out := []PathState{{Via: ViaDirect, Usable: true}}
+	why := p.unavailable(ViaDirect)
+	out := []PathState{{Via: ViaDirect, Usable: why == "", Why: why}}
 	for _, via := range []Via{ViaVless, ViaWarp} {
 		why := p.unavailable(via)
 		out = append(out, PathState{Via: via, Iface: p.Ifaces[via], Usable: why == "", Why: why})
@@ -292,6 +302,29 @@ type PathState struct {
 	Iface  string
 	Usable bool
 	Why    string
+}
+
+type pathSetupError struct {
+	reason string
+	err    error
+}
+
+func (e *pathSetupError) Error() string { return e.reason + ": " + e.err.Error() }
+func (e *pathSetupError) Unwrap() error { return e.err }
+
+func setupFailure(reason string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return &pathSetupError{reason: reason, err: err}
+}
+
+func setupReason(err error) string {
+	var failure *pathSetupError
+	if errors.As(err, &failure) {
+		return failure.Error()
+	}
+	return ""
 }
 
 // failKind buckets an error into what the network actually did.

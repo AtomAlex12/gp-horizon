@@ -111,6 +111,18 @@ func (s *Service) verify(ctx context.Context, it Item) {
 	}
 	l.ip = ip
 	j := l.measure(pctx, via)
+	if ctx.Err() != nil {
+		return
+	}
+	if j.m.Skipped != "" && pctx.Err() == nil {
+		note := "Проверить не удалось: " + j.m.Skipped + ". Попробую ещё раз через 10 минут."
+		update(func(c *Item) bool {
+			changed := c.VerifyNote != note
+			c.VerifyNote, c.VerifyDue = note, now.Add(verifyWait).Unix()
+			return changed
+		})
+		return
+	}
 	var next, interim, note string
 	switch {
 	case j.ok && via == probe.ViaDesync:

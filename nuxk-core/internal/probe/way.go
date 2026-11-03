@@ -15,11 +15,25 @@ import (
 )
 
 const (
-	maxBody     = 256 << 10 // body bytes read per try
-	headBody    = 16 << 10  // body bytes kept for geoSignal
-	speedBody   = 128 << 10 // a try this big says something about speed
-	freezeBytes = 64 << 10  // the freeze test's upload: well past the ~16 KB the DPI lets through
+	maxResponseHeaders = 64 << 10
+	maxBody            = 256 << 10 // body bytes read per try
+	headBody           = 16 << 10  // body bytes kept for geoSignal
+	speedBody          = 128 << 10 // a try this big says something about speed
+	freezeBytes        = 64 << 10  // the freeze test's upload: well past the ~16 KB the DPI lets through
 )
+
+var errResponseHeaders = errors.New("заголовки HTTP-ответа превышают предел 64 КиБ")
+
+func readResponse(in io.Reader, req *http.Request) (*http.Response, error) {
+	headers := &io.LimitedReader{R: in, N: maxResponseHeaders}
+	resp, err := http.ReadResponse(bufio.NewReader(headers), req)
+	if err != nil && headers.N == 0 {
+		return nil, errResponseHeaders
+	}
+	// The body has its own read budget. Keep any bytes already buffered.
+	headers.N = 1<<63 - 1
+	return resp, err
+}
 
 // Way probes one way out to ip: up to Samples tries one after another — in
 // parallel, many handshakes for one name can trip the DPI by themselves —
@@ -29,11 +43,9 @@ const (
 // not "opens".
 func (p *Prober) Way(ctx context.Context, domain string, ip net.IP, via Via) Result {
 	r := Result{Via: via, Iface: p.Ifaces[via]}
-	if tunnel(via) {
-		if why := p.unavailable(via); why != "" {
-			r.Skipped = why
-			return r
-		}
+	if why := p.unavailable(via); why != "" {
+		r.Skipped = why
+		return r
 	}
 	addr := net.JoinHostPort(ip.String(), "443")
 	n := p.samples()
@@ -42,13 +54,21 @@ func (p *Prober) Way(ctx context.Context, domain string, ip net.IP, via Via) Res
 	var ok []sample
 	for i := 0; i < n && r.Opened+n-i >= need && !r.Frozen && ctx.Err() == nil; i++ {
 		s := p.sample(ctx, domain, addr, via)
+		if s.skipped != "" {
+			r.Skipped = s.skipped
+			return r
+		}
 		r.Tries++
 		if i == 0 {
 			first = s
 			r.TCP, r.TCPFail, r.TLS, r.TLSFail = s.tcp, s.tcpFail, s.tls, s.tlsFail
 			r.Status, r.HTTPFail, r.Signal = s.status, s.httpFail, s.signal
 			if s.tcp && !s.tls {
-				nb := p.neutral(ctx, via, addr)
+				nb, why := p.neutral(ctx, via, addr)
+				if why != "" {
+					r.Skipped = why
+					return r
+				}
 				r.Neutral = &nb
 			}
 		}
@@ -63,7 +83,7 @@ func (p *Prober) Way(ctx context.Context, domain string, ip net.IP, via Via) Res
 		}
 	}
 	if r.Opened > 0 && !r.Frozen && !p.NoFreeze && ctx.Err() == nil {
-		r.Frozen = p.frozen(ctx, domain, addr, via)
+		r.Frozen, r.Skipped = p.frozen(ctx, domain, addr, via)
 	}
 	if ctx.Err() != nil {
 		r.Skipped = Interrupted
@@ -88,6 +108,7 @@ func (p *Prober) Way(ctx context.Context, domain string, ip net.IP, via Via) Res
 
 // sample is one try.
 type sample struct {
+	skipped  string
 	tcp      bool
 	tcpFail  Fail
 	tls      bool
@@ -117,7 +138,10 @@ func (p *Prober) sample(ctx context.Context, domain, addr string, via Via) (s sa
 	conn, err := p.dial(dctx, via, addr)
 	cancel()
 	if err != nil {
-		s.tcpFail = failKind(err)
+		s.skipped = setupReason(err)
+		if s.skipped == "" {
+			s.tcpFail = failKind(err)
+		}
 		return s
 	}
 	defer conn.Close()
@@ -150,7 +174,11 @@ func (p *Prober) sample(ctx context.Context, domain, addr string, via Via) (s sa
 		s.httpFail = failKind(err)
 		return s
 	}
-	resp, err := http.ReadResponse(bufio.NewReader(in), req)
+	resp, err := readResponse(in, req)
+	if errors.Is(err, errResponseHeaders) {
+		s.skipped = err.Error()
+		return s
+	}
 	if err != nil {
 		s.httpFail = failKind(err)
 		return s
@@ -251,25 +279,25 @@ func (p *Prober) readBody(ctx context.Context, conn net.Conn, body io.Reader) (h
 // ~16 KB through and then silently drops the rest, so silence — while writing
 // or while waiting — is the freeze. Any answer means the bytes flowed, even a
 // refusal or a reset: a server is free to turn a POST to / away.
-func (p *Prober) frozen(ctx context.Context, domain, addr string, via Via) bool {
+func (p *Prober) frozen(ctx context.Context, domain, addr string, via Via) (bool, string) {
 	dctx, cancel := context.WithTimeout(ctx, p.stage())
 	conn, err := p.dial(dctx, via, addr)
 	cancel()
 	if err != nil {
-		return false // the tries speak for connecting; this test is about what comes after
+		return false, setupReason(err)
 	}
 	defer conn.Close()
 	stop := context.AfterFunc(ctx, func() { _ = conn.SetDeadline(time.Now()) })
 	defer stop()
 	tc, _, err := p.handshake(ctx, conn, domain)
 	if err != nil {
-		return false
+		return false, ""
 	}
 	payload := make([]byte, freezeBytes)
 	_, _ = rand.Read(payload) // random, so nothing on the way can squeeze it
 	req, err := request(http.MethodPost, domain, bytes.NewReader(payload))
 	if err != nil {
-		return false
+		return false, ""
 	}
 	req.Header.Set("Content-Type", "application/octet-stream")
 
@@ -280,7 +308,7 @@ func (p *Prober) frozen(ctx context.Context, domain, addr string, via Via) bool 
 	_ = conn.SetReadDeadline(wdl.Add(p.stage()))
 	got := make(chan error, 1)
 	go func() {
-		_, err := http.ReadResponse(bufio.NewReader(tc), req)
+		_, err := readResponse(tc, req)
 		got <- err
 	}()
 	// net/http wraps a failed body write so it no longer says "timeout";
@@ -294,17 +322,20 @@ func (p *Prober) frozen(ctx context.Context, domain, addr string, via Via) bool 
 		_ = conn.SetReadDeadline(time.Now())
 	}
 	rerr := <-got
-	return ctx.Err() == nil && failKind(rerr) == FailTimeout
+	if errors.Is(rerr, errResponseHeaders) {
+		return false, rerr.Error()
+	}
+	return ctx.Err() == nil && failKind(rerr) == FailTimeout, ""
 }
 
 // neutral reports whether ip completes (or answers with an alert to) a TLS
 // handshake for an unrelated name — i.e. the address itself is not cut.
-func (p *Prober) neutral(ctx context.Context, via Via, addr string) bool {
+func (p *Prober) neutral(ctx context.Context, via Via, addr string) (bool, string) {
 	dctx, cancel := context.WithTimeout(ctx, p.stage())
 	defer cancel()
 	conn, err := p.dial(dctx, via, addr)
 	if err != nil {
-		return false
+		return false, setupReason(err)
 	}
 	defer conn.Close()
 	sni := p.Neutral
@@ -314,7 +345,7 @@ func (p *Prober) neutral(ctx context.Context, via Via, addr string) bool {
 	tc := tls.Client(conn, &tls.Config{ServerName: sni, InsecureSkipVerify: true, MinVersion: tls.VersionTLS12})
 	err = tc.HandshakeContext(dctx)
 	// A server that doesn't know the name and says so is still a server we reached.
-	return err == nil || failKind(err) == FailAlert
+	return err == nil || failKind(err) == FailAlert, ""
 }
 
 // stamp remembers when the first byte arrived.

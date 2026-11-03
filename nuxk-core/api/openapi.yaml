@@ -826,7 +826,7 @@ paths:
         measured again: see `verified`, `verify_note`, `next`, `interim`. If the domain is later
         moved to another of nuxk's lists by hand, the check follows it.
 
-        A stale suggestion is rejected with `409 domain_covered` if this domain or its parent
+        A stale suggestion is rejected with `409 domain_covered` if this domain, a parent, or a subdomain
         is already in a current nuxk list or a known foreign Keenetic group. No list is changed.
 
         The first «DPI» list (mode `desync` while `GET /plane` says `desync_managed: false`)

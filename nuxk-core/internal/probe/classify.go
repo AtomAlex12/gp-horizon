@@ -58,6 +58,9 @@ func Classify(r Report, o Options) Suggestion {
 	}
 
 	d := r.Direct
+	if d.Skipped != "" {
+		return Suggestion{Verdict: VerdictUnknown, Reason: "Прямая проверка не завершена: " + d.Skipped}
+	}
 	tun, tunOK := workingTunnel(r)
 	tried := triedTunnels(r)
 

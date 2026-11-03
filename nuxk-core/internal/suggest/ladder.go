@@ -102,6 +102,9 @@ func (l *ladder) afterDirect(ctx context.Context) {
 	j := l.seen[probe.ViaDirect]
 	d := j.m
 	switch {
+	case d.Skipped != "":
+		l.it.Verdict = string(probe.VerdictUnknown)
+		l.it.Reason = "Прямая проверка не завершена: " + d.Skipped
 	case d.Clean(): // opens, just not well enough
 		l.provider(ctx, probe.VerdictSlow, true, "Напрямую открывается, но "+j.why+".")
 	case d.TLS && d.Status > 0 && d.Signal == probe.SignalExplicit:
