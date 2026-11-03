@@ -174,7 +174,8 @@ func main() {
 	srv := &http.Server{
 		Addr: cfg.Listen,
 		Handler: api.NewRouter(api.Deps{
-			Version: version, Commit: commit, Engines: reg, Hub: hub, Ctl: ctl, Plane: pm, Suggest: sg,
+			Keenetic: keenetic.New(cfg.Plane.RCI),
+			Version:  version, Commit: commit, Engines: reg, Hub: hub, Ctl: ctl, Plane: pm, Suggest: sg,
 			WebRoot: cfg.WebRoot, Token: cfg.APIToken, Logs: logs,
 			Node: node.New(cfg.NodeRole, cfg.Plane.RCI, version, commit),
 		}),

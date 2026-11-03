@@ -3,6 +3,7 @@
   // the left, what the engine carries on the right, raw details below.
   import { api, type EngineKind, type ListMode } from '../api';
   import { status, refresh } from '../status.svelte';
+  import NfqwsWorkspace from '../NfqwsWorkspace.svelte';
   import NfqwsRouting from '../NfqwsRouting.svelte';
   import XrayConfig from '../XrayConfig.svelte';
   import { ENGINE_LABEL, HEALTH_LABEL, fmtDur, healthChip, healthDot, planeOf } from '../ui';
@@ -110,6 +111,7 @@
     </section>
 
     {#if kind === 'nfqws2'}
+      <NfqwsWorkspace />
       <section class="card">
         <div class="card-head">
           <h2>Список DPI</h2>

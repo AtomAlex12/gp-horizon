@@ -113,6 +113,12 @@ async function req<T>(method: string, path: string, body?: unknown): Promise<T> 
 const v1 = (p: string) => `/api/v1${p}`;
 
 export const api = {
+  nfqwsFiles: (section: 'config' | 'lists' | 'scripts') =>
+    req<{ name: string; group: string; read_only: boolean }[]>('GET', v1('/nfqws2/files?section=' + section)),
+  nfqwsFile: (section: 'config' | 'lists' | 'scripts', name: string) =>
+    req<{ text: string }>('GET', v1('/nfqws2/files?' + new URLSearchParams({ section, name }))),
+  nfqwsInterfaces: () =>
+    req<{ name: string; label: string; type: string }[]>('GET', v1('/nfqws2/files?section=interfaces')),
   status: () => req<Status>('GET', v1('/status')),
   info: () => req<NodeInfo>('GET', v1('/info')),
   metrics: () => req<Metrics>('GET', v1('/metrics')),

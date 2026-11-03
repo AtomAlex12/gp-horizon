@@ -317,3 +317,28 @@ func (b *Backend) ensureV6Deny(ctx context.Context, groups []string) error {
 	}
 	return nil
 }
+
+type Interface struct {
+	Name  string `json:"name"`
+	Label string `json:"label"`
+	Type  string `json:"type"`
+}
+
+func (b *Backend) Interfaces(ctx context.Context) ([]Interface, error) {
+	var entries map[string]struct {
+		InterfaceName string `json:"interface-name"`
+		Description   string `json:"description"`
+		Type          string `json:"type"`
+	}
+	if err := b.get(ctx, "show/interface", &entries); err != nil {
+		return nil, err
+	}
+	out := make([]Interface, 0, len(entries))
+	for _, entry := range entries {
+		if entry.InterfaceName != "" {
+			out = append(out, Interface{Name: entry.InterfaceName, Label: entry.Description, Type: entry.Type})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}

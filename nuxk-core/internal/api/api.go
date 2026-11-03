@@ -18,21 +18,23 @@ import (
 	"nuxk.dev/horizon/core/internal/logbuf"
 	"nuxk.dev/horizon/core/internal/node"
 	"nuxk.dev/horizon/core/internal/plane"
+	"nuxk.dev/horizon/core/internal/plane/keenetic"
 	"nuxk.dev/horizon/core/internal/suggest"
 )
 
 type Deps struct {
-	Version string
-	Commit  string
-	Engines *engine.Registry
-	Hub     *core.Hub
-	Ctl     *core.Controller // every state change goes through it — see core.Controller
-	Plane   *plane.Manager   // nil when PLANE is off
-	Suggest *suggest.Service // route suggestions; nil = off
-	WebRoot string           // static nuxk-web build; "" = API only
-	Token   string           // "" = allow localhost only
-	Node    *node.Node       // /info, /metrics
-	Logs    *logbuf.Ring     // /logs, log events on /events
+	Keenetic *keenetic.Backend
+	Version  string
+	Commit   string
+	Engines  *engine.Registry
+	Hub      *core.Hub
+	Ctl      *core.Controller // every state change goes through it — see core.Controller
+	Plane    *plane.Manager   // nil when PLANE is off
+	Suggest  *suggest.Service // route suggestions; nil = off
+	WebRoot  string           // static nuxk-web build; "" = API only
+	Token    string           // "" = allow localhost only
+	Node     *node.Node       // /info, /metrics
+	Logs     *logbuf.Ring     // /logs, log events on /events
 }
 
 // Route is one API endpoint. Routes is the single list the mux is built from
@@ -44,6 +46,7 @@ type Route struct {
 }
 
 var Routes = []Route{
+	{"GET /api/v1/nfqws2/files", false, func(d Deps) http.HandlerFunc { return d.handleNfqwsFiles }},
 	{"GET /api/v1/healthz", true, func(Deps) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
