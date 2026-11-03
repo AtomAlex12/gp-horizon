@@ -3,9 +3,11 @@ package plane
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -62,6 +64,7 @@ type Manager struct {
 	Cfg   Config
 
 	kick   chan struct{}
+	edit   sync.Mutex // serializes every desired-list update
 	run    sync.Mutex // one reconcile at a time; guards pushed
 	pushed []string   // last desync list nfqws2 accepted; nil = not pushed yet
 	mu     sync.Mutex // guards st and ifaces: Status never waits for a slow pass
@@ -109,6 +112,13 @@ var ErrBadOnDown = errors.New("on_down must be direct or block")
 
 // SetDesired replaces the desired lists and reconciles right away.
 func (m *Manager) SetDesired(d Desired) error {
+	m.edit.Lock()
+	defer m.edit.Unlock()
+	return m.setDesiredLocked(d)
+}
+
+// setDesiredLocked commits a complete snapshot while the caller holds edit.
+func (m *Manager) setDesiredLocked(d Desired) error {
 	if d.OnDown == "" {
 		d.OnDown = OnDownDirect
 	}
@@ -145,6 +155,8 @@ func (m *Manager) Import(groups []string, mode Mode) (Desired, error) {
 	if !mode.Valid() {
 		return Desired{}, ErrBadList
 	}
+	m.edit.Lock()
+	defer m.edit.Unlock()
 	st := m.Status()
 	d, err := m.Desired()
 	if err != nil {
@@ -167,7 +179,117 @@ func (m *Manager) Import(groups []string, mode Mode) (Desired, error) {
 			}
 		}
 	}
-	return d, m.SetDesired(d)
+	return d, m.setDesiredLocked(d)
+}
+
+// AutoSource marks lists the route-suggestion screen fills ("suggest:<mode>").
+const AutoSource = "suggest"
+
+var ErrDomainCovered = errors.New("домен уже находится в списке: обновите предложение")
+
+var autoTitle = map[Mode]string{ModeDesync: "Подбор: DPI", ModeWarp: "Подбор: WARP", ModeVless: "Подбор: VLESS"}
+
+// AddAuto puts one accepted suggestion into the per-mode «Подбор» list (made on
+// first use). The usual plane rules apply: nothing changes on the router unless
+// the plane is in apply mode.
+func (m *Manager) AddAuto(mode Mode, domain string) error {
+	normalized := Normalize([]string{domain})
+	if !mode.Valid() || len(normalized) != 1 {
+		return ErrBadList
+	}
+	domain = normalized[0]
+	m.edit.Lock()
+	defer m.edit.Unlock()
+	d, err := m.Desired()
+	if err != nil {
+		return err
+	}
+	if why := m.covered(d, domain, true); why != "" {
+		return fmt.Errorf("%w: %s", ErrDomainCovered, why)
+	}
+	src := AutoSource + ":" + string(mode)
+	added := false
+	for i := range d.Lists {
+		if d.Lists[i].Source == src {
+			d.Lists[i].Domains = append(d.Lists[i].Domains, domain)
+			added = true
+		}
+	}
+	if !added {
+		d.Lists = append(d.Lists, List{Name: autoTitle[mode], Mode: mode, Domains: []string{domain}, Source: src})
+	}
+	return m.setDesiredLocked(d)
+}
+
+// Covered says where a domain is already routed — one of nuxk's lists, or one
+// of the user's own routed Keenetic groups — or "" when nowhere. A parent
+// domain covers its subdomains (the firmware does).
+func (m *Manager) Covered(domain string) string {
+	domain = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(domain), "."))
+	d, _ := m.Desired()
+	return m.covered(d, domain, false)
+}
+
+func (m *Manager) covered(d Desired, domain string, includeChildren bool) string {
+	matches := func(entries []string) bool {
+		if listCovers(entries, domain) {
+			return true
+		}
+		if includeChildren {
+			for _, entry := range entries {
+				if strings.HasSuffix(strings.ToLower(entry), "."+domain) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	for _, l := range d.Lists {
+		if matches(l.Domains) {
+			return "список «" + l.Name + "»"
+		}
+	}
+	for _, f := range m.Status().Foreign {
+		if matches(f.Domains) {
+			return "ваш список Keenetic «" + firstNonEmpty(f.Description, f.Group) + "»"
+		}
+	}
+	return ""
+}
+
+// ModeOf is the mode of nuxk's list that carries domain, "" when none does. A
+// tunnel wins over DPI: a domain routed into a tunnel no longer meets nfqws2.
+func (m *Manager) ModeOf(domain string) Mode {
+	domain = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(domain), "."))
+	d, err := m.Desired()
+	if err != nil {
+		return ""
+	}
+	var mode Mode
+	for _, l := range d.Lists {
+		if listCovers(l.Domains, domain) && (mode == "" || mode == ModeDesync) {
+			mode = l.Mode
+		}
+	}
+	return mode
+}
+
+// listCovers: some entry equals domain or is a parent of it.
+func listCovers(entries []string, domain string) bool {
+	set := make(map[string]bool, len(entries))
+	for _, e := range entries {
+		set[strings.TrimPrefix(strings.ToLower(e), "*.")] = true
+	}
+	for h := domain; ; {
+		if set[h] {
+			return true
+		}
+		i := strings.IndexByte(h, '.')
+		if i < 0 || !strings.Contains(h[i+1:], ".") {
+			return false
+		}
+		h = h[i+1:]
+	}
 }
 
 func (m *Manager) Kick() {

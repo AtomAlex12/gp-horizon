@@ -6,6 +6,7 @@
   import Connections from './lib/views/Connections.svelte';
   import EngineView from './lib/views/EngineView.svelte';
   import Lists from './lib/views/Lists.svelte';
+  import Decisions from './lib/views/Decisions.svelte';
   import Logs from './lib/views/Logs.svelte';
   import System from './lib/views/System.svelte';
   import Dns from './lib/views/Dns.svelte';
@@ -57,7 +58,7 @@
   // screens the design has but the agent doesn't feed yet — said plainly
   const SOON: Record<string, string> = {
     devices: 'Устройства LAN и что у каждого не открывается — появится вместе со списком соединений.',
-    decisions: 'Автоматический выбор пути для домена — десинк, туннель или напрямую — с объяснением, почему.',
+
   };
 
   // #lists etc. — a reload keeps the page
@@ -223,6 +224,8 @@
           <Connections />
         {:else if tab === 'lists'}
           <Lists />
+        {:else if tab === 'decisions'}
+          <Decisions />
         {:else if tab === 'logs'}
           <Logs {go} />
         {:else if !__LITE__ && tab === 'plugins'}
