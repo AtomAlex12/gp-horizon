@@ -60,6 +60,9 @@ func NewServer(a *Agent, st *Store, ses *Sessions, ph *PluginHost, vl *Vless, su
 		lg.routes(authed)
 	}
 	authed.HandleFunc("/ctl/v1/gp/{path...}", NewGPClient("", st, ph).handle)
+	gpV2 := NewGPClient("", st, ph)
+	gpV2.v2 = true
+	authed.HandleFunc("/ctl/v1/gp2/{path...}", gpV2.handle)
 	// the agent's own login is for its own page, not through the controller
 	authed.HandleFunc("/api/v1/auth/", http.NotFound)
 	authed.Handle("/api/v1/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -101,7 +104,7 @@ func secure(next http.Handler) http.Handler {
 		h.Set("Referrer-Policy", "no-referrer")
 		if r.Body != nil {
 			limit := int64(4 << 20)
-			if r.URL.Path == "/ctl/v1/gp/backups/upload" {
+			if r.URL.Path == "/ctl/v1/gp/backups/upload" || r.URL.Path == "/ctl/v1/gp2/backup/restore-file" {
 				limit = gpUploadMax // a GP backup archive
 			}
 			r.Body = http.MaxBytesReader(w, r.Body, limit)

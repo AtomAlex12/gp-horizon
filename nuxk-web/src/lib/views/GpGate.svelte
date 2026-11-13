@@ -6,20 +6,48 @@
   import { node } from '../status.svelte';
   import { plugins, PHASE_LABEL, type PluginInfo, type PluginsState } from '../gp';
 
-  let { children, go }: { children: Snippet; go: (tab: string) => void } = $props();
+  import { gp2, type GP } from '../gp2';
+  import { HttpError } from '../api';
+  let { children, api2, go }: { children: Snippet; api2: Snippet; go: (tab: string) => void } = $props();
 
   let st = $state<PluginsState | null>(null);
+  let loading = false;
+  let checkedVersion: string | undefined;
+  let currentAPI = $state<string>();
   let err = $state('');
   const gpInfo = $derived<PluginInfo | undefined>(st?.plugins.find((p) => p.name === 'gp'));
 
   async function load() {
+    if (loading) return;
+    loading = true;
     try {
       st = await plugins.list();
+      const info = st.plugins.find(item => item.name === 'gp');
+      if (info?.phase !== 'running') {
+        currentAPI = undefined;
+        checkedVersion = undefined;
+      } else if (!currentAPI || checkedVersion !== info.version) {
+        currentAPI = undefined;
+        if (info.version === 'v0.5.0-alpha.4' || info.version === '8748e6c39248ddda5ee8ce7f32d3b5049f2432b8') {
+          currentAPI = '2';
+        } else {
+          try {
+            currentAPI = (await gp2<GP['CoreStatus']>('service/status')).api_version;
+          } catch (reason) {
+            if (!(reason instanceof HttpError) || reason.code !== 'gp_api_version') throw reason;
+            currentAPI = '1';
+          }
+        }
+        checkedVersion = info.version;
+      }
       err = '';
-    } catch (e) {
-      err = e instanceof Error ? e.message : String(e);
+    } catch (reason) {
+      err = reason instanceof Error ? reason.message : String(reason);
+    } finally {
+      loading = false;
     }
   }
+
   $effect(() => {
     if (node.via !== 'controller') return;
     void load();
@@ -44,7 +72,7 @@
     <p>{st.reason ?? 'Контроллер запущен без хоста плагинов.'}</p>
   </section>
 {:else if gpInfo?.phase === 'running'}
-  {@render children()}
+  {#if currentAPI === '2'}{@render api2()}{:else if currentAPI === '1'}{@render children()}{:else}<p class="hint">{err || 'Проверяем версию API…'}</p>{/if}
 {:else}
   <section class="card empty">
     <h2>Нужен плагин GP</h2>
