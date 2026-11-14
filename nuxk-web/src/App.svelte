@@ -14,6 +14,8 @@
   import Login from './lib/views/Login.svelte';
   import Setup from './lib/views/Setup.svelte';
   import Plugins from './lib/views/Plugins.svelte';
+  import Gp2Search from './lib/Gp2Search.svelte';
+  import Gp2Data from './lib/Gp2Data.svelte';
   import GpGate from './lib/views/GpGate.svelte';
   import Runs from './lib/views/Runs.svelte';
   import Results from './lib/views/Results.svelte';
@@ -231,13 +233,13 @@
         {:else if !__LITE__ && tab === 'plugins'}
           <Plugins />
         {:else if !__LITE__ && tab === 'runs'}
-          <GpGate {go}><Runs {go} /></GpGate>
+          <GpGate {go}>{#snippet api2()}<Gp2Search />{/snippet}<Runs {go} /></GpGate>
         {:else if !__LITE__ && tab === 'results'}
-          <GpGate {go}><Results {go} /></GpGate>
+          <GpGate {go}>{#snippet api2()}<Gp2Data section='history' />{/snippet}<Results {go} /></GpGate>
         {:else if !__LITE__ && tab === 'strategies'}
-          <GpGate {go}><Strategies /></GpGate>
+          <GpGate {go}>{#snippet api2()}<Gp2Data section='strategies' />{/snippet}<Strategies /></GpGate>
         {:else if !__LITE__ && tab === 'gpdata'}
-          <GpGate {go}><GpData /></GpGate>
+          <GpGate {go}>{#snippet api2()}<Gp2Data section='service' />{/snippet}<GpData /></GpGate>
         {:else if tab === 'system'}
           <System />
         {:else if tab === 'dns'}

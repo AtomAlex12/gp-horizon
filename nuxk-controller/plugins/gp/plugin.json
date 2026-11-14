@@ -4,7 +4,7 @@
   "description": "Подбор стратегий nfqws2 через blockcheck2 (zapret2): ядро GP Plane без его веб-интерфейса. Прогоны идут с Pi, через того же провайдера, что и роутер.",
   "homepage": "https://github.com/balbomush/GP-plane",
   "releases": "github:balbomush/GP-plane",
-  "default_version": "v0.4.4",
+  "default_version": "v0.5.0-alpha.4",
   "install": "install.sh",
   "install_env": { "ZAPRET_REF": "v1.0.5.2" },
   "run": ["bin/run"],
