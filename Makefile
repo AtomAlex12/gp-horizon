@@ -28,7 +28,7 @@ core-check:
 	$(MAKE) -C nuxk-core fmt-check vet test
 
 web-check:
-	cd nuxk-web && npm run vendor && npm ci --no-audit --no-fund && npm run check:api && npm run check
+	cd nuxk-web && npm run vendor && npm ci --no-audit --no-fund && npm run check:api && npm run test:nfqws && npm run check
 
 # the router side: engine adapters and the lite installer, on a fake router
 install-check:

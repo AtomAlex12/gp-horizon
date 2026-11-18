@@ -1,6 +1,7 @@
 <script lang="ts">
   import { gp2, gp2Pages, watchSearch, type GP } from './gp2';
   import { onMount } from 'svelte';
+  import Icon from './Icon.svelte';
   import { runDraft } from './gpdraft.svelte';
 
   let engine = $state('blockcheck2-gp');
@@ -32,10 +33,13 @@
     ['skip_ipblock','Пропустить проверку IP'], ['debug_stdout','Подробный журнал'],
   ] as const;
   const numbers = [
-    ['repeats','Повторы'], ['curl_max_time','Таймаут HTTP / TLS, с'], ['curl_max_time_quic','Таймаут QUIC, с'],
-    ['curl_max_time_doh','Таймаут DoH, с'],
+    ['curl_max_time','HTTP / HTTPS'], ['curl_max_time_quic','QUIC'], ['curl_max_time_doh','DNS-over-HTTPS'],
   ] as const;
 
+  const scanNames = { quick: 'Быстрый', standard: 'Стандартный', force: 'Полный перебор' };
+  const scanHints = { quick: 'Сокращённая проверка: повторы могут завершиться после первой неудачи.', standard: 'Обычный режим исследования стратегий.', force: 'Перебор продолжается независимо от уже найденного результата.' };
+  const engineName = $derived(engine === 'blockcheck2-gp' ? 'Blockcheck2 GP' : 'Blockcheck2 · штатный');
+  const protocolLabel = $derived(toggles.slice(0,4).filter(([key]) => parameters[key]).map(([, label]) => label).join(' · ') || 'Не выбраны');
   function update(value: GP['CurrentSearch']) {
     search = value;
     if (value.active) selectRun(value.run.id);
@@ -129,8 +133,10 @@
   }
 
   function start() {
+    if (!toggles.slice(0, 4).some(([key]) => parameters[key])) { error = 'Выберите хотя бы один протокол проверки.'; return; }
     return action(async () => {
-      const { curl_parallelism, ...stock } = parameters;
+      const { curl_parallelism, ...values } = parameters;
+      const stock = { ...values, repeat_parallel: parameters.repeats > 1 && parameters.repeat_parallel };
       const accepted = await gp2<GP['SearchAccepted']>('engines/' + engine + '/start', 'POST', {
         domains, parameters: engine === 'blockcheck2-gp' ? { ...stock, curl_parallelism } : stock,
         ...(preset ? { domain_list_id: Number(preset) } : {}),
@@ -171,42 +177,77 @@
     <aside class="card run-domains"><h2>Домены поиска</h2>{#each details?.domains ?? [] as domain}<div class="mono">{domain}</div>{/each}</aside>
   </div>
 {:else}
+  <header class="page-heading">
+    <div><div class="eyebrow">Поиск стратегий</div><h1>Новый поиск</h1><p>Выберите движок и домены. Параметры можно уточнить перед запуском.</p></div>
+    <span class="milestone">{milestone === undefined ? 'Веха загружается…' : `Веха №${milestone} · текущая`}</span>
+  </header>
   <form class="columns" onsubmit={event => { event.preventDefault(); void start(); }}>
-    <section class="card">
-      <div class="card-head"><h2>Новый поиск</h2></div>
-      <label>Движок <select bind:value={engine}><option value="blockcheck2">Обычный blockcheck2</option><option value="blockcheck2-gp">GP · доработанный blockcheck2</option></select></label>
-      <label>Пресет доменов
-        <select value={preset} disabled={busy} onchange={event => choosePreset(event.currentTarget.value)}>
+    <section class="card form-stack">
+      <label class="field"><span id="gp-engine-label">Движок</span><select aria-labelledby="gp-engine-label" bind:value={engine}><option value="blockcheck2-gp">Blockcheck2 GP</option><option value="blockcheck2">Blockcheck2 · штатный</option></select>
+        <span class="hint">{engine === 'blockcheck2-gp' ? 'Параллельные проверки и продолжение остановленного поиска.' : 'Штатный подбор zapret2. Остановленный поиск запускается заново.'}</span>
+      </label>
+      <label class="field"><span id="gp-list-label">Список доменов</span>
+        <select aria-labelledby="gp-list-label" value={preset} disabled={busy} onchange={event => choosePreset(event.currentTarget.value)}>
           <option value="">Свои домены</option>
           {#each presets as item (item.id)}<option value={String(item.id)}>{item.name}</option>{/each}
         </select>
       </label>
-      <label>Домены <textarea rows="4" class="mono" value={domainText} oninput={event => { domainText = event.currentTarget.value; preset = ''; }} required></textarea></label>
-      <fieldset>
-        <legend>Параметры движка</legend>
-        <div class="row">
+      <label class="field"><span class="field-label">Домены <span class="hint">{domains.length}</span></span>
+        <textarea rows="4" class="mono" value={domainText} spellcheck="false" oninput={event => { domainText = event.currentTarget.value; preset = ''; }} required></textarea>
+        <span class="hint">По одному домену в строке. Все домены равноправны.</span>
+      </label>
+      <section class="engine-settings">
+        <h2>Параметры движка</h2>
+        <fieldset><legend>Протоколы проверки</legend><div class="protocols">
           {#each toggles.slice(0, 4) as [key, label]}<label class="check"><input type="checkbox" bind:checked={parameters[key]} />{label}</label>{/each}
+        </div></fieldset>
+        <label class="parameter-check"><input type="checkbox" bind:checked={parameters.enable_ipv6} /><span>Также проверять IPv6<span class="hint">IPv4 остаётся включённым.</span></span></label>
+        <label class="field"><span id="gp-mode-label">Режим проверки</span><select aria-labelledby="gp-mode-label" bind:value={parameters.scan_level}>
+          <option value="quick">Быстрый</option><option value="standard">Стандартный</option><option value="force">Полный перебор</option>
+        </select><span class="hint">{scanHints[parameters.scan_level]}</span></label>
+        <div class="values-grid">
+          <label class="field"><span>Повторы проверки</span><input type="number" min="1" step="1" required bind:value={parameters.repeats} /></label>
+          {#if engine === 'blockcheck2-gp'}<label class="field"><span>Параллельные запросы</span><input type="number" min="1" max="10" step="1" required bind:value={parameters.curl_parallelism} /></label>{/if}
         </div>
-        <details>
-          <summary>Тонкая настройка</summary>
-          <label>Режим <select bind:value={parameters.scan_level}><option value="quick">Быстрый</option><option value="standard">Обычный</option><option value="force">Полный</option></select></label>
-          <div class="row">
-            {#each numbers as [key, label]}<label>{label}<input type="number" min="1" required bind:value={parameters[key]} /></label>{/each}
-            {#if engine === 'blockcheck2-gp'}<label>Параллельность GP<input type="number" min="1" max="10" required bind:value={parameters.curl_parallelism} /></label>{/if}
-          </div>
-          <div class="row">
-            {#each toggles.slice(4) as [key, label]}<label class="check"><input type="checkbox" bind:checked={parameters[key]} />{label}</label>{/each}
+        <label class="parameter-check"><input type="checkbox" bind:checked={parameters.repeat_parallel} disabled={!(parameters.repeats > 1)} /><span>Выполнять повторы параллельно<span class="hint">{parameters.repeats > 1 ? 'Повторы одного теста выполняются одновременно.' : 'Доступно при двух и более повторах.'}</span></span></label>
+        <details class="fine-settings">
+          <summary>Тонкая настройка<span class="fine-note">Сетевые проверки, лимиты запросов и журнал</span></summary>
+          <div class="fine-content">
+            <label class="parameter-check"><input type="checkbox" checked={!parameters.skip_dnscheck} onchange={event => parameters.skip_dnscheck = !event.currentTarget.checked} /><span>Проверять корректность DNS<span class="hint">Предварительная проверка ответов DNS перед подбором.</span></span></label>
+            <label class="parameter-check"><input type="checkbox" checked={!parameters.skip_ipblock} onchange={event => parameters.skip_ipblock = !event.currentTarget.checked} /><span>Проверять блокировку IP/порта<span class="hint">Дополнительная проверка доступности адресов и портов.</span></span></label>
+            <fieldset><legend>Лимиты отдельных запросов, с</legend><div class="values-grid">
+              {#each numbers as [key, label]}<label class="field"><span>{label}</span><input type="number" min="1" step="1" required bind:value={parameters[key]} /></label>{/each}
+            </div><p class="hint time-hint">DoH — когда движок использует DNS-over-HTTPS. Длительность всего поиска не ограничивается.</p></fieldset>
+            <label class="parameter-check"><input type="checkbox" bind:checked={parameters.debug_stdout} /><span>Сохранять подробный журнал<span class="hint">Больше записей на накопитель. Обычно достаточно кратких итогов и ошибок.</span></span></label>
           </div>
         </details>
-      </fieldset>
+      </section>
     </section>
-    <aside class="card summary">
-      <div class="card-head"><h2>Перед запуском</h2></div>
-      <dl class="kv"><dt>Движок</dt><dd>{engine === 'blockcheck2-gp' ? 'GP' : 'Stock'}</dd><dt>Домены</dt><dd>{domains.length}</dd>
-        <dt>Протоколы</dt><dd>{toggles.slice(0,4).filter(([key]) => parameters[key]).map(([, label]) => label).join(', ') || '—'}</dd>
-        <dt>Веха</dt><dd>{milestone ?? '—'}</dd>
+    <aside class="card summary" aria-label="Сводка запуска">
+      <h2>Перед запуском</h2>
+      <dl class="summary-main">
+        <div><dt>Движок</dt><dd>{engineName}</dd></div>
+        <div><dt>Домены</dt><dd>{domains.length} · {preset ? `список «${presets.find(item => String(item.id) === preset)?.name ?? ''}»` : 'свой список'}</dd></div>
+        <div><dt>Протоколы</dt><dd>{protocolLabel}</dd></div>
+        <div><dt>Веха результатов</dt><dd>{milestone === undefined ? '—' : `№${milestone} · текущая`}</dd></div>
       </dl>
-      <button type="submit" disabled={busy || !domains.length || !search || !!connection}>Запустить поиск</button>
+      <dl class="summary-details">
+        <dt>Сеть</dt><dd>{parameters.enable_ipv6 ? 'IPv4 + IPv6' : 'IPv4'}</dd>
+        <dt>Режим</dt><dd>{scanNames[parameters.scan_level]}</dd>
+        <dt>Повторы</dt><dd>{parameters.repeats ?? '—'}</dd>
+        <dt>Повторы параллельно</dt><dd>{parameters.repeats <= 1 ? 'Не применяется' : parameters.repeat_parallel ? 'Да' : 'Нет'}</dd>
+        {#if engine === 'blockcheck2-gp'}<dt>Параллельность</dt><dd>{parameters.curl_parallelism ?? '—'}</dd>{/if}
+        <dt class="summary-label">Дополнительные проверки</dt>
+        <dt>Корректность DNS</dt><dd>{parameters.skip_dnscheck ? 'Пропускается' : 'Проверять'}</dd>
+        <dt>Блокировка IP/порта</dt><dd>{parameters.skip_ipblock ? 'Пропускается' : 'Проверять'}</dd>
+        <dt class="summary-label">Лимиты запросов</dt>
+        <dt>HTTP / HTTPS</dt><dd>{parameters.curl_max_time ?? '—'} с</dd>
+        <dt>QUIC</dt><dd>{parameters.curl_max_time_quic ?? '—'} с</dd>
+        <dt>DoH</dt><dd>{parameters.curl_max_time_doh ?? '—'} с</dd>
+        <dt>Подробный журнал</dt><dd>{parameters.debug_stdout ? 'Сохранять' : 'Не сохранять'}</dd>
+      </dl>
+      <button type="submit" disabled={busy || !domains.length || !search || !!connection}><Icon name="runs" size={15} />Запустить поиск</button>
+      <p class="small-note">Сначала проверим параметры и готовность движка. Одновременно работает один поиск.</p>
     </aside>
   </form>
 {/if}
@@ -222,15 +263,49 @@
 {/if}
 
 <style>
-  .columns { display:grid; grid-template-columns:minmax(0, 2fr) minmax(220px, 1fr); gap:16px; align-items:start; }
-  label { display:grid; gap:4px; margin-bottom:10px; }
-  .check { display:flex; gap:5px; align-items:center; }
-  fieldset { border:1px solid var(--line); border-radius:8px; min-width:0; }
-  input[type=number] { width:8rem; }
-  .summary button { margin-top:12px; }
-  .run-domains, pre { max-height:22rem; overflow:auto; }
-  pre { white-space:pre-wrap; overflow-wrap:anywhere; }
-  .journal { margin-top:14px; }
-  summary { cursor:pointer; }
-  @media (max-width:820px) { .columns { grid-template-columns:minmax(0, 1fr); } }
+  .page-heading { display: flex; justify-content: space-between; align-items: start; gap: 16px; margin-bottom: 24px; }
+  .eyebrow { text-transform: uppercase; font-size: 10px; letter-spacing: 1px; font-weight: 600; color: var(--ink-2); margin-bottom: 6px; }
+  h1 { font-size: 25px; font-weight: 600; letter-spacing: -.6px; line-height: 1.25; }
+  .page-heading p { margin: 7px 0 0; color: var(--ink-2); font-size: 13px; }
+  .milestone { white-space: nowrap; padding: 5px 8px; background: var(--surface-2); border-radius: 5px; color: var(--ink-2); font-size: 11px; }
+  .columns { display: grid; grid-template-columns: minmax(0, 1fr) 285px; gap: 20px; align-items: start; }
+  .form-stack { display: grid; gap: 22px; }
+  .field { display: grid; gap: 6px; min-width: 0; font-size: 13px; font-weight: 500; }
+  .field-label { display: flex; justify-content: space-between; gap: 8px; }
+  .hint { font-weight: 400; }
+  textarea { min-height: 115px; padding: 10px 11px; line-height: 1.9; font-size: 13px; background: var(--surface); border-radius: 6px; }
+  fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
+  legend { font-weight: 500; font-size: 13px; margin-bottom: 9px; }
+  h2 { font-size: 17px; font-weight: 600; letter-spacing: -.2px; }
+  .protocols { display: flex; gap: 8px; flex-wrap: wrap; }
+  .check { display: inline-flex; align-items: center; gap: 6px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 5px; font-size: 12px; }
+  input[type=checkbox] { accent-color: var(--accent); width: 15px; height: 15px; margin: 0; }
+  .engine-settings { display: grid; gap: 17px; border-top: 1px solid var(--line); padding-top: 22px; }
+  .values-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(175px, 100%), 1fr)); gap: 14px; }
+  .parameter-check { display: flex; align-items: start; gap: 9px; font-size: 13px; min-height: 30px; }
+  .parameter-check input { flex: none; margin-top: 3px; }
+  .parameter-check .hint { display: block; margin-top: 4px; }
+  .parameter-check:has(input:disabled) { color: var(--ink-2); }
+  .fine-settings { border-top: 1px solid var(--line); padding-top: 15px; }
+  summary { cursor: pointer; font-size: 13px; font-weight: 500; }
+  summary::marker { color: var(--accent); }
+  .fine-note { display: block; font-weight: 400; color: var(--ink-2); font-size: 12px; margin: 4px 0 0 16px; }
+  .fine-content { display: grid; gap: 18px; margin-top: 18px; }
+  .time-hint { margin-top: 9px; }
+  .summary { display: grid; gap: 19px; }
+  .summary dl { margin: 0; }
+  .summary-main { display: grid; gap: 14px; }
+  .summary-main dt { font-size: 11px; color: var(--ink-2); }
+  .summary-main dd { margin: 2px 0 0; font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }
+  .summary-details { display: grid; grid-template-columns: 1fr auto; gap: 10px 12px; border-top: 1px solid var(--line); padding-top: 16px; font-size: 12px; }
+  .summary-details dt { color: var(--ink-2); }
+  .summary-details dd { margin: 0; text-align: right; font-weight: 500; max-width: 135px; }
+  .summary-label { grid-column: 1 / -1; font-size: 11px; margin-top: 6px; }
+  .summary button { width: 100%; justify-content: center; min-height: 40px; }
+  .small-note { margin: 0; font-size: 11px; color: var(--ink-2); }
+  .run-domains, pre { max-height: 22rem; overflow: auto; }
+  pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .journal { margin-top: 20px; }
+  @container (max-width: 850px) { .columns { grid-template-columns: minmax(0, 1fr) 245px; } }
+  @container (max-width: 690px) { .columns { grid-template-columns: minmax(0, 1fr); } .page-heading { flex-wrap: wrap; } .summary-main { grid-template-columns: 1fr 1fr; } }
 </style>

@@ -2,13 +2,14 @@
   // The GP tabs (Прогоны / Результаты / Стратегии) open only where GP can
   // run: in the controller on the Pi, with the plugin installed and up.
   // Otherwise: say plainly why, and where to go.
+  import GpWorkspace from '../GpWorkspace.svelte';
   import type { Snippet } from 'svelte';
   import { node } from '../status.svelte';
   import { plugins, PHASE_LABEL, type PluginInfo, type PluginsState } from '../gp';
 
   import { gp2, type GP } from '../gp2';
   import { HttpError } from '../api';
-  let { children, api2, go }: { children: Snippet; api2: Snippet; go: (tab: string) => void } = $props();
+  let { children, api2, go, active }: { children: Snippet; api2: Snippet; active: string; go: (tab: string) => void } = $props();
 
   let st = $state<PluginsState | null>(null);
   let loading = false;
@@ -72,7 +73,7 @@
     <p>{st.reason ?? 'Контроллер запущен без хоста плагинов.'}</p>
   </section>
 {:else if gpInfo?.phase === 'running'}
-  {#if currentAPI === '2'}{@render api2()}{:else if currentAPI === '1'}{@render children()}{:else}<p class="hint">{err || 'Проверяем версию API…'}</p>{/if}
+  {#if currentAPI === '2'}<GpWorkspace {active} {go}>{@render api2()}</GpWorkspace>{:else if currentAPI === '1'}{@render children()}{:else}<p class="hint">{err || 'Проверяем версию API…'}</p>{/if}
 {:else}
   <section class="card empty">
     <h2>Нужен плагин GP</h2>

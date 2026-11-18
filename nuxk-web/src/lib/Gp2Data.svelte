@@ -1,9 +1,10 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { gp2, gp2Pages, gp2URL, type GP } from './gp2';
+  import { runDraft } from './gpdraft.svelte';
   import { copyText } from './clipboard';
 
-  let { section }: { section: 'history' | 'strategies' | 'service' } = $props();
+  let { section, go }: { section: 'history' | 'strategies' | 'lists' | 'service'; go?: (tab: string) => void } = $props();
   let error = $state('');
   let feedback = $state('');
   let busy = $state(false);
@@ -36,6 +37,9 @@
   let listName = $state('');
   let listDomains = $state('');
   let editable = $state(true);
+  let listOpened = $state(false);
+  let listFilter = $state('');
+  const states: Record<string, string> = { running: 'Идёт поиск', stopped: 'Остановлен', stopping: 'Останавливается', completed: 'Завершён', complete: 'Завершён', failed: 'Ошибка', preparing: 'Подготовка', queued: 'В очереди' };
   let historyTotal = $state(0);
   let offset = $state(0);
   let total = $state(0);
@@ -110,14 +114,17 @@
     });
   }
 
+  async function loadList(item?: GP['DomainList']) {
+    const entries = item ? await gp2Pages<GP['DomainEntry']>('data/domain-lists/' + item.id + '/domains') : [];
+    listId = item?.id;
+    listName = item?.name ?? '';
+    listDomains = entries.map(entry => entry.domain).join('\n');
+    editable = !item || item.kind === 'user';
+    listOpened = true;
+  }
+
   function selectList(item?: GP['DomainList']) {
-    return perform(async () => {
-      const entries = item ? await gp2Pages<GP['DomainEntry']>('data/domain-lists/' + item.id + '/domains') : [];
-      listId = item?.id;
-      listName = item?.name ?? '';
-      listDomains = entries.map(entry => entry.domain).join('\n');
-      editable = !item || item.kind === 'user';
-    });
+    return perform(() => loadList(item));
   }
 
   function saveList() {
@@ -171,7 +178,8 @@
   onMount(() => {
     void perform(async () => {
       if (section === 'history') await readHistory();
-      if (section === 'service') await readService();
+      if (section === 'service' || section === 'lists') await readService();
+      if (section === 'lists' && lists[0]) await loadList(lists[0]);
       if (section === 'strategies') {
         milestones = await gp2Pages<GP['Milestone']>('data/milestones');
         await catalog();
@@ -180,21 +188,24 @@
   });
 </script>
 
+<header class="page-heading"><div><div class="eyebrow">GP Plane</div><h1>{section === 'history' ? 'История поисков' : section === 'strategies' ? 'Результаты поиска' : section === 'lists' ? 'Списки доменов' : 'Обслуживание'}</h1><p>{section === 'history' ? 'Откройте завершённый поиск, его результаты и журнал.' : section === 'strategies' ? 'Найдите подходящие стратегии и соберите назначения для доменов.' : section === 'lists' ? 'Подготовьте домены и используйте список в новом поиске.' : 'Состояние Core, резервные копии и вехи результатов.'}</p></div></header>
 {#if error}<p class="err-text" role="alert">{error}</p>{/if}
 {#if feedback}<p class="ok-text" role="status">{feedback}</p>{/if}
 {#if section === 'history'}
   <section class="card">
-    <div class="card-head"><h2>История поиска</h2><button class="ghost" disabled={busy} onclick={() => perform(readHistory)}>Обновить</button></div>
+    <div class="card-head"><h2>Сохранённые поиски</h2><button class="ghost" disabled={busy} onclick={() => perform(readHistory)}>Обновить</button></div>
     {#each history as item (item.id)}
       <button class="ghost history" disabled={busy} onclick={() => perform(() => readRun(item))}>
-        {item.engine?.name ?? 'Движок неизвестен'} · {item.status} · {item.started_at ? new Date(item.started_at).toLocaleString('ru-RU') : '—'} · {item.domains?.join(', ') ?? '—'}
+        <span class="history-title">{item.engine?.name ?? 'Движок неизвестен'}<span class="chip">{states[item.status] ?? item.status}</span></span>
+        <span class="history-domains mono">{item.domains?.join(', ') || 'Домены не указаны'}</span>
+        <span class="hint">{item.started_at ? new Date(item.started_at).toLocaleString('ru-RU') : 'Дата неизвестна'} · веха {item.milestone_id}</span>
       </button>
     {:else}<p class="hint">{busy ? 'Загрузка…' : 'Прогонов пока нет.'}</p>{/each}
     <div class="row paging"><button class="ghost" disabled={busy || offset === 0} onclick={() => page(-1)}>Назад</button><button class="ghost" disabled={busy || offset + limit >= historyTotal} onclick={() => page(1)}>Далее</button></div>
   </section>
   {#if selectedRun}
     <section class="card">
-      <div class="card-head"><h2>{selectedRun.engine?.name ?? 'Движок неизвестен'} · {selectedRun.status}</h2></div>
+      <div class="card-head"><h2>{selectedRun.engine?.name ?? 'Движок неизвестен'} · {states[selectedRun.status] ?? selectedRun.status}</h2></div>
       <p>{selectedRun.domains?.join(', ') ?? '—'} · веха {selectedRun.milestone_id}</p>
       {#if selectedRun.error}<p class="err-text">{JSON.stringify(selectedRun.error)}</p>{/if}
       <pre>{logLines.map(entry => entry.message).join('\n')}</pre>
@@ -204,7 +215,7 @@
         {#if selectedRun.resume_available}<button disabled={busy} onclick={() => perform(async () => {
           await gp2('engines/blockcheck2-gp/runs/' + encodeURIComponent(selectedRun!.id) + '/resume', 'POST');
           await readRun(selectedRun!);
-          feedback = 'Запрос на продолжение принят. Текущий статус доступен в «Прогонах».';
+          feedback = 'Запрос на продолжение принят. Текущий статус доступен в разделе «Поиск стратегий».';
         })}>Продолжить GP-поиск</button>{/if}
         <button class="warn" disabled={busy} onclick={() => {
           if (!window.confirm('Удалить запись истории поиска?')) return;
@@ -219,7 +230,7 @@
   {/if}
 {:else if section === 'strategies'}
   <section class="card">
-    <div class="card-head"><h2>Каталог GP Plane</h2></div>
+    <div class="card-head"><h2>Каталог стратегий</h2></div>
     <form class="filters" onsubmit={event => { event.preventDefault(); void perform(async () => { offset = 0; await catalog(); }); }}>
       <label>Каталог<select bind:value={mode}><option value="strategies">Стратегии</option><option value="bundles">Готовые комплекты</option></select></label>
       <label>Веха<select bind:value={milestone}><option value={undefined}>Текущая</option>{#each milestones as item}<option value={item.id}>{item.id}</option>{/each}</select></label>
@@ -234,15 +245,15 @@
     </form>
     <p class="hint">Результатов: {total} · веха {loadedMilestone ?? '—'}</p>
     {#if mode === 'strategies'}
-      <div class="catalog">
-        <div>
+      <div class="catalog strategy-catalog">
+        <div class="strategy-list">
           {#each strategies as item, index (item.id)}
             {#if index === 0 || strategies[index - 1].family !== item.family}<h3>{item.family}</h3>{/if}
             <button class="history" class:ghost={selected?.id !== item.id} onclick={() => selected = item}>{item.protocol} · {item.results.map(result => result.domain).join(', ') || 'Без подтверждённых доменов'}</button>
           {/each}
         </div>
         {#if selected}
-          <section>
+          <section class="strategy-detail">
             <h3>{selected.family} · {selected.protocol}</h3>
             <p class="hint">{selected.family_reason}</p>
             {#each selected.results as result}<p>{result.domain} · {result.engines.map(item => item.name).join(', ') || 'источник неизвестен'}</p>{/each}
@@ -263,7 +274,7 @@
               {:else}<span class="hint">Полный комплект недоступен.</span>{/if}
             </div>
           </section>
-        {/if}
+        {:else}<div class="empty">{total ? 'Выберите стратегию в каталоге слева.' : 'Подходящих стратегий пока нет. Измените фильтры или запустите поиск.'}</div>{/if}
       </div>
     {:else}
       {#each bundles as item (item.id)}
@@ -293,15 +304,25 @@
       </section>
     {/if}
   </section>
-{:else}
+{:else if section === 'lists'}
   <section class="card">
-    <div class="card-head"><h2>Списки доменов</h2><button class="ghost" disabled={busy} onclick={() => selectList()}>Новый список</button></div>
-    <div class="catalog">
-      <div>{#each lists as item (item.id)}<button class="history" class:ghost={listId !== item.id} disabled={busy} onclick={() => selectList(item)}>{item.name}</button>{/each}</div>
-      <form onsubmit={event => { event.preventDefault(); void saveList(); }}>
-        <label>Имя<input type="text" bind:value={listName} readonly={!editable} required /></label>
-        <label>Домены<textarea rows="9" class="mono" bind:value={listDomains} readonly={!editable}></textarea></label>
+    <div class="card-head"><h2>Ваши списки</h2><button class="ghost" disabled={busy} onclick={() => selectList()}>Новый список</button></div>
+    <div class="catalog domain-catalog">
+      <nav class="list-nav" aria-label="Списки доменов GP">
+        <label>Поиск списка<input type="text" bind:value={listFilter} placeholder="Название списка" /></label>
+        {#each [{kind:'builtin',label:'Встроенные'}, {kind:'user',label:'Мои списки'}] as group}
+          <h3>{group.label}</h3>
+          {#each lists.filter(item => item.kind === group.kind && item.name.toLowerCase().includes(listFilter.toLowerCase())) as item (item.id)}
+            <button class="ghost history" class:chosen={listId === item.id} aria-pressed={listId === item.id} disabled={busy} onclick={() => selectList(item)}>{item.name}</button>
+          {:else}<p class="hint">Списков нет</p>{/each}
+        {/each}
+      </nav>
+      {#if listOpened}<form onsubmit={event => { event.preventDefault(); void saveList(); }}>
+        <label>Название списка<input type="text" bind:value={listName} readonly={!editable} required /></label>
+        <label>Домены<textarea rows="15" class="mono" bind:value={listDomains} readonly={!editable}></textarea></label>
+        <p class="hint">{editable ? 'По одному домену в строке.' : 'Встроенный список доступен для чтения и использования в поиске.'}</p>
         <div class="row">
+          {#if go}<button type="button" class="ghost" disabled={!split(listDomains).length || busy} onclick={() => { runDraft.v = { domains: split(listDomains) }; go?.('runs'); }}>Использовать в поиске</button>{/if}
           {#if editable}<button disabled={busy || !listName.trim()}>Сохранить</button>{/if}
           {#if editable && listId !== undefined}<button type="button" class="warn" disabled={busy} onclick={() => {
             if (!window.confirm('Удалить список доменов?')) return;
@@ -309,13 +330,16 @@
               await gp2('data/domain-lists/' + listId, 'DELETE');
               listId = undefined;
               listName = listDomains = '';
+              listOpened = false;
               await readService();
             });
           }}>Удалить</button>{/if}
         </div>
-      </form>
+      </form>{:else}<div class="empty">Выберите список слева или создайте новый.</div>{/if}
     </div>
   </section>
+{:else}
+  <div class="service-grid">
   <section class="card">
     <div class="card-head"><h2>Обслуживание Core</h2><button class="ghost" disabled={busy} onclick={() => perform(readService)}>Обновить статус</button></div>
     {#if core}<p>Core {core.core_version} · API {core.api_version}{core.operation ? ' · ' + core.operation : ''}</p>{/if}
@@ -376,10 +400,34 @@
       });
     }}>Создать веху</button>
   </section>
+  </div>
 {/if}
 
 <style>
-  .card + .card, .paging, .upload { margin-top: 14px; }
+  .page-heading { margin-bottom: 24px; }
+  .page-heading h1 { font-size: 25px; font-weight: 600; letter-spacing: -.6px; }
+  .page-heading p { margin: 7px 0 0; font-size: 13px; color: var(--ink-2); }
+  .eyebrow { text-transform: uppercase; letter-spacing: 1px; font-size: 10px; color: var(--ink-2); margin-bottom: 6px; }
+  .service-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; align-items: start; }
+  .service-grid > .card:first-child { grid-column: 1 / -1; }
+  .card + .card, .paging, .upload { margin-top: 20px; }
+  .service-grid .card { margin: 0; }
+  .domain-catalog { grid-template-columns: 240px minmax(0, 1fr); gap: 24px; }
+  .list-nav h3 { color: var(--ink-2); font-size: 12px; margin: 18px 0 8px; }
+  .list-nav .chosen { background: var(--accent-soft); color: var(--accent); }
+  .history-title { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+  .history-domains { display: block; margin: 6px 0; color: var(--ink-2); overflow-wrap: anywhere; }
+  .history > .hint { display: block; }
+  .strategy-list { max-height: 620px; overflow: auto; }
+  .strategy-detail { border: 1px solid var(--line); border-radius: 8px; padding: 20px; }
+  .strategy-detail .row { margin-top: 16px; }
+  .strategy-detail pre { padding: 16px; background: var(--bg); border-radius: 6px; }
+  .strategy-list h3 { margin: 12px 0 6px; font-size: 13px; }
+  .filters { margin-bottom: 20px; }
+  .history { padding: 12px 14px; }
+  .domain-catalog form { min-width: 0; }
+  .domain-catalog textarea { padding: 12px; line-height: 1.9; background: var(--surface); }
+
   .filters, .catalog { display: grid; gap: 12px; align-items: start; }
   .filters { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); align-items: end; }
   .catalog { grid-template-columns: minmax(180px, 1fr) minmax(0, 2fr); }
@@ -390,5 +438,5 @@
   pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 25rem; overflow: auto; }
   details { margin: 8px 0; }
   .selection { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line); }
-  @media (max-width: 760px) { .catalog { grid-template-columns: 1fr; } }
+  @container (max-width: 760px) { .catalog, .service-grid { grid-template-columns: minmax(0, 1fr); } .list-nav { max-height: 260px; overflow: auto; } }
 </style>

@@ -22,6 +22,7 @@
   );
   const autoEps = $derived(all.filter((x) => x.kind !== 'nfqws2' && x.endpoint).map((x) => `${x.endpoint} · ${x.kind}`));
 
+  let nfqwsTab = $state<'overview' | 'config' | 'lists' | 'logs' | 'scripts'>('overview');
   let busy = $state(false);
   let msg = $state<{ ok: boolean; text: string } | null>(null);
 
@@ -107,7 +108,17 @@
     </p>
   </section>
 {:else}
-  <div class="grid g2">
+  {#if kind === 'nfqws2'}
+    <nav class="nfqws-tabs" aria-label="Разделы NFQWS2">
+      {#each [{id:'overview',label:'Обзор'}, {id:'config',label:'Настройки'}, {id:'lists',label:'Списки'}, {id:'logs',label:'Логи'}, {id:'scripts',label:'Скрипты'}] as item}
+        <button class="ghost" class:active={nfqwsTab === item.id} aria-pressed={nfqwsTab === item.id}
+          onclick={() => nfqwsTab = item.id as typeof nfqwsTab}>{item.label}</button>
+      {/each}
+    </nav>
+    <NfqwsWorkspace section={nfqwsTab} />
+  {/if}
+  <div class="engine-overview" hidden={kind === 'nfqws2' && nfqwsTab !== 'overview'}>
+  <div class="grid" class:g2={kind !== 'nfqws2'}>
     <section class="card engine">
       <div class="row head">
         <span class="dot {healthDot(e)}" class:pulse={e.running}></span>
@@ -144,7 +155,6 @@
     </section>
 
     {#if kind === 'nfqws2'}
-      <NfqwsWorkspace />
       <section class="card">
         <div class="card-head">
           <h2>Список DPI</h2>
@@ -284,9 +294,15 @@
       </dl>
     </details>
   {/if}
+  </div>
 {/if}
 
 <style>
+  .engine-overview { display: flex; flex-direction: column; gap: 16px; }
+  .engine-overview[hidden] { display: none; }
+  .nfqws-tabs { display: flex; gap: 8px; flex-wrap: wrap; border-bottom: 1px solid var(--line); padding-bottom: 12px; }
+  .nfqws-tabs .active { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+
   .engine {
     display: flex;
     flex-direction: column;

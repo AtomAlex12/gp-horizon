@@ -31,10 +31,11 @@
     dashboard: { label: 'Дашборд', icon: 'overview' },
     conns: { label: 'Соединения', icon: 'conns' },
     devices: { label: 'Устройства', icon: 'devices' },
-    runs: { label: 'Прогоны', icon: 'runs' },
-    results: { label: 'Результаты', icon: 'results' },
-    strategies: { label: 'Стратегии', icon: 'strategies' },
-    gpdata: { label: 'Данные GP', icon: 'gpdata' },
+    runs: { label: 'Поиск стратегий', icon: 'runs' },
+    results: { label: 'История поисков', icon: 'results' },
+    strategies: { label: 'Результаты', icon: 'strategies' },
+    gpdata: { label: 'Списки доменов GP', icon: 'gpdata' },
+    gpservice: { label: 'Обслуживание GP', icon: 'system' },
     decisions: { label: 'Решения', icon: 'decisions' },
     lists: { label: 'Списки', icon: 'lists' },
     dns: { label: 'DNS', icon: 'dns' },
@@ -48,11 +49,11 @@
   // The plugin host and GP's strategy search live in nuxk-controller on the
   // Pi. The router build (lite) leaves them out — tabs and code: a mips
   // router has nothing to run them with.
-  const PI_ONLY = ['runs', 'results', 'strategies', 'gpdata', 'plugins'];
+  const PI_ONLY = ['runs', 'results', 'strategies', 'gpdata', 'gpservice', 'plugins'];
   const shown = (k: string) => !(__LITE__ && PI_ONLY.includes(k));
   const NAV = [
     { title: 'Статус', items: ['dashboard', 'conns', 'devices'] },
-    { title: 'Подбор', items: ['runs', 'results', 'strategies', 'gpdata', 'decisions'] },
+    { title: 'GP Plane', items: ['runs', 'strategies', 'results', 'gpdata', 'gpservice', 'decisions'] },
     { title: 'Списки и данные', items: ['lists', 'dns'] },
     { title: 'Движки', items: ['nfqws2', 'usque', 'xray'] },
     { title: 'Управление', items: ['logs', 'plugins', 'system'] },
@@ -233,13 +234,15 @@
         {:else if !__LITE__ && tab === 'plugins'}
           <Plugins />
         {:else if !__LITE__ && tab === 'runs'}
-          <GpGate {go}>{#snippet api2()}<Gp2Search />{/snippet}<Runs {go} /></GpGate>
+          <GpGate {go} active={tab}>{#snippet api2()}<Gp2Search />{/snippet}<Runs {go} /></GpGate>
         {:else if !__LITE__ && tab === 'results'}
-          <GpGate {go}>{#snippet api2()}<Gp2Data section='history' />{/snippet}<Results {go} /></GpGate>
+          <GpGate {go} active={tab}>{#snippet api2()}<Gp2Data section='history' />{/snippet}<Results {go} /></GpGate>
         {:else if !__LITE__ && tab === 'strategies'}
-          <GpGate {go}>{#snippet api2()}<Gp2Data section='strategies' />{/snippet}<Strategies /></GpGate>
+          <GpGate {go} active={tab}>{#snippet api2()}<Gp2Data section='strategies' />{/snippet}<Strategies /></GpGate>
         {:else if !__LITE__ && tab === 'gpdata'}
-          <GpGate {go}>{#snippet api2()}<Gp2Data section='service' />{/snippet}<GpData /></GpGate>
+          <GpGate {go} active={tab}>{#snippet api2()}<Gp2Data section='lists' {go} />{/snippet}<GpData /></GpGate>
+        {:else if !__LITE__ && tab === 'gpservice'}
+          <GpGate {go} active={tab}>{#snippet api2()}<Gp2Data section='service' {go} />{/snippet}<GpData /></GpGate>
         {:else if tab === 'system'}
           <System />
         {:else if tab === 'dns'}
