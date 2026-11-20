@@ -202,6 +202,7 @@ probe() {
             case $rc in
             6) echo "reason dns" ;;
             28) echo "reason timeout" ;;
+            126 | 127) echo "reason curl-unavailable" ;;
             *) echo "reason error_$rc" ;;
             esac
         fi

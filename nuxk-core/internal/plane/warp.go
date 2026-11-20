@@ -20,11 +20,11 @@ type WarpRouting interface {
 	Set(context.Context, []string, bool) error
 }
 
-func withAWG(want []Group) []Group {
+func withAWG(want []Group, iface string) []Group {
 	want = slices.Clone(want)
 	for i := range want {
 		if want[i].Mode == ModeWarp {
-			want[i].Interface = AWGDevice
+			want[i].Interface = iface
 		}
 	}
 	return want
@@ -59,8 +59,8 @@ func (m *Manager) SwitchWarp(ctx context.Context, target, oldDevice string, tran
 	defer m.edit.Unlock()
 	m.run.Lock()
 	defer m.run.Unlock()
-	if !m.Cfg.Apply || m.AWG == nil || m.Cfg.Ifaces[ModeWarp] == "" {
-		return errors.New("переключение WARP требует активной маршрутизации Keenetic и настройки Entware")
+	if !m.Cfg.Apply || (m.AWG == nil && m.Cfg.WarpNativeIface == "") || m.Cfg.Ifaces[ModeWarp] == "" {
+		return errors.New("переключение WARP требует активной маршрутизации Keenetic и настроенного интерфейса")
 	}
 	if target != WarpAWG && target != WarpUSQUE {
 		return errors.New("неизвестный транспорт WARP")
@@ -79,16 +79,29 @@ func (m *Manager) SwitchWarp(ctx context.Context, target, oldDevice string, tran
 	if target == WarpAWG && d.OnDown == OnDownBlock {
 		return ErrAWGBlockUnsupported
 	}
+	if previous == WarpAWG && d.WarpNativeIface != m.Cfg.WarpNativeIface {
+		return errors.New("восстановите прежний интерфейс WARP перед переключением")
+	}
 	want := Build(d, m.Cfg.Ifaces)
 	obs, err := m.B.Observe(ctx)
 	if err != nil {
 		return err
 	}
+	if iface := m.Cfg.WarpNativeIface; iface != "" {
+		if strings.EqualFold(iface, m.Cfg.Ifaces[ModeVless]) || strings.EqualFold(iface, m.Cfg.Ifaces[ModeWarp]) {
+			return errors.New("для WARP нужен отдельный интерфейс WireGuard")
+		}
+		for _, route := range obs.Routes {
+			if strings.EqualFold(route.Interface, iface) && route.Group != warpGroup {
+				return errors.New("выбранный интерфейс WireGuard используется другим списком Keenetic")
+			}
+		}
+	}
 	_, conflicts := Plan(want, obs, false)
 	names := warpNames(want, conflicts)
 	block := d.OnDown == OnDownBlock
 	set := func(ctx context.Context, transport string) error {
-		if transport == WarpAWG {
+		if transport == WarpAWG && m.AWG != nil {
 			if err := m.AWG.Set(ctx, names, block); err != nil {
 				return err
 			}
@@ -96,7 +109,7 @@ func (m *Manager) SwitchWarp(ctx context.Context, target, oldDevice string, tran
 		if err := m.setFirmwareWarp(ctx, transport, want); err != nil {
 			return err
 		}
-		if transport == WarpUSQUE {
+		if transport == WarpUSQUE && m.AWG != nil {
 			return m.AWG.Set(ctx, nil, false)
 		}
 		return nil
@@ -108,8 +121,12 @@ func (m *Manager) SwitchWarp(ctx context.Context, target, oldDevice string, tran
 			}
 		}
 		if target == WarpAWG {
-			if err := m.AWG.Check(ctx); err != nil {
-				return err
+			if m.AWG != nil {
+				if err := m.AWG.Check(ctx); err != nil {
+					return err
+				}
+			} else if obs.Interfaces != nil && !obs.Interfaces[m.Cfg.WarpNativeIface] {
+				return errors.New("интерфейс WireGuard не найден в KeeneticOS")
 			}
 			legacy := m.Cfg.Ifaces[ModeWarp]
 			if !strings.EqualFold(oldDevice, legacy) || strings.EqualFold(m.Cfg.Ifaces[ModeVless], legacy) {
@@ -138,6 +155,10 @@ func (m *Manager) SwitchWarp(ctx context.Context, target, oldDevice string, tran
 		return set(ctx, previous)
 	}, func() error {
 		d.WarpTransport = target
+		d.WarpNativeIface = ""
+		if target == WarpAWG {
+			d.WarpNativeIface = m.Cfg.WarpNativeIface
+		}
 		if err := m.Store.SaveJSON(stateName, d); err != nil {
 			return err
 		}
@@ -152,7 +173,11 @@ func (m *Manager) setFirmwareWarp(ctx context.Context, transport string, want []
 		return err
 	}
 	if transport == WarpAWG {
-		want = withAWG(want)
+		iface := m.Cfg.WarpNativeIface
+		if iface == "" {
+			iface = AWGDevice
+		}
+		want = withAWG(want, iface)
 	}
 	ops, _ := Plan(want, obs, false)
 	for _, op := range ops {
@@ -167,10 +192,18 @@ func (m *Manager) setFirmwareWarp(ctx context.Context, transport string, want []
 	if err != nil {
 		return err
 	}
-	if transport == WarpAWG {
+	if transport == WarpAWG && m.Cfg.WarpNativeIface == "" {
 		for _, route := range final.Routes {
 			if route.Group == warpGroup {
 				return fmt.Errorf("старый маршрут WARP на %s остался в RCI", route.Interface)
+			}
+		}
+	}
+	if m.Cfg.WarpNativeIface != "" {
+		ops, _ := Plan(want, final, false)
+		for _, op := range ops {
+			if op.Group == warpGroup {
+				return errors.New("KeeneticOS не подтвердил привязку списка WARP")
 			}
 		}
 	}

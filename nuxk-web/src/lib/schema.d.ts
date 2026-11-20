@@ -844,6 +844,8 @@ export interface components {
             error?: string;
             awg_installed?: boolean;
             profile_configured?: boolean;
+            /** @description ID штатного WireGuard в KeeneticOS */
+            native_interface?: string;
         };
         SuggestPath: {
             /**
@@ -1230,6 +1232,7 @@ export interface components {
             on_down?: components["schemas"]["OnDown"];
             /** @enum {string} */
             readonly warp_transport?: "usque" | "amneziawg";
+            readonly warp_native_iface?: string;
             /** @description nuxk owns nfqws2's hostlist (set by the first DPI list) */
             manage_desync?: boolean;
         };

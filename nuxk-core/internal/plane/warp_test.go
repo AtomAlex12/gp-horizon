@@ -160,3 +160,41 @@ func TestWarpRollbackRestoresFirmwareRouteAfterAWGBind(t *testing.T) {
 		t.Fatalf("previous routing not restored: %+v, AWG: %v, transport: %q", b.obs.Routes, r.domains, d.WarpTransport)
 	}
 }
+
+func TestNativeWarpSwitchKeepsSingleFirmwareGroup(t *testing.T) {
+	ctx := context.Background()
+	b := &warpTestBackend{obs: Observed{
+		Groups:     map[string][]string{warpGroup: {"example.org"}},
+		Interfaces: map[string]bool{"OpkgTun0": true, "Wireguard0": true},
+		Routes:     []Route{{Group: warpGroup, Interface: "OpkgTun0", Auto: true}},
+	}}
+	m := NewManager(b, &jsonStore{}, Config{Apply: true, WarpNativeIface: "Wireguard0",
+		Ifaces: map[Mode]string{ModeWarp: "OpkgTun0", ModeVless: "OpkgTun1"}})
+	if err := m.SetDesired(Desired{Lists: []List{{Name: "WARP", Mode: ModeWarp, Domains: []string{"example.org"}}}}); err != nil {
+		t.Fatal(err)
+	}
+	do := func(prep, bind, _ func(context.Context) error, commit func() error) error {
+		if err := prep(ctx); err != nil {
+			return err
+		}
+		if err := bind(ctx); err != nil {
+			return err
+		}
+		return commit()
+	}
+	if err := m.SwitchWarp(ctx, WarpAWG, "opkgtun0", do); err != nil {
+		t.Fatal(err)
+	}
+	d, err := m.Desired()
+	if err != nil || d.WarpNativeIface != "Wireguard0" || len(d.Lists) != 1 || len(b.obs.Groups) != 1 ||
+		len(b.obs.Routes) != 1 || b.obs.Routes[0].Interface != "Wireguard0" {
+		t.Fatalf("desired=%+v routes=%+v err=%v", d, b.obs.Routes, err)
+	}
+	if err := m.SwitchWarp(ctx, WarpUSQUE, "nwg0", do); err != nil {
+		t.Fatal(err)
+	}
+	d, err = m.Desired()
+	if err != nil || d.WarpNativeIface != "" || len(b.obs.Routes) != 1 || b.obs.Routes[0].Interface != "OpkgTun0" {
+		t.Fatalf("desired=%+v routes=%+v err=%v", d, b.obs.Routes, err)
+	}
+}

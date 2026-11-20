@@ -979,6 +979,7 @@ components:
         error: { type: string }
         awg_installed: { type: boolean }
         profile_configured: { type: boolean }
+        native_interface: { type: string, description: "ID штатного WireGuard в KeeneticOS" }
     SuggestPath:
       type: object
       required: [via, result, tries, opened, acceptable]
@@ -1406,6 +1407,7 @@ components:
         lists: { type: array, items: { $ref: "#/components/schemas/PlaneList" } }
         on_down: { $ref: "#/components/schemas/OnDown" }
         warp_transport: { type: string, enum: [usque, amneziawg], readOnly: true }
+        warp_native_iface: { type: string, readOnly: true }
         manage_desync: { type: boolean, description: nuxk owns nfqws2's hostlist (set by the first DPI list) }
 
     PlaneGroup:

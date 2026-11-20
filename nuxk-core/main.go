@@ -30,6 +30,7 @@ import (
 	"nuxk.dev/horizon/core/internal/dns"
 	"nuxk.dev/horizon/core/internal/engine"
 	"nuxk.dev/horizon/core/internal/engine/amneziawg"
+	"nuxk.dev/horizon/core/internal/engine/keeneticwg"
 	"nuxk.dev/horizon/core/internal/engine/nfqws2"
 	"nuxk.dev/horizon/core/internal/engine/usque"
 	"nuxk.dev/horizon/core/internal/engine/warp"
@@ -134,12 +135,18 @@ func main() {
 	if err := st.LoadJSON("plane", &planeIntent); err != nil {
 		slog.Warn("warp: не удалось прочитать состояние маршрутизации", "err", err)
 	}
-	if cfg.Engines.Usque != "" && (cfg.WarpAWGAddr != "" || planeIntent.WarpTransport == plane.WarpAWG) {
+	var nativeWarp string
+	if cfg.Engines.Usque != "" && (cfg.WarpNativeIface != "" || cfg.WarpAWGAddr != "" || planeIntent.WarpTransport == plane.WarpAWG) {
 		if _, err := os.Stat(cfg.Engines.Usque); err == nil {
 			var awg engine.Engine
-			if fi, err := os.Stat(cfg.WarpAWGDriver); err == nil && fi.Mode().IsRegular() &&
-				cfg.Plane.Backend == "keenetic" && cfg.Plane.Apply && cfg.WarpAWGAddr != "" {
-				awg = amneziawg.New(cfg.WarpAWGDriver, filepath.Join(cfg.StateDir, "warp-awg.conf"))
+			if cfg.Plane.Backend == "keenetic" && cfg.Plane.Apply {
+				if native := keeneticwg.New(cfg.WarpNativeIface, cfg.WarpNativeDevice); native != nil && (planeIntent.WarpTransport != plane.WarpAWG || planeIntent.WarpNativeIface == cfg.WarpNativeIface) {
+					awg, nativeWarp = native, cfg.WarpNativeIface
+				} else if planeIntent.WarpNativeIface == "" && cfg.WarpAWGAddr != "" {
+					if fi, err := os.Stat(cfg.WarpAWGDriver); err == nil && fi.Mode().IsRegular() {
+						awg = amneziawg.New(cfg.WarpAWGDriver, filepath.Join(cfg.StateDir, "warp-awg.conf"))
+					}
+				}
 			}
 			warpMux = warp.New(usque.New(cfg.Engines.Usque), awg, planeIntent.WarpTransport)
 		}
@@ -189,8 +196,9 @@ func main() {
 	case "", "off":
 	case "keenetic":
 		pc := plane.Config{
-			Ifaces: map[plane.Mode]string{plane.ModeWarp: cfg.Plane.IfaceWarp, plane.ModeVless: cfg.Plane.IfaceVless},
-			Apply:  cfg.Plane.Apply, V6Deny: cfg.Plane.V6Deny, Every: cfg.Plane.Every,
+			WarpNativeIface: nativeWarp,
+			Ifaces:          map[plane.Mode]string{plane.ModeWarp: cfg.Plane.IfaceWarp, plane.ModeVless: cfg.Plane.IfaceVless},
+			Apply:           cfg.Plane.Apply, V6Deny: cfg.Plane.V6Deny, Every: cfg.Plane.Every,
 		}
 		if _, ok := reg.Get(engine.KindNfqws2); ok {
 			// «DPI» list → nfqws2 hostlist, through the controller so it is
@@ -201,7 +209,7 @@ func main() {
 		}
 		router := keenetic.New(cfg.Plane.RCI)
 		pm = plane.NewManager(router, st, pc)
-		if warpMux != nil && warpMux.Status().Available {
+		if warpMux != nil && warpMux.Status().Available && nativeWarp == "" {
 			pm.AWG = &entware.Routing{Addr: cfg.WarpAWGAddr, RouterDNS: cfg.DNSRouterAddr(),
 				Script: engine.Exec{Script: cfg.WarpAWGDriver}, RCI: router, Store: st}
 		}

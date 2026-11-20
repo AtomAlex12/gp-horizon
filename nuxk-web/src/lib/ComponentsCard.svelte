@@ -125,7 +125,7 @@
                   {:else if warp.error && warp.transport === 'usque'}<span class="chip warn">Ошибка переключения</span>
                   {:else if warp.transport === 'usque'}<span class="chip">Резервный</span>
                   {:else if warpEngine}<span class="chip">Остановлен</span>{/if}
-                  <span class="spacer"></span><span class="mono hint">awg0</span>
+                  <span class="spacer"></span><span class="mono hint">{warp.native_interface ?? "awg0"}</span>
                 {/if}
               </div>
             {:else}

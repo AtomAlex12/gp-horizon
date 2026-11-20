@@ -202,7 +202,7 @@ function addSample(m: Metrics) {
   const n = h.ts.length;
   for (const name of Object.keys(m.ifaces)) {
     // Engine tunnels, excluding the kernel's IPIP fallback tunl0.
-    if (!/^(awg0$|opkgtun|tun(?!l))/.test(name) || !p.ifaces[name]) continue;
+    if (!/^(awg0$|nwg[0-9]+$|opkgtun|tun(?!l))/.test(name) || !p.ifaces[name]) continue;
     const t = (h.tunnels[name] ??= { rx_bps: Array(n - 1).fill(0), tx_bps: Array(n - 1).fill(0) });
     t.rx_bps.push(rate(m.ifaces[name].rx, p.ifaces[name].rx) * 8);
     t.tx_bps.push(rate(m.ifaces[name].tx, p.ifaces[name].tx) * 8);

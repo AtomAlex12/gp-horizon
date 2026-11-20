@@ -71,6 +71,8 @@ func New(url string) *Backend {
 
 func (b *Backend) Name() string { return "keenetic" }
 
+const forbiddenRCI = "HTTP 403 — проверьте адрес RCI и права доступа агента. На Ultra KN-1810 с KeeneticOS 5.1.9 проверьте обновление до 5.1.10"
+
 // --- RCI transport ------------------------------------------------------------
 
 func (b *Backend) get(ctx context.Context, path string, v any) error {
@@ -90,7 +92,7 @@ func (b *Backend) get(ctx context.Context, path string, v any) error {
 	slog.Debug("rci", "method", "GET", "path", path, "code", resp.StatusCode, "bytes", len(body), "took", time.Since(start).Round(time.Millisecond))
 	if resp.StatusCode != http.StatusOK {
 		if resp.StatusCode == http.StatusForbidden {
-			return fmt.Errorf("RCI %s: HTTP 403 — проверьте адрес RCI и права доступа агента", path)
+			return fmt.Errorf("RCI %s: %s", path, forbiddenRCI)
 		}
 		return fmt.Errorf("RCI %s: HTTP %d", path, resp.StatusCode)
 	}
@@ -120,7 +122,7 @@ func (b *Backend) post(ctx context.Context, body any) error {
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusForbidden {
 		slog.Debug("rci", "method", "POST", "code", resp.StatusCode, "took", time.Since(start).Round(time.Millisecond))
-		return errors.New("RCI POST: HTTP 403 — проверьте адрес RCI и права доступа агента")
+		return errors.New("RCI POST: " + forbiddenRCI)
 	}
 	ans, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	// nuxk posts only its own objects (nuxk-* groups, routes, its OpkgTun)
