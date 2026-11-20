@@ -55,8 +55,9 @@ type List struct {
 
 // Desired is the whole plane intent, stored as state/plane.json.
 type Desired struct {
-	Lists  []List `json:"lists"`
-	OnDown OnDown `json:"on_down,omitempty"` // "" = direct
+	Lists         []List `json:"lists"`
+	OnDown        OnDown `json:"on_down,omitempty"` // "" = direct
+	WarpTransport string `json:"warp_transport,omitempty"`
 	// ManageDesync: nuxk owns nfqws2's hostlist. Set once the first «DPI»
 	// list exists and kept from then on (so removing the last list clears
 	// the hostlist); until then the user's own nfqws2 list is never touched.

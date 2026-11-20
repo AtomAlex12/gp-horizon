@@ -40,6 +40,92 @@ tags:
   - { name: suggest, description: "route suggestions: probe a domain, say why it doesn't open and which way out works" }
 
 paths:
+  /api/v1/warp/profile:
+    put:
+      tags: [engines]
+      operationId: setWarpProfile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [config]
+              properties:
+                config:
+                  type: string
+                  maxLength: 32768
+                  writeOnly: true
+                  description: WG or AWG configuration. Stored on the router without activating it.
+      responses:
+        "200":
+          description: Profile validated and saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Ok" }
+  /api/v1/warp/transport:
+    get:
+      tags: [engines]
+      operationId: warpTransport
+      responses:
+        "200":
+          description: Current WARP transport and the result of the last switch
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WarpTransportStatus" }
+    put:
+      tags: [engines]
+      operationId: setWarpTransport
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [transport]
+              properties:
+                transport: { type: string, enum: [usque, amneziawg] }
+      responses:
+        "202":
+          description: Switch accepted for background execution
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WarpTransportStatus" }
+  /api/v1/nfqws2/files:
+    get:
+      tags: [agent]
+      operationId: nfqwsFiles
+      parameters:
+        - {name: section, in: query, required: true, schema: {type: string, enum: [config, lists, scripts, interfaces]}}
+        - {name: name, in: query, schema: {type: string}}
+      responses:
+        "200":
+          description: File catalogue or content
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: array
+                    items:
+                      type: object
+                      required: [name, group, read_only]
+                      properties:
+                        name: {type: string}
+                        group: {type: string}
+                        read_only: {type: boolean}
+                  - type: array
+                    items:
+                      type: object
+                      required: [name, label, type]
+                      properties:
+                        name: {type: string}
+                        label: {type: string}
+                        type: {type: string}
+                  - type: object
+                    required: [text]
+                    properties:
+                      text: {type: string}
+
   /api/v1/healthz:
     get:
       tags: [agent]
@@ -883,6 +969,16 @@ components:
           schema: { $ref: "#/components/schemas/Error" }
 
   schemas:
+    WarpTransportStatus:
+      type: object
+      required: [transport, available, pending]
+      properties:
+        transport: { type: string, enum: [usque, amneziawg] }
+        available: { type: boolean }
+        pending: { type: boolean }
+        error: { type: string }
+        awg_installed: { type: boolean }
+        profile_configured: { type: boolean }
     SuggestPath:
       type: object
       required: [via, result, tries, opened, acceptable]
@@ -1309,6 +1405,7 @@ components:
       properties:
         lists: { type: array, items: { $ref: "#/components/schemas/PlaneList" } }
         on_down: { $ref: "#/components/schemas/OnDown" }
+        warp_transport: { type: string, enum: [usque, amneziawg], readOnly: true }
         manage_desync: { type: boolean, description: nuxk owns nfqws2's hostlist (set by the first DPI list) }
 
     PlaneGroup:

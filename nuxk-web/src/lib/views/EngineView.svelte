@@ -3,17 +3,19 @@
   // the left, what the engine carries on the right, raw details below.
   import { api, type EngineKind, type ListMode, type ProbeSites } from '../api';
   import { status, refresh, node } from '../status.svelte';
+  import NfqwsWorkspace from '../NfqwsWorkspace.svelte';
   import NfqwsRouting from '../NfqwsRouting.svelte';
   import XrayConfig from '../XrayConfig.svelte';
   import XrayServers from '../XrayServers.svelte';
   import { ENGINE_LABEL, HEALTH_LABEL, ago, fmtDur, healthChip, healthDot, planeOf, probeState, probeText, reasonText } from '../ui';
 
-  let { kind, go }: { kind: EngineKind; go: (tab: string) => void } = $props();
+  type Kind = Exclude<EngineKind, 'usque'>;
+  let { kind, go }: { kind: Kind; go: (tab: string) => void } = $props();
 
   const e = $derived(status.data?.engines.find((x) => x.kind === kind));
   const all = $derived(status.data?.engines ?? []);
   const plane = $derived(planeOf(status.data));
-  const MODE: Record<EngineKind, ListMode> = { nfqws2: 'desync', usque: 'warp', xray: 'vless' };
+  const MODE: Record<Kind, ListMode> = { nfqws2: 'desync', xray: 'vless' };
   const domains = $derived(
     kind === 'nfqws2'
       ? (plane?.desync ?? [])
@@ -21,9 +23,9 @@
   );
   const autoEps = $derived(all.filter((x) => x.kind !== 'nfqws2' && x.endpoint).map((x) => `${x.endpoint} · ${x.kind}`));
 
+  let nfqwsTab = $state<'overview' | 'config' | 'lists' | 'logs' | 'scripts'>('overview');
   let busy = $state(false);
   let msg = $state<{ ok: boolean; text: string } | null>(null);
-
   async function act(a: 'start' | 'stop' | 'restart') {
     busy = true;
     msg = null;
@@ -84,15 +86,6 @@
   const intent = $derived(
     e?.want_run === true ? 'держать запущенным' : e?.want_run === false ? 'держать остановленным' : 'не управляется',
   );
-  function bytes(v?: string) {
-    const n = Number(v ?? 0);
-    if (!n) return '0 Б';
-    const u = ['Б', 'КБ', 'МБ', 'ГБ', 'ТБ'];
-    let i = 0,
-      x = n;
-    while (x >= 1024 && i < u.length - 1) (x /= 1024), i++;
-    return `${x.toFixed(x < 10 && i ? 1 : 0)} ${u[i]}`;
-  }
 </script>
 
 {#if !e}
@@ -100,13 +93,22 @@
     <h2>{ENGINE_LABEL[kind]} не подключён</h2>
     <p>
       Движок не установлен на этом узле или выключен в <span class="mono">nuxk.conf</span>
-      ({kind === 'nfqws2' ? 'ENGINE_NFQWS2' : kind === 'usque' ? 'ENGINE_USQUE' : 'ENGINE_XRAY'}).
-      {#if kind === 'usque'}WARP ставится командой на роутере: <span class="mono">nuxk warp</span>.{/if}
+      ({kind === 'nfqws2' ? 'ENGINE_NFQWS2' : 'ENGINE_XRAY'}).
       {#if kind === 'xray'}xray ставится командой на роутере: <span class="mono">nuxk vless</span>; потом здесь задаётся сервер.{/if}
     </p>
   </section>
 {:else}
-  <div class="grid g2">
+  {#if kind === 'nfqws2'}
+    <nav class="nfqws-tabs" aria-label="Разделы NFQWS2">
+      {#each [{id:'overview',label:'Обзор'}, {id:'config',label:'Настройки'}, {id:'lists',label:'Списки'}, {id:'logs',label:'Логи'}, {id:'scripts',label:'Скрипты'}] as item}
+        <button class="ghost" class:active={nfqwsTab === item.id} aria-pressed={nfqwsTab === item.id}
+          onclick={() => nfqwsTab = item.id as typeof nfqwsTab}>{item.label}</button>
+      {/each}
+    </nav>
+    <NfqwsWorkspace section={nfqwsTab} />
+  {/if}
+  <div class="engine-overview" hidden={kind === 'nfqws2' && nfqwsTab !== 'overview'}>
+  <div class="grid" class:g2={kind !== 'nfqws2'}>
     <section class="card engine">
       <div class="row head">
         <span class="dot {healthDot(e)}" class:pulse={e.running}></span>
@@ -165,18 +167,6 @@
         <div class="row chips">
           {#each autoEps as ep (ep)}<span class="chip acc mono">{ep}</span>{:else}<span class="muted small">туннелей нет</span>{/each}
         </div>
-      </section>
-    {:else if kind === 'usque'}
-      <section class="card">
-        <div class="card-head"><h2>WARP</h2></div>
-        <dl class="kv">
-          <dt>туннель</dt><dd>{e.detail?.tunnel_state ?? '—'}</dd>
-          <dt>SNI</dt><dd class="mono">{e.detail?.sni || '—'}</dd>
-          <dt>HTTP/2</dt><dd>{e.detail?.http2 === '1' ? 'вкл.' : 'выкл.'}</dd>
-          <dt>колокация</dt><dd class="mono">{e.probe?.detail?.colo || '—'}</dd>
-          <dt>выходной IP</dt><dd class="mono">{e.probe?.egress_ip || '—'}</dd>
-          <dt>принято / отдано</dt><dd class="mono">{bytes(e.detail?.rx_bytes)} / {bytes(e.detail?.tx_bytes)}</dd>
-        </dl>
       </section>
     {:else}
       <XrayConfig engine={e} />
@@ -262,7 +252,7 @@
     {#if kind === 'xray'}<XrayServers />{/if}
     <section class="card">
       <div class="card-head">
-        <h2>Домены через {kind === 'usque' ? 'WARP' : 'VLESS'}</h2>
+        <h2>Домены через VLESS</h2>
         <span class="chip">{domains.length}</span>
         <span class="spacer"></span>
         {#if plane}<button class="ghost sm" onclick={() => go('lists')}>Списки →</button>{/if}
@@ -282,9 +272,15 @@
       </dl>
     </details>
   {/if}
+  </div>
 {/if}
 
 <style>
+  .engine-overview { display: flex; flex-direction: column; gap: 16px; }
+  .engine-overview[hidden] { display: none; }
+  .nfqws-tabs { display: flex; gap: 8px; flex-wrap: wrap; border-bottom: 1px solid var(--line); padding-bottom: 12px; }
+  .nfqws-tabs .active { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+
   .engine {
     display: flex;
     flex-direction: column;

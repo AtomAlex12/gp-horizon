@@ -43,7 +43,13 @@
   );
   const listed = $derived(perMode.reduce((a, m) => a + m.n, 0));
 
-  // tunnel interface → the engine that owns it (usque: opkgtunN, xray: its tun)
+  function engineLabel(k: EngineKind): string {
+    return k === 'usque' && byKind.get(k)?.detail?.transport === 'amneziawg'
+      ? 'AmneziaWG (WARP)'
+      : ENGINE_LABEL[k] ?? k;
+  }
+
+  // Find the current interface of the logical engine in the collected history.
   function tunnelOf(k: EngineKind): string | undefined {
     const ifc = byKind.get(k)?.iface;
     return ifc && h?.tunnels[ifc] ? ifc : undefined;
@@ -91,7 +97,7 @@
         tab: 'system',
       });
     for (const e of engines) {
-      const name = ENGINE_LABEL[e.kind] ?? e.kind;
+      const name = engineLabel(e.kind);
       if (e.last_error) out.push({ sev: 'warn', text: `${name}: ${e.last_error}`, tab: e.kind });
       else if (e.want_run && !e.running) out.push({ sev: 'warn', text: `${name} должен работать, но остановлен — перезапуск с паузой`, tab: e.kind });
       else if (e.health === 'down' && e.want_run !== false) out.push({ sev: 'deg', text: `${name} остановлен`, tab: e.kind });
@@ -195,7 +201,7 @@
     >
       <div class="row">
         <span class="dot {healthDot(e)}" class:pulse={e?.running}></span>
-        <b>{ENGINE_LABEL[k]}</b>
+        <b>{engineLabel(k)}</b>
         <span class="spacer"></span>
         {#if e}<span class="chip {healthChip(e)}">{HEALTH_LABEL[e.health]}</span>{:else}<span class="chip">не подключён</span>{/if}
       </div>

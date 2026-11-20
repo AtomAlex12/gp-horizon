@@ -18,29 +18,34 @@ import (
 	"nuxk.dev/horizon/core/internal/core"
 	"nuxk.dev/horizon/core/internal/dns"
 	"nuxk.dev/horizon/core/internal/engine"
+	"nuxk.dev/horizon/core/internal/engine/warp"
 	"nuxk.dev/horizon/core/internal/logbuf"
 	"nuxk.dev/horizon/core/internal/node"
 	"nuxk.dev/horizon/core/internal/plane"
+	"nuxk.dev/horizon/core/internal/plane/keenetic"
 	"nuxk.dev/horizon/core/internal/suggest"
 	"nuxk.dev/horizon/core/internal/update"
 )
 
 type Deps struct {
-	Version string
-	Commit  string
-	Engines *engine.Registry
-	Hub     *core.Hub
-	Ctl     *core.Controller // every state change goes through it — see core.Controller
-	Plane   *plane.Manager   // nil when PLANE is off
-	Suggest *suggest.Service // route suggestions; nil = off
-	WebRoot string           // static nuxk-web build; "" = API only
-	Token   string           // bearer token for programs (the controller); "" = none
-	Auth    *auth.Guard      // browser login with the box's root account; nil = off
-	Node    *node.Node       // /info, /metrics
-	Logs    *logbuf.Ring     // /logs, log events on /events
-	Debug   *logbuf.Debug    // /logs/debug: debug entries in Logs for a while; nil = off
-	Update  *update.Updater  // /update: new releases, the router updated from the panel; nil = off
-	DNS     *dns.Service     // /dns: protected DNS through the tunnels; nil = off
+	Keenetic *keenetic.Backend
+	Version  string
+	Commit   string
+	Engines  *engine.Registry
+	Hub      *core.Hub
+	Ctl      *core.Controller // every state change goes through it — see core.Controller
+	Plane    *plane.Manager   // nil when PLANE is off
+	Suggest  *suggest.Service // route suggestions; nil = off
+	WebRoot  string           // static nuxk-web build; "" = API only
+	Token    string           // bearer token for programs (the controller); "" = none
+	Auth     *auth.Guard      // browser login with the box's root account; nil = off
+	Node     *node.Node       // /info, /metrics
+	Logs     *logbuf.Ring     // /logs, log events on /events
+	Debug    *logbuf.Debug    // /logs/debug: debug entries in Logs for a while; nil = off
+	Update   *update.Updater  // /update: new releases, the router updated from the panel; nil = off
+	DNS      *dns.Service     // /dns: protected DNS through the tunnels; nil = off
+	Warp     *warp.Mux
+	Life     context.Context
 }
 
 // Route is one API endpoint. Routes is the single list the mux is built from
@@ -52,6 +57,7 @@ type Route struct {
 }
 
 var Routes = []Route{
+	{"GET /api/v1/nfqws2/files", false, func(d Deps) http.HandlerFunc { return d.handleNfqwsFiles }},
 	{"GET /api/v1/healthz", true, func(Deps) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
@@ -69,6 +75,9 @@ var Routes = []Route{
 	{"PUT /api/v1/logs/debug", false, func(d Deps) http.HandlerFunc { return d.handleSetLogsDebug }},
 	{"GET /api/v1/events", false, func(d Deps) http.HandlerFunc { return d.handleEvents }},
 	{"GET /api/v1/engines", false, func(d Deps) http.HandlerFunc { return d.handleEngines }},
+	{"GET /api/v1/warp/transport", false, func(d Deps) http.HandlerFunc { return d.handleWarpTransport }},
+	{"PUT /api/v1/warp/transport", false, func(d Deps) http.HandlerFunc { return d.handleSetWarpTransport }},
+	{"PUT /api/v1/warp/profile", false, func(d Deps) http.HandlerFunc { return d.handleSetWarpProfile }},
 	{"GET /api/v1/engines/{kind}", false, func(d Deps) http.HandlerFunc { return d.handleEngine }},
 	{"POST /api/v1/engines/{kind}/{action}", false, func(d Deps) http.HandlerFunc { return d.handleEngineAction }},
 	{"PUT /api/v1/engines/{kind}/config", false, func(d Deps) http.HandlerFunc { return d.handleEngineConfig }},
@@ -454,6 +463,9 @@ func (d Deps) handlePlaneSetLists(w http.ResponseWriter, r *http.Request) {
 		code := http.StatusInternalServerError
 		if errors.Is(err, plane.ErrBadList) || errors.Is(err, plane.ErrBadOnDown) {
 			code = http.StatusBadRequest
+		}
+		if errors.Is(err, plane.ErrAWGBlockUnsupported) {
+			code = http.StatusConflict
 		}
 		writeErr(w, code, "bad_list", err.Error())
 		return

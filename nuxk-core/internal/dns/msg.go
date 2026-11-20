@@ -179,8 +179,9 @@ func Query(id uint16, name string, qtype uint16) ([]byte, error) {
 
 // Answer is what the check needs from a response.
 type Answer struct {
-	Rcode int
-	Addrs []netip.Addr // A and AAAA records, in order
+	Rcode   int
+	Addrs   []netip.Addr // A and AAAA records, in order
+	AddrTTL uint32       // longest lifetime of an address in the answer
 }
 
 // Parse reads the rcode and the addresses of a response.
@@ -202,6 +203,7 @@ func Parse(resp []byte) (Answer, error) {
 			return a, errShort
 		}
 		typ := binary.BigEndian.Uint16(resp[off : off+2])
+		ttl := binary.BigEndian.Uint32(resp[off+4 : off+8])
 		rdlen := int(binary.BigEndian.Uint16(resp[off+8 : off+10]))
 		off += 10
 		if off+rdlen > len(resp) {
@@ -211,8 +213,10 @@ func Parse(resp []byte) (Answer, error) {
 		switch {
 		case typ == TypeA && rdlen == 4:
 			a.Addrs = append(a.Addrs, netip.AddrFrom4([4]byte(rd)))
+			a.AddrTTL = max(a.AddrTTL, ttl)
 		case typ == TypeAAAA && rdlen == 16:
 			a.Addrs = append(a.Addrs, netip.AddrFrom16([16]byte(rd)))
+			a.AddrTTL = max(a.AddrTTL, ttl)
 		}
 		off += rdlen
 	}

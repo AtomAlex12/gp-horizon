@@ -4,6 +4,54 @@
  */
 
 export interface paths {
+    "/api/v1/warp/profile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["setWarpProfile"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/warp/transport": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["warpTransport"];
+        put: operations["setWarpTransport"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/nfqws2/files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["nfqwsFiles"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/healthz": {
         parameters: {
             query?: never;
@@ -788,6 +836,15 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        WarpTransportStatus: {
+            /** @enum {string} */
+            transport: "usque" | "amneziawg";
+            available: boolean;
+            pending: boolean;
+            error?: string;
+            awg_installed?: boolean;
+            profile_configured?: boolean;
+        };
         SuggestPath: {
             /**
              * @description direct = the provider's path as it is (past nfqws2); desync = through nfqws2 (measured after acceptance); dns = the name didn't resolve
@@ -1171,6 +1228,8 @@ export interface components {
         PlaneDesired: {
             lists: components["schemas"]["PlaneList"][];
             on_down?: components["schemas"]["OnDown"];
+            /** @enum {string} */
+            readonly warp_transport?: "usque" | "amneziawg";
             /** @description nuxk owns nfqws2's hostlist (set by the first DPI list) */
             manage_desync?: boolean;
         };
@@ -1472,6 +1531,113 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    setWarpProfile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description WG or AWG configuration. Stored on the router without activating it. */
+                    config: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Profile validated and saved */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Ok"];
+                };
+            };
+        };
+    };
+    warpTransport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current WARP transport and the result of the last switch */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WarpTransportStatus"];
+                };
+            };
+        };
+    };
+    setWarpTransport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @enum {string} */
+                    transport: "usque" | "amneziawg";
+                };
+            };
+        };
+        responses: {
+            /** @description Switch accepted for background execution */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WarpTransportStatus"];
+                };
+            };
+        };
+    };
+    nfqwsFiles: {
+        parameters: {
+            query: {
+                section: "config" | "lists" | "scripts" | "interfaces";
+                name?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description File catalogue or content */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        name: string;
+                        group: string;
+                        read_only: boolean;
+                    }[] | {
+                        name: string;
+                        label: string;
+                        type: string;
+                    }[] | {
+                        text: string;
+                    };
+                };
+            };
+        };
+    };
     healthz: {
         parameters: {
             query?: never;

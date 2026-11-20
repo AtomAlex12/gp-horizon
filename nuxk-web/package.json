@@ -1,7 +1,7 @@
 {
   "name": "nuxk-web",
   "private": true,
-  "version": "0.5.1",
+  "version": "0.5.2-beta.2",
   "type": "module",
   "scripts": {
     "vendor": "node scripts/gp-ui.mjs",
@@ -9,10 +9,11 @@
     "build": "svelte-check --tsconfig ./tsconfig.json && vite build",
     "build:lite": "vite build --mode lite --outDir dist-lite",
     "preview": "vite preview",
+    "test:nfqws": "node --test tests/nfqws-config.test.mjs",
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "gen:api": "openapi-typescript ../nuxk-core/api/openapi.yaml -o src/lib/schema.d.ts",
-    "check:api": "npm run gen:api && npm run gen:gp && git diff --exit-code -- src/lib/schema.d.ts src/lib/gp-schema.d.ts",
-    "gen:gp": "openapi-typescript ../nuxk-controller/plugins/gp/openapi.json -o src/lib/gp-schema.d.ts"
+    "check:api": "npm run gen:api && npm run gen:gp && git diff --exit-code -- src/lib/schema.d.ts src/lib/gp-schema.d.ts src/lib/gp2-schema.d.ts",
+    "gen:gp": "openapi-typescript ../nuxk-controller/plugins/gp/openapi.json -o src/lib/gp-schema.d.ts && openapi-typescript ../nuxk-controller/plugins/gp/openapi-v2.json -o src/lib/gp2-schema.d.ts"
   },
   "devDependencies": {
     "@gp-plane/gp-ui": "file:vendor/gp-plane-gp-ui-0.1.0-s2a.1.tgz",

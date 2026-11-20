@@ -61,6 +61,7 @@ EOF
     echo "# release $v" >>"$REL/S52xray-nuxk" # which release's adapter is on the router
     cp "$TOP/engines/nuxk-smartdns/S53smartdns-nuxk" "$REL/"
     echo "# release $v" >>"$REL/S53smartdns-nuxk"
+    printf '#!/bin/sh\n# release %s\n' "$v" >"$REL/warp-awg-device"
     sed "s/^VERSION=\"@VERSION@\"/VERSION=\"$v\"/" "$LITE" >"$REL/nuxk-lite.sh"
     mkdir -p "$ROOT/web/assets" && echo "<!doctype html><title>nuxk $v</title>" >"$ROOT/web/index.html" && echo 1 >"$ROOT/web/assets/app.js"
     tar -C "$ROOT/web" -czf "$REL/nuxk-web-lite-$v.tar.gz" .
@@ -270,6 +271,8 @@ check "update: new xray adapter" "$(has "$(f /opt/etc/init.d/S52xray-nuxk)" '# r
 check "update: the old xray adapter kept" "$(has "$(f /opt/var/lib/nuxk/prev/S52xray-nuxk)" '# release 0.3.0')" "1"
 check "update: xray itself not downloaded again" "$(has "$ROOT/out" 'Xray-linux')" "0"
 check "update: new SmartDNS adapter" "$(has "$(f /opt/etc/init.d/S53smartdns-nuxk)" '# release 0.3.1')" "1"
+check "update: signed AWG driver installed" "$(has "$(f /opt/libexec/nuxk/warp-awg-device)" '# release 0.3.1')" "1"
+check "update: previous AWG driver kept" "$(has "$(f /opt/var/lib/nuxk/prev/warp-awg-device)" '# release 0.3.0')" "1"
 check "update: the old SmartDNS adapter kept" "$(has "$(f /opt/var/lib/nuxk/prev/S53smartdns-nuxk)" '# release 0.3.0')" "1"
 check "update: SmartDNS itself not downloaded again" "$(has "$ROOT/out" 'smartdns-x86_64')" "0"
 
@@ -299,6 +302,7 @@ check "rollback: old web" "$(has "$(f /opt/share/www/nuxk/index.html)" 'nuxk 0.3
 check "rollback: the command stays new" "$(has "$(f /opt/bin/nuxk)" 'VERSION="0.3.1"')" "1"
 check "rollback: old xray adapter" "$(has "$(f /opt/etc/init.d/S52xray-nuxk)" '# release 0.3.0')" "1"
 check "rollback: old SmartDNS adapter" "$(has "$(f /opt/etc/init.d/S53smartdns-nuxk)" '# release 0.3.0')" "1"
+check "rollback: previous AWG driver restored" "$(has "$(f /opt/libexec/nuxk/warp-awg-device)" '# release 0.3.0')" "1"
 check "rollback: nuxk DNS out of the DNS proxy first" "$(has "$ROOT/rci.log" '"parse":"no ip name-server 192.168.9.1:53053"')" "1"
 release 0.3.1
 nuxk update --yes || { cat "$ROOT/out"; exit 1; }

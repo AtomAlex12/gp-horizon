@@ -36,9 +36,12 @@ type GPClient struct {
 	// the browser leaving ends it
 	Stream *http.Client
 
-	mu      sync.Mutex
-	token   string
-	expires time.Time
+	v2             bool
+	mu             sync.Mutex
+	token          string
+	expires        time.Time
+	runtimeVersion string
+	runtimeSince   int64
 }
 
 // NewGPClient: base "" = the plugin's own listen address.
@@ -58,16 +61,20 @@ var gpStreams = map[string]bool{
 }
 
 type gpBearer struct {
-	Token     string `json:"access_token"`
-	ExpiresIn int    `json:"expires_in"`
+	Token     string    `json:"access_token"`
+	ExpiresIn int       `json:"expires_in"`
+	ExpiresAt time.Time `json:"expires_at"`
+	Bearer    string    `json:"bearer_token"`
 }
 
 // errGPAuth: GP took neither the stored password nor admin/admin.
+var errGPAPIVersion = errors.New("установленный Core не поддерживает API 2")
+
 var errGPAuth = errors.New("GP не принял пароль контроллера — сбросьте данные плагина GP (переустановка) или задайте пароль заново")
 
-func (g *GPClient) post(ctx context.Context, path, token string, body any, out any) (int, error) {
+func (g *GPClient) authRequest(ctx context.Context, method, path, token string, body any, out any) (int, error) {
 	b, _ := json.Marshal(body)
-	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, g.Base+path, bytes.NewReader(b))
+	req, _ := http.NewRequestWithContext(ctx, method, g.Base+path, bytes.NewReader(b))
 	req.Header.Set("Content-Type", "application/json")
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
@@ -88,7 +95,20 @@ func (g *GPClient) post(ctx context.Context, path, token string, body any, out a
 
 func (g *GPClient) login(ctx context.Context, password string) (gpBearer, int, error) {
 	var b gpBearer
-	code, err := g.post(ctx, "/api/auth/login", "", map[string]string{"username": gpUser, "password": password}, &b)
+	path := "/api/auth/login"
+	if g.v2 {
+		path = "/api/v2/access/authentication"
+	}
+	code, err := g.authRequest(ctx, http.MethodPost, path, "", map[string]string{"username": gpUser, "password": password}, &b)
+	if g.v2 && code == http.StatusNotFound && err == nil {
+		return b, code, errGPAPIVersion
+	}
+	if g.v2 && code == http.StatusOK && err == nil {
+		if b.Bearer == "" || !b.ExpiresAt.After(time.Now()) {
+			return b, code, errors.New("некорректный токен GP")
+		}
+		b.Token = b.Bearer
+	}
 	return b, code, err
 }
 
@@ -144,8 +164,14 @@ func (g *GPClient) Token(ctx context.Context) (string, error) {
 		}
 	}
 	var nb gpBearer
-	code, err = g.post(ctx, "/api/auth/change-password", b.Token, map[string]string{"current_password": "admin", "new_password": pw}, &nb)
-	if err != nil || code != http.StatusOK {
+	expected := http.StatusOK
+	if g.v2 {
+		expected = http.StatusNoContent
+		code, err = g.authRequest(ctx, http.MethodPut, "/api/v2/access/change_password", b.Token, map[string]string{"username": gpUser, "old_password": "admin", "new_password": pw}, nil)
+	} else {
+		code, err = g.authRequest(ctx, http.MethodPost, "/api/auth/change-password", b.Token, map[string]string{"current_password": "admin", "new_password": pw}, &nb)
+	}
+	if err != nil || code != expected {
 		return "", fmt.Errorf("GP: не удалось сменить заводской пароль (HTTP %d): %v", code, err)
 	}
 	if err := g.Store.SetPluginSecret("gp", pw); err != nil {
@@ -153,12 +179,21 @@ func (g *GPClient) Token(ctx context.Context) (string, error) {
 	} else {
 		slog.Info("gp: factory password replaced")
 	}
+	if g.v2 {
+		nb, code, err = g.login(ctx, pw)
+		if err != nil || code != http.StatusOK {
+			return "", fmt.Errorf("GP: повторный вход после смены пароля (HTTP %d): %v", code, err)
+		}
+	}
 	return g.keep(nb), nil
 }
 
 func (g *GPClient) keep(b gpBearer) string {
 	g.token = b.Token
-	g.expires = time.Now().Add(time.Duration(max(b.ExpiresIn, 60)) * time.Second)
+	g.expires = b.ExpiresAt
+	if !g.v2 {
+		g.expires = time.Now().Add(time.Duration(max(b.ExpiresIn, 60)) * time.Second)
+	}
 	return b.Token
 }
 
@@ -226,7 +261,11 @@ var gpReplyMax int64 = 64 << 20
 // for service/…).
 func (g *GPClient) handle(w http.ResponseWriter, r *http.Request) {
 	path := r.PathValue("path")
-	if !gpAllowed[r.Method+" "+path] {
+	allowed := gpAllowed[r.Method+" "+path]
+	if g.v2 {
+		allowed = gpV2Allowed(r.Method, path)
+	}
+	if !allowed {
 		writeErr(w, http.StatusNotFound, "not_allowed", "этот вызов GP недоступен из панели")
 		return
 	}
@@ -234,14 +273,22 @@ func (g *GPClient) handle(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(path, "service/") {
 		api = "/api/" + path
 	}
+	if g.v2 {
+		api = "/api/v2/" + path
+	}
 	limit, ctype := int64(gpBodyMax), "application/json"
-	if path == "backups/upload" {
+	if path == "backups/upload" || (g.v2 && path == "backup/restore-file") {
+		expectedType := "application/zip"
+		if g.v2 {
+			expectedType = "application/octet-stream"
+		}
+
 		// the archive as it is: GP takes application/zip
-		if ct := strings.TrimSpace(r.Header.Get("Content-Type")); ct != "application/zip" {
-			writeErr(w, http.StatusUnsupportedMediaType, "bad_type", "бэкап GP загружается как application/zip")
+		if ct := strings.TrimSpace(r.Header.Get("Content-Type")); ct != expectedType {
+			writeErr(w, http.StatusUnsupportedMediaType, "bad_type", "бэкап GP загружается как "+expectedType)
 			return
 		}
-		limit, ctype = gpUploadMax, "application/zip"
+		limit, ctype = gpUploadMax, expectedType
 	}
 	p, ok := g.Host.Get("gp")
 	if !ok || p.Phase != "running" {
@@ -251,6 +298,10 @@ func (g *GPClient) handle(w http.ResponseWriter, r *http.Request) {
 	g.mu.Lock()
 	if g.Base == "" {
 		g.Base = "http://" + p.Listen
+	}
+	if g.runtimeVersion != p.Version || g.runtimeSince != p.Since {
+		g.token = ""
+		g.runtimeVersion, g.runtimeSince = p.Version, p.Since
 	}
 	base := g.Base
 	g.mu.Unlock()
@@ -266,7 +317,11 @@ func (g *GPClient) handle(w http.ResponseWriter, r *http.Request) {
 	for attempt := 0; attempt < 2; attempt++ {
 		tok, err := g.Token(r.Context())
 		if err != nil {
-			writeErr(w, http.StatusBadGateway, "gp_auth", err.Error())
+			if errors.Is(err, errGPAPIVersion) {
+				writeErr(w, http.StatusNotFound, "gp_api_version", err.Error())
+			} else {
+				writeErr(w, http.StatusBadGateway, "gp_auth", err.Error())
+			}
 			return
 		}
 		u := base + api
@@ -279,7 +334,8 @@ func (g *GPClient) handle(w http.ResponseWriter, r *http.Request) {
 			req.Header.Set("Content-Type", ctype)
 		}
 		hc := g.HTTP
-		if gpStreams[path] && g.Stream != nil {
+		stream := path == "events" || (g.v2 && path == "search/events")
+		if (gpStreams[path] || stream || (g.v2 && (strings.HasSuffix(path, "/archive") || path == "backup/file" || path == "backup/restore-file"))) && g.Stream != nil {
 			hc = g.Stream
 		}
 		resp, err := hc.Do(req)
@@ -308,12 +364,12 @@ func (g *GPClient) handle(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.WriteHeader(resp.StatusCode)
 		var n int64
-		if path == "events" {
+		if stream {
 			n, err = copyFlushing(w, resp.Body)
 		} else {
 			n, err = io.Copy(w, io.LimitReader(resp.Body, gpReplyMax+1))
 		}
-		if err != nil || (path != "events" && n > gpReplyMax) {
+		if err != nil || (!stream && n > gpReplyMax) {
 			// the status is gone already: only breaking the connection tells
 			// the browser this answer isn't whole
 			slog.Warn("gp: answer cut short — connection to the browser broken", "path", path, "bytes", n, "err", err)

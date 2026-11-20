@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -444,4 +445,30 @@ func TestDesyncListUntouchedUntilADPIListExists(t *testing.T) {
 	if len(pushes) != 2 || !reflect.DeepEqual(pushes[1], []string{"cloudflareclient.com"}) {
 		t.Fatalf("after removing DPI: %v", pushes)
 	}
+}
+
+func TestForbiddenRCIResponseDoesNotExposeBody(t *testing.T) {
+	b := New("http://127.0.0.1:79")
+	b.HTTP.Transport = forbiddenTransport{}
+	_, readErr := b.Version(context.Background())
+	writeErr := b.Apply(context.Background(), plane.Op{
+		Kind: plane.OpDelRoute, Group: "nuxk-warp", Interface: "OpkgTun0",
+	})
+	for _, err := range []error{readErr, writeErr} {
+		if err == nil || !strings.Contains(err.Error(), "HTTP 403") ||
+			!strings.Contains(err.Error(), "права") || strings.Contains(err.Error(), "private-response") {
+			t.Fatalf("expected actionable and sanitized error, got %v", err)
+		}
+	}
+}
+
+type forbiddenTransport struct{}
+
+func (forbiddenTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	return &http.Response{
+		StatusCode: http.StatusForbidden,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader("private-response")),
+		Request:    r,
+	}, nil
 }

@@ -4,11 +4,14 @@
   // `nuxk warp|vless|dns|nfqws2 --yes` in the background, like an update: it
   // restarts the agent on the way, so a failed request while it runs is that
   // restart, not an error.
-  import { api, type Components } from './api';
-  import { pollNow } from './status.svelte';
+  import { api, type Components, type WarpTransportStatus } from './api';
+  import { pollNow, status } from './status.svelte';
   import { ago } from './ui';
 
+  let { go }: { go: (tab: string) => void } = $props();
   let c = $state<Components | null>(null);
+  let warp = $state<WarpTransportStatus | null>(null);
+  const warpEngine = $derived(status.data?.engines.find((engine) => engine.kind === 'usque'));
   let err = $state('');
   let busy = $state('');
   let restarting = $state(false);
@@ -27,7 +30,7 @@
 
   async function load() {
     try {
-      c = await api.components();
+      [c, warp] = await Promise.all([api.components(), api.warpTransport().catch(() => null)]);
       err = '';
       restarting = false;
       if (startedHere && c.run?.state !== 'running') {
@@ -100,6 +103,32 @@
       {#each c.items as it (it.id)}
         <div class="item">
           <div class="what">
+            {#if it.id === 'warp' && warp?.awg_installed !== undefined}
+              <div class="row">
+                <b>WARP</b>
+                <span class="spacer"></span>
+                <button type="button" class="ghost sm" onclick={() => go('usque')}>Настроить WARP →</button>
+              </div>
+              <div class="row warp-component">
+                <b>USQUE / MASQUE</b>
+                <span class="chip {it.installed ? 'ok' : ''}">{it.installed ? 'Установлен' : 'Не установлен'}</span>
+                {#if warp.transport === 'usque' && warpEngine?.running}<span class="chip acc">Активен</span>{/if}
+                <span class="spacer"></span>
+                {#if warp.transport === 'usque' && it.version}<span class="mono hint">{it.version}</span>{/if}
+              </div>
+              <div class="row warp-component">
+                <b>AmneziaWG</b>
+                <span class="chip {warp.awg_installed ? 'ok' : ''}">{warp.awg_installed ? 'Установлен' : 'Не установлен'}</span>
+                {#if warp.awg_installed}
+                  {#if warp.pending}<span class="chip acc">Переключение</span>
+                  {:else if warp.transport === 'amneziawg' && warpEngine?.running}<span class="chip acc">Активен</span>
+                  {:else if warp.error && warp.transport === 'usque'}<span class="chip warn">Ошибка переключения</span>
+                  {:else if warp.transport === 'usque'}<span class="chip">Резервный</span>
+                  {:else if warpEngine}<span class="chip">Остановлен</span>{/if}
+                  <span class="spacer"></span><span class="mono hint">awg0</span>
+                {/if}
+              </div>
+            {:else}
             <div class="row">
               <b>{it.name}</b>
               {#if it.installed && it.broken}<span class="chip warn">установлен, но не работает</span>
@@ -107,6 +136,7 @@
               {:else}<span class="chip">не установлен</span>{/if}
             </div>
             <p class="hint">{it.about}</p>
+            {/if}
             {#if it.broken}<p class="err-text">{it.broken}. Переустановка создаст его заново.</p>{/if}
             {#if (!it.installed || it.broken) && it.cannot && it.cannot !== common}<p class="hint">{it.cannot}</p>{/if}
           </div>
@@ -175,6 +205,11 @@
     display: flex;
     flex-direction: column;
     gap: 2px;
+  }
+  .warp-component {
+    margin-top: 4px;
+    padding: 7px 0 1px 12px;
+    border-top: 1px solid var(--line);
   }
   .run {
     display: flex;

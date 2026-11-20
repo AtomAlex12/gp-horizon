@@ -145,8 +145,9 @@ var (
 )
 
 type Service struct {
-	o  Options
-	st Store
+	o      Options
+	st     Store
+	scoped func([]byte) []byte
 
 	mu        sync.Mutex
 	set       Settings
@@ -430,6 +431,9 @@ func (s *Service) answer(q []byte) []byte {
 	if len(q) < headerLen || q[2]&0x80 != 0 {
 		return nil
 	}
+	if s.scoped != nil {
+		return s.scoped(q)
+	}
 	t0 := time.Now()
 	resp, src := s.reply(q)
 	s.rec.add(LogEntry{
@@ -600,6 +604,9 @@ func (s *Service) Log(match string, n int) []LogEntry {
 
 // order: the ways out to try, in turn — the chosen tunnel(s), then direct.
 func (s *Service) order() []Path {
+	if s.scoped != nil {
+		return s.o.Paths()
+	}
 	s.mu.Lock()
 	via := s.set.Via
 	s.mu.Unlock()

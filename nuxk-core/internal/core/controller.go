@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"nuxk.dev/horizon/core/internal/engine"
+	"nuxk.dev/horizon/core/internal/plane"
 	"nuxk.dev/horizon/core/internal/state"
 )
 
@@ -542,6 +543,7 @@ func (c *Controller) tick(ctx context.Context, doProbe bool) {
 		// tick waited on the engine: keep the newer one
 		if cur := c.last[k]; cur.ProbeAt > states[i].ProbeAt {
 			states[i].Probe, states[i].ProbeAt = cur.Probe, cur.ProbeAt
+			applyProbeHealth(&states[i], time.Now())
 		}
 		c.last[k] = states[i]
 	}
@@ -595,13 +597,30 @@ func (c *Controller) observe(ctx context.Context, k engine.Kind, doProbe bool) E
 			st.ProbeAt = time.Now().Unix()
 		}
 	}
-	if st.Health == engine.HealthOK && probeFailing(st, time.Now()) {
-		st.Health = engine.HealthDegraded
-	}
+	applyProbeHealth(&st, time.Now())
 	if d, err := c.Store.LoadDesired(k); err == nil {
 		st.WantRun = d.Run
 	}
 	return st
+}
+
+func applyProbeHealth(st *EngineState, now time.Time) {
+	if st.Running && st.Kind == engine.KindUsque && st.Detail["transport"] == plane.WarpAWG {
+		st.Health = engine.HealthUnknown
+		if st.Probe == nil || st.Probe.Detail["transport"] != plane.WarpAWG ||
+			st.UptimeSec <= 0 || st.ProbeAt < now.Unix()-st.UptimeSec {
+			return
+		}
+		if st.Probe.OK {
+			st.Health = engine.HealthOK
+		} else {
+			st.Health = engine.HealthDegraded
+		}
+		return
+	}
+	if st.Health == engine.HealthOK && probeFailing(*st, now) {
+		st.Health = engine.HealthDegraded
+	}
 }
 
 // probeFailing: the engine runs, but its last probe — taken since this run

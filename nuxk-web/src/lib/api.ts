@@ -158,13 +158,25 @@ export async function req<T>(method: string, path: string, body?: unknown): Prom
 
 const v1 = (p: string) => `/api/v1${p}`;
 
+export type WarpTransportStatus = S['WarpTransportStatus'];
+
 export const api = {
+  nfqwsFiles: (section: 'config' | 'lists' | 'scripts') =>
+    req<{ name: string; group: string; read_only: boolean }[]>('GET', v1('/nfqws2/files?section=' + section)),
+  nfqwsFile: (section: 'config' | 'lists' | 'scripts', name: string) =>
+    req<{ text: string }>('GET', v1('/nfqws2/files?' + new URLSearchParams({ section, name }))),
+  nfqwsInterfaces: () =>
+    req<{ name: string; label: string; type: string }[]>('GET', v1('/nfqws2/files?section=interfaces')),
   status: () => req<Status>('GET', v1('/status')),
   info: () => req<NodeInfo>('GET', v1('/info')),
   metrics: () => req<Metrics>('GET', v1('/metrics')),
   logs: (after = 0) => req<LogEntry[]>('GET', v1(`/logs?after=${after}&limit=2000`)),
   logsDebug: () => req<LogDebug>('GET', v1('/logs/debug')),
   setLogsDebug: (on: boolean, minutes = 30) => req<LogDebug>('PUT', v1('/logs/debug'), { on, minutes }),
+  warpTransport: () => req<WarpTransportStatus>('GET', v1('/warp/transport')),
+  setWarpProfile: (config: string) => req<S['Ok']>('PUT', v1('/warp/profile'), { config }),
+  setWarpTransport: (transport: WarpTransportStatus['transport']) =>
+    req<WarpTransportStatus>('PUT', v1('/warp/transport'), { transport }),
 
   engineAction: (k: EngineKind, action: 'start' | 'stop' | 'restart') =>
     req<S['Ok']>('POST', v1(`/engines/${k}/${action}`)),

@@ -29,12 +29,15 @@ import (
 	"nuxk.dev/horizon/core/internal/core"
 	"nuxk.dev/horizon/core/internal/dns"
 	"nuxk.dev/horizon/core/internal/engine"
+	"nuxk.dev/horizon/core/internal/engine/amneziawg"
 	"nuxk.dev/horizon/core/internal/engine/nfqws2"
 	"nuxk.dev/horizon/core/internal/engine/usque"
+	"nuxk.dev/horizon/core/internal/engine/warp"
 	"nuxk.dev/horizon/core/internal/engine/xray"
 	"nuxk.dev/horizon/core/internal/logbuf"
 	"nuxk.dev/horizon/core/internal/node"
 	"nuxk.dev/horizon/core/internal/plane"
+	"nuxk.dev/horizon/core/internal/plane/entware"
 	"nuxk.dev/horizon/core/internal/plane/keenetic"
 	"nuxk.dev/horizon/core/internal/probe"
 	"nuxk.dev/horizon/core/internal/release"
@@ -126,12 +129,32 @@ func main() {
 	// missing scripts every 5s and show two permanently "unknown" cards.
 	//   MVP-1: usque   MVP-2: + nfqws2   MVP-3: + xray
 	reg := engine.NewRegistry()
+	var warpMux *warp.Mux
+	var planeIntent plane.Desired
+	if err := st.LoadJSON("plane", &planeIntent); err != nil {
+		slog.Warn("warp: не удалось прочитать состояние маршрутизации", "err", err)
+	}
+	if cfg.Engines.Usque != "" && (cfg.WarpAWGAddr != "" || planeIntent.WarpTransport == plane.WarpAWG) {
+		if _, err := os.Stat(cfg.Engines.Usque); err == nil {
+			var awg engine.Engine
+			if fi, err := os.Stat(cfg.WarpAWGDriver); err == nil && fi.Mode().IsRegular() &&
+				cfg.Plane.Backend == "keenetic" && cfg.Plane.Apply && cfg.WarpAWGAddr != "" {
+				awg = amneziawg.New(cfg.WarpAWGDriver, filepath.Join(cfg.StateDir, "warp-awg.conf"))
+			}
+			warpMux = warp.New(usque.New(cfg.Engines.Usque), awg, planeIntent.WarpTransport)
+		}
+	}
 	for _, w := range []struct {
 		kind   engine.Kind
 		script string
 		mk     func(string) engine.Engine
 	}{
-		{engine.KindUsque, cfg.Engines.Usque, func(s string) engine.Engine { return usque.New(s) }},
+		{engine.KindUsque, cfg.Engines.Usque, func(s string) engine.Engine {
+			if warpMux != nil {
+				return warpMux
+			}
+			return usque.New(s)
+		}},
 		{engine.KindNfqws2, cfg.Engines.Nfqws2, func(s string) engine.Engine { return nfqws2.New(s) }},
 		{engine.KindXray, cfg.Engines.Xray, func(s string) engine.Engine { return xray.New(s, strings.ToLower(cfg.Plane.IfaceVless)) }},
 	} {
@@ -176,7 +199,12 @@ func main() {
 				return ctl.Apply(ctx, engine.KindNfqws2, engine.Routing{Domains: append([]string{}, doms...)})
 			}
 		}
-		pm = plane.NewManager(keenetic.New(cfg.Plane.RCI), st, pc)
+		router := keenetic.New(cfg.Plane.RCI)
+		pm = plane.NewManager(router, st, pc)
+		if warpMux != nil && warpMux.Status().Available {
+			pm.AWG = &entware.Routing{Addr: cfg.WarpAWGAddr, RouterDNS: cfg.DNSRouterAddr(),
+				Script: engine.Exec{Script: cfg.WarpAWGDriver}, RCI: router, Store: st}
+		}
 		ctl.PlaneStatus = func() any { return pm.Status() }
 		// nfqws2's probe skips what goes into a tunnel: the person's own
 		// routed lists (e.g. «Meta» → Wireguard1) and nuxk's WARP/VLESS
@@ -195,12 +223,32 @@ func main() {
 			return doms
 		}
 		slog.Info("routing plane", "backend", "keenetic", "apply", cfg.Plane.Apply, "v6deny", cfg.Plane.V6Deny)
-		go pm.Run(ctx)
 	default:
 		slog.Error("unknown PLANE backend", "plane", cfg.Plane.Backend)
 		os.Exit(1)
 	}
-	go ctl.Run(ctx)
+	go func() {
+		if warpMux != nil {
+			boot, cancel := context.WithTimeout(ctx, 25*time.Second)
+			if err := warpMux.Recover(boot); err != nil {
+				slog.Warn("warp: не удалось остановить невыбранный транспорт", "err", err)
+			}
+			if warpMux.Status().Transport == plane.WarpAWG {
+				intent, err := st.LoadDesired(engine.KindUsque)
+				if err == nil && (intent.Run == nil || *intent.Run) {
+					err = ctl.Action(boot, engine.KindUsque, "start")
+				}
+				if err != nil {
+					slog.Warn("warp: не удалось восстановить AmneziaWG", "err", err)
+				}
+			}
+			cancel()
+		}
+		if pm != nil {
+			go pm.Run(ctx)
+		}
+		ctl.Run(ctx)
+	}()
 
 	// browser logins; an update from the panel hands them to the next agent
 	// (sessions.handoff), so the person who pressed the button stays logged in
@@ -275,19 +323,24 @@ func main() {
 	if pm != nil {
 		rt = pm
 	}
-	sg := suggest.New(&probe.Prober{Ifaces: map[probe.Via]string{
+	prober := &probe.Prober{Ifaces: map[probe.Via]string{
 		probe.ViaVless: strings.ToLower(cfg.Plane.IfaceVless), probe.ViaWarp: strings.ToLower(cfg.Plane.IfaceWarp),
-	}}, st, rt, func() bool { _, ok := reg.Get(engine.KindNfqws2); return ok })
+	}}
+	if warpMux != nil {
+		prober.WarpIface = func() string { return warpMux.KernelInterface(strings.ToLower(cfg.Plane.IfaceWarp)) }
+	}
+	sg := suggest.New(prober, st, rt, func() bool { _, ok := reg.Get(engine.KindNfqws2); return ok })
 	sg.DNS = dnsSvc
 	go sg.Run(ctx)
 
 	srv := &http.Server{
 		Addr: cfg.Listen,
 		Handler: api.NewRouter(api.Deps{
-			Version: version, Commit: commit, Engines: reg, Hub: hub, Ctl: ctl, Plane: pm, Suggest: sg,
+			Keenetic: keenetic.New(cfg.Plane.RCI),
+			Version:  version, Commit: commit, Engines: reg, Hub: hub, Ctl: ctl, Plane: pm, Suggest: sg,
 			WebRoot: cfg.WebRoot, Token: cfg.APIToken, Auth: guard, Logs: logs, Debug: dbg,
 			Node:   nd,
-			Update: upd, DNS: dnsSvc,
+			Update: upd, DNS: dnsSvc, Warp: warpMux, Life: ctx,
 		}),
 		ReadHeaderTimeout: 5 * time.Second,
 		WriteTimeout:      30 * time.Second,
@@ -331,6 +384,9 @@ func presence(id string, snap core.Snapshot, d *dns.Service, pm *plane.Manager, 
 			return update.Presence{}
 		}
 		p := update.Presence{Installed: true, Version: snap.Engines[i].Version}
+		if id == "warp" && snap.Engines[i].Detail["transport"] == plane.WarpAWG {
+			return p
+		}
 		if want := ifaces[id]; want != "" && pm != nil {
 			if exists, known := pm.Interface(want); known && !exists {
 				p.Broken = "интерфейса " + want + " в Keenetic нет — туннель не работает"

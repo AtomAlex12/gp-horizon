@@ -24,9 +24,16 @@ ref="refs/tags/$V"
 if [ ${#V} -eq 40 ] && ! printf %s "$V" | grep -q '[^0-9a-f]'; then
     ref="$V" # a commit: a test build, not a release
 fi
-get gp.tar.gz "https://github.com/balbomush/GP-plane/archive/$ref.tar.gz"
+if [ "$V" = v0.5.0-alpha.4 ] || [ "$V" = 8748e6c39248ddda5ee8ce7f32d3b5049f2432b8 ]; then
+    get gp.tar.gz "https://github.com/balbomush/GP-plane/releases/download/v0.5.0-alpha.4/core-8748e6c39248ddda5ee8ce7f32d3b5049f2432b8.tar.gz"
+    printf '%s\n' '78c089bd1071fab245ffef101113cf89454f877e72bb49cc2f95270724fd1f84  gp.tar.gz' | sha256sum -c -
+    strip=0
+else
+    get gp.tar.gz "https://github.com/balbomush/GP-plane/archive/$ref.tar.gz"
+    strip=1
+fi
 mkdir gp
-tar -xzf gp.tar.gz -C gp --strip-components=1
+tar -xzf gp.tar.gz -C gp --strip-components="$strip"
 rm gp.tar.gz
 [ -f gp/src/gp_control_plane/cli.py ] || { echo "в $V нет ядра GP (src/gp_control_plane)" >&2; exit 1; }
 [ -f gp/scripts/gp-root-helper.sh ] || { echo "в $V нет scripts/gp-root-helper.sh" >&2; exit 1; }
@@ -50,6 +57,16 @@ rm -f "zapret2-$Z.tar.gz" sha256sum.txt
 zapret2/nfq2/nfqws2 --version 2>/dev/null | head -n 1 || true
 
 install -m 0755 gp/scripts/gp-root-helper.sh gp-root-helper
+if [ "$V" = v0.5.0-alpha.4 ] || [ "$V" = 8748e6c39248ddda5ee8ce7f32d3b5049f2432b8 ]; then
+    # Stock executes its generated runner. The controller's /tmp is noexec.
+    sed -i 's@mktemp -d /tmp/gp-api2-stock\.XXXXXX@mktemp -d "${TMPDIR:-/tmp}/gp-api2-stock.XXXXXX"@' gp-root-helper
+    grep -Fq 'mktemp -d "${TMPDIR:-/tmp}/gp-api2-stock.XXXXXX"' gp-root-helper
+fi
+
+state=state
+if [ "$V" = v0.5.0-alpha.4 ] || [ "$V" = 8748e6c39248ddda5ee8ce7f32d3b5049f2432b8 ]; then
+    state=state-api2
+fi
 
 say "bin/run"
 mkdir -p bin
@@ -59,8 +76,18 @@ cat >bin/run <<EOF
 # supervisor with PLUGIN_DIR / PLUGIN_DATA set and only the plugin's caps.
 set -eu
 D="\$PLUGIN_DIR"
-mkdir -p "\$PLUGIN_DATA/state"
-export GP_INSTALL_DIR="\$D/gp" GP_STATE_DIR="\$PLUGIN_DATA/state" GP_INSTALL_WEB=off GP_INSTALLED_REF="$V" \\
+state="\$PLUGIN_DATA/$state"
+if [ "$state" = state-api2 ] && [ ! -d "\$state" ]; then
+    staging=\$(mktemp -d "\$PLUGIN_DATA/.state-api2.XXXXXX")
+    trap 'rm -rf "\$staging"' 0
+    if [ -d "\$PLUGIN_DATA/state" ]; then
+        cp -a "\$PLUGIN_DATA/state/." "\$staging/"
+    fi
+    mv "\$staging" "\$state"
+    trap - 0
+fi
+mkdir -p "\$state"
+export GP_INSTALL_DIR="\$D/gp" GP_STATE_DIR="\$state" GP_INSTALL_WEB=off GP_INSTALLED_REF="$V" \\
   ZAPRET_DIR="\$D/zapret2" GP_ROOT_HELPER="\$D/gp-root-helper" GP_BLOCKCHECK2D="\$D/zapret2/blockcheck2.d" \\
   PYTHONPATH="\$D/gp/src" PATH="\$D/zapret2:\$D/zapret2/nfq2:\$D/venv/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 exec "\$D/venv/bin/python" -c 'import sys; from gp_control_plane.cli import main; sys.exit(main(sys.argv[1:]))' core --host 127.0.0.1 --port 8081

@@ -106,6 +106,16 @@ func TestHistoryRates(t *testing.T) {
 	}
 }
 
+func TestHistoryTracksAWG(t *testing.T) {
+	h := NewHistory(3)
+	h.Add(metrics{TS: 1000, Ifaces: map[string]iface{"awg0": {Rx: 100, Tx: 200}}})
+	h.Add(metrics{TS: 2000, Ifaces: map[string]iface{"awg0": {Rx: 125, Tx: 250}}})
+	awg := h.Series().Tunnels["awg0"]
+	if len(awg["rx_bps"]) != 1 || awg["rx_bps"][0] != 200 || awg["tx_bps"][0] != 400 {
+		t.Fatalf("AWG rates = %v", awg)
+	}
+}
+
 // client is a browser: a cookie jar and this page's Origin on every request.
 type client struct {
 	t   *testing.T
