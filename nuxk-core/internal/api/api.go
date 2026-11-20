@@ -18,6 +18,7 @@ import (
 	"nuxk.dev/horizon/core/internal/core"
 	"nuxk.dev/horizon/core/internal/dns"
 	"nuxk.dev/horizon/core/internal/engine"
+	"nuxk.dev/horizon/core/internal/engine/warp"
 	"nuxk.dev/horizon/core/internal/logbuf"
 	"nuxk.dev/horizon/core/internal/node"
 	"nuxk.dev/horizon/core/internal/plane"
@@ -43,6 +44,8 @@ type Deps struct {
 	Debug    *logbuf.Debug    // /logs/debug: debug entries in Logs for a while; nil = off
 	Update   *update.Updater  // /update: new releases, the router updated from the panel; nil = off
 	DNS      *dns.Service     // /dns: protected DNS through the tunnels; nil = off
+	Warp     *warp.Mux
+	Life     context.Context
 }
 
 // Route is one API endpoint. Routes is the single list the mux is built from
@@ -72,6 +75,8 @@ var Routes = []Route{
 	{"PUT /api/v1/logs/debug", false, func(d Deps) http.HandlerFunc { return d.handleSetLogsDebug }},
 	{"GET /api/v1/events", false, func(d Deps) http.HandlerFunc { return d.handleEvents }},
 	{"GET /api/v1/engines", false, func(d Deps) http.HandlerFunc { return d.handleEngines }},
+	{"GET /api/v1/warp/transport", false, func(d Deps) http.HandlerFunc { return d.handleWarpTransport }},
+	{"PUT /api/v1/warp/transport", false, func(d Deps) http.HandlerFunc { return d.handleSetWarpTransport }},
 	{"GET /api/v1/engines/{kind}", false, func(d Deps) http.HandlerFunc { return d.handleEngine }},
 	{"POST /api/v1/engines/{kind}/{action}", false, func(d Deps) http.HandlerFunc { return d.handleEngineAction }},
 	{"PUT /api/v1/engines/{kind}/config", false, func(d Deps) http.HandlerFunc { return d.handleEngineConfig }},
@@ -457,6 +462,9 @@ func (d Deps) handlePlaneSetLists(w http.ResponseWriter, r *http.Request) {
 		code := http.StatusInternalServerError
 		if errors.Is(err, plane.ErrBadList) || errors.Is(err, plane.ErrBadOnDown) {
 			code = http.StatusBadRequest
+		}
+		if errors.Is(err, plane.ErrAWGBlockUnsupported) {
+			code = http.StatusConflict
 		}
 		writeErr(w, code, "bad_list", err.Error())
 		return

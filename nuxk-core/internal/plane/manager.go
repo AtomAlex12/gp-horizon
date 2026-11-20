@@ -62,6 +62,7 @@ type Manager struct {
 	B     Backend
 	Store Store
 	Cfg   Config
+	AWG   WarpRouting // optional Linux data plane for the same WARP group
 
 	kick   chan struct{}
 	edit   sync.Mutex // serializes every desired-list update
@@ -109,6 +110,7 @@ func (m *Manager) Desired() (Desired, error) {
 var ErrBadList = errors.New("list needs a name, mode desync|warp|vless and at least one domain")
 
 var ErrBadOnDown = errors.New("on_down must be direct or block")
+var ErrAWGBlockUnsupported = errors.New("AmneziaWG пока не поддерживает режим блокировки при падении: требуется проверка клиентского DNS-кеша на Keenetic")
 
 // SetDesired replaces the desired lists and reconciles right away.
 func (m *Manager) SetDesired(d Desired) error {
@@ -138,8 +140,14 @@ func (m *Manager) setDesiredLocked(d Desired) error {
 			d.ManageDesync = true
 		}
 	}
-	if prev, err := m.Desired(); err == nil && prev.ManageDesync {
-		d.ManageDesync = true
+	prev, err := m.Desired()
+	if err != nil {
+		return err
+	}
+	d.ManageDesync = d.ManageDesync || prev.ManageDesync
+	d.WarpTransport = prev.WarpTransport
+	if d.WarpTransport == WarpAWG && d.OnDown == OnDownBlock {
+		return ErrAWGBlockUnsupported
 	}
 	if err := m.Store.SaveJSON(stateName, d); err != nil {
 		return err
@@ -364,13 +372,21 @@ func (m *Manager) Reconcile(ctx context.Context) {
 		st.Desync = []string{}
 	}
 	want := Build(d, m.Cfg.Ifaces)
+	unavailableAWG := d.WarpTransport == WarpAWG && m.AWG == nil
+	if d.WarpTransport == WarpAWG {
+		want = withAWG(want)
+		if unavailableAWG {
+			st.Warnings = append(st.Warnings, "выбран AmneziaWG, но маршрутизация Entware недоступна")
+		}
+		st.Ifaces = map[Mode]string{ModeWarp: AWGDevice, ModeVless: m.Cfg.Ifaces[ModeVless]}
+	}
 	st.Warnings = append(st.Warnings, InfraWarnings(d)...)
 	if obs.Interfaces != nil {
 		// a route to a missing interface fails the whole pass: skip that mode
 		// (its tunnel isn't installed yet) and say so
 		kept := want[:0]
 		for _, g := range want {
-			if obs.Interfaces[g.Interface] {
+			if g.Interface == AWGDevice || obs.Interfaces[g.Interface] {
 				kept = append(kept, g)
 			} else {
 				st.Warnings = append(st.Warnings, "интерфейс "+g.Interface+" для режима "+string(g.Mode)+" не найден на роутере — список пока не применяется")
@@ -397,7 +413,17 @@ func (m *Manager) Reconcile(ctx context.Context) {
 			slog.Info("plane: desync list pushed to nfqws2", "domains", len(st.Desync))
 		}
 	}
+	var awgErr error
+	if d.WarpTransport == WarpAWG && m.AWG != nil {
+		awgErr = m.AWG.Set(ctx, warpNames(want, conflicts), d.OnDown == OnDownBlock)
+	}
 	for i, op := range ops {
+		if op.Group == warpGroup && (unavailableAWG || awgErr != nil) {
+			continue
+		}
+		if op.Kind == OpAddRoute && op.Group == warpGroup && op.Interface == AWGDevice {
+			continue // installed separately in Entware
+		}
 		if err := m.B.Apply(ctx, op); err != nil {
 			st.Pending = pendingOnly(ops[i:])
 			fail(err)
@@ -405,6 +431,16 @@ func (m *Manager) Reconcile(ctx context.Context) {
 		}
 		if op.Kind != OpEnsureV6Deny {
 			slog.Info("plane: applied", "op", op.Kind, "group", op.Group, "iface", op.Interface, "domains", len(op.Domains))
+		}
+	}
+	if awgErr != nil {
+		fail(awgErr)
+		return
+	}
+	if m.AWG != nil && d.WarpTransport != WarpAWG {
+		if err := m.AWG.Set(ctx, nil, false); err != nil {
+			fail(err)
+			return
 		}
 	}
 	if Changes(ops) > 0 {

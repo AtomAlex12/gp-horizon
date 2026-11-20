@@ -42,7 +42,7 @@ func readResponse(in io.Reader, req *http.Request) (*http.Response, error) {
 // cut short says nothing and comes back Skipped: one good try out of one is
 // not "opens".
 func (p *Prober) Way(ctx context.Context, domain string, ip net.IP, via Via) Result {
-	r := Result{Via: via, Iface: p.Ifaces[via]}
+	r := Result{Via: via, Iface: p.iface(via)}
 	if why := p.unavailable(via); why != "" {
 		r.Skipped = why
 		return r

@@ -40,6 +40,34 @@ tags:
   - { name: suggest, description: "route suggestions: probe a domain, say why it doesn't open and which way out works" }
 
 paths:
+  /api/v1/warp/transport:
+    get:
+      tags: [engines]
+      operationId: warpTransport
+      responses:
+        "200":
+          description: Current WARP transport and the result of the last switch
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WarpTransportStatus" }
+    put:
+      tags: [engines]
+      operationId: setWarpTransport
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [transport]
+              properties:
+                transport: { type: string, enum: [usque, amneziawg] }
+      responses:
+        "202":
+          description: Switch accepted for background execution
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/WarpTransportStatus" }
   /api/v1/nfqws2/files:
     get:
       tags: [agent]
@@ -918,6 +946,14 @@ components:
           schema: { $ref: "#/components/schemas/Error" }
 
   schemas:
+    WarpTransportStatus:
+      type: object
+      required: [transport, available, pending]
+      properties:
+        transport: { type: string, enum: [usque, amneziawg] }
+        available: { type: boolean }
+        pending: { type: boolean }
+        error: { type: string }
     SuggestPath:
       type: object
       required: [via, result, tries, opened, acceptable]
@@ -1344,6 +1380,7 @@ components:
       properties:
         lists: { type: array, items: { $ref: "#/components/schemas/PlaneList" } }
         on_down: { $ref: "#/components/schemas/OnDown" }
+        warp_transport: { type: string, enum: [usque, amneziawg], readOnly: true }
         manage_desync: { type: boolean, description: nuxk owns nfqws2's hostlist (set by the first DPI list) }
 
     PlaneGroup:

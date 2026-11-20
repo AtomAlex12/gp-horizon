@@ -32,6 +32,8 @@ web-check:
 
 # the router side: engine adapters and the lite installer, on a fake router
 install-check:
+	sh -n engines/nuxk-amneziawg/warp-awg-device
+	sh engines/nuxk-amneziawg/shim_test.sh
 	sh engines/nuxk-nfqws2/shim_test.sh
 	sh engines/nuxk-xray/shim_test.sh
 	sh engines/nuxk-smartdns/shim_test.sh
@@ -49,6 +51,7 @@ release: version-check
 	cp nuxk-core/dist/nuxk-core-* $(OUT)/
 	# router files next to the agent: its init script and the engine adapters
 	cp nuxk-core/fs/opt/etc/init.d/S99nuxk-core engines/nuxk-nfqws2/S51nfqws2-nuxk engines/nuxk-xray/S52xray-nuxk engines/nuxk-smartdns/S53smartdns-nuxk $(OUT)/
+	cp engines/nuxk-amneziawg/warp-awg-device $(OUT)/
 	# the installers, stamped with this release (they download from it)
 	for s in nuxk-lite nuxk-full; do \
 	  sed 's/^VERSION="@VERSION@"/VERSION="$(VERSION)"/' install/$$s.sh > $(OUT)/$$s.sh || exit 1; \

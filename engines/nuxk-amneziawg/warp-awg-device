@@ -1,0 +1,240 @@
+#!/bin/sh
+# Invoked by nuxk-core. There is no independent Entware boot service.
+set -u
+umask 077
+
+iface=awg0
+rundir=/opt/var/run/nuxk-warp-awg
+pidfile=$rundir/pid
+table=28277
+priority=28277
+
+die() {
+    printf '%s\n' "$*" >&2
+    exit 1
+}
+
+owned() {
+    [ -r "$pidfile" ] || return 1
+    read -r pid < "$pidfile" || return 1
+    case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+    target=$(readlink "/proc/$pid/exe") || return 1
+    [ "$target" = "$(readlink -f "$(command -v amneziawg-go)")" ] || return 1
+    [ "$(tr '\000' ' ' < "/proc/$pid/cmdline")" = "$(command -v amneziawg-go) -f $iface " ]
+}
+
+link_exists() {
+    ip link show dev "$iface" >/dev/null 2>&1
+}
+
+remove_probe_route() {
+    if ip -4 rule show | awk -v p="$priority:" -v d="$iface" -v t="$table" '
+        $1 == p && $0 ~ (" oif " d " ") && $0 ~ (" lookup " t "$") { found=1 }
+        END { exit !found }
+    '; then
+        ip -4 rule del pref "$priority" oif "$iface" table "$table" || return 1
+    fi
+    if ip -4 route show table "$table" 2>/dev/null | grep -q "^default dev $iface "; then
+        ip -4 route del default dev "$iface" table "$table" || return 1
+    fi
+}
+
+stop() {
+    if owned; then
+        kill "$pid" 2>/dev/null || return 1
+        n=0
+        while owned && [ "$n" -lt 4 ]; do
+            sleep 1
+            n=$((n + 1))
+        done
+        ! owned || return 1
+    fi
+    if link_exists; then
+        # Ownership is established through the daemon before stopping. A
+        # TUN device must disappear when its file descriptor is closed.
+        return 1
+    fi
+    if [ -e "$pidfile" ]; then
+        remove_probe_route || return 1
+        rm -f "$pidfile"
+    fi
+}
+
+check() {
+    for tool in amneziawg-go awg ip curl; do
+        command -v "$tool" >/dev/null || die "AmneziaWG: нет утилиты $tool"
+    done
+    [ -c /dev/net/tun ] || die "AmneziaWG: недоступно устройство /dev/net/tun"
+    if link_exists && ! owned; then
+        die "AmneziaWG: awg0 занят другим процессом"
+    fi
+}
+
+start() {
+    check
+    if owned && link_exists; then
+        return 0
+    fi
+    stop || die "AmneziaWG: не удалось очистить прежнее состояние"
+    if ip -4 rule show | grep -q "^$priority:"; then
+        die "AmneziaWG: занят приоритет таблицы проб"
+    fi
+    if [ -n "$(ip -4 route show table "$table" 2>/dev/null)" ]; then
+        die "AmneziaWG: занята таблица проб"
+    fi
+    read -r address mtu || return 1
+    mkdir -p "$rundir" || return 1
+    daemon=$(command -v amneziawg-go)
+    LOG_LEVEL=silent "$daemon" -f "$iface" </dev/null >/dev/null 2>&1 &
+    child=$!
+    if ! printf '%s\n' "$child" > "$pidfile"; then
+        kill "$child" 2>/dev/null
+        return 1
+    fi
+    n=0
+    until link_exists && awg show "$iface" public-key >/dev/null 2>&1; do
+        n=$((n + 1))
+        if [ "$n" -ge 5 ] || ! kill -0 "$child" 2>/dev/null; then
+            stop
+            return 1
+        fi
+        sleep 1
+    done
+    # Feed the config directly from stdin and discard errors that quote it.
+    if ! awg setconf "$iface" /dev/stdin >/dev/null 2>&1 ||
+        ! ip -4 address add "$address" dev "$iface" ||
+        ! ip link set dev "$iface" mtu "$mtu" up ||
+        ! ip -4 route add default dev "$iface" table "$table" ||
+        ! ip -4 rule add pref "$priority" oif "$iface" table "$table"; then
+        stop
+        return 1
+    fi
+}
+
+info() {
+    if owned && link_exists; then
+        printf 'service.running 1\nservice.pid %s\n' "$pid"
+        for counter in rx_bytes tx_bytes; do
+            read -r value < "/sys/class/net/$iface/statistics/$counter" || value=0
+            printf 'traffic.%s %s\n' "$counter" "$value"
+        done
+        awg show "$iface" endpoints 2>/dev/null |
+            awk '$2 != "(none)" { print "tunnel.endpoint " $2; exit }'
+    else
+        printf 'service.running 0\n'
+    fi
+}
+
+probe() {
+    printf 'ok 0\n'
+    owned && link_exists || return 0
+    trace=$(
+        curl -4 -fsS --noproxy '*' --interface "$iface" --max-time 8 \
+            --resolve one.one.one.one:443:1.1.1.1 \
+            https://one.one.one.one/cdn-cgi/trace 2>/dev/null
+    ) || return 0
+    printf '%s\n' "$trace" | awk -F= '$1=="ip" || $1=="warp" || $1=="colo" { print $1 " " $2 }'
+    printf 'ok 1\n'
+}
+
+route_table=28278
+route_priority=28278
+route_mark=0x3a4e0000
+route_set=NUXK_WARP_AWG4
+
+route_check() {
+    for tool in ip ipset iptables; do
+        command -v "$tool" >/dev/null || die "Маршрутизация WARP: нет утилиты $tool"
+    done
+    rules=$(ip -4 rule show) || return 1
+    if printf '%s\n' "$rules" | awk -v p="$route_priority:" -v m="$route_mark" -v t="$route_table" '
+        $1 == p && !($0 ~ (" fwmark " m "( |/0xffffffff )") && $0 ~ (" lookup " t "$")) { conflict=1 }
+        END { exit !conflict }
+    '; then
+        die "Маршрутизация WARP: занят приоритет таблицы"
+    fi
+    routes=$(ip -4 route show table "$route_table" 2>/dev/null)
+    if printf '%s\n' "$routes" | grep -Evq "^(|default dev $iface( .*)?|blackhole default( .*)?)$"; then
+        die "Маршрутизация WARP: занята таблица"
+    fi
+}
+
+rule_match() {
+    iptables -w -t mangle "$1" PREROUTING -m set --match-set "$route_set" dst \
+        -m mark --mark "$2/0xffffffff" -m addrtype ! --dst-type LOCAL ! -i "$iface" \
+        -j MARK --set-xmark "$route_mark/0xffffffff"
+}
+
+rule_nat() {
+    iptables -w -t nat "$1" POSTROUTING -m mark --mark "$route_mark/0xffffffff" \
+        -o "$iface" -j MASQUERADE
+}
+
+route_enable() {
+    read -r policy || return 1
+    route_check || return 1
+    case "$policy" in
+        block)
+            ip -4 route replace blackhole default metric 32767 table "$route_table" || return 1
+            ;;
+        direct)
+            if ip -4 route show table "$route_table" 2>/dev/null | grep -q '^blackhole default'; then
+                ip -4 route del blackhole default metric 32767 table "$route_table" || return 1
+            fi
+            ;;
+        *) return 1 ;;
+    esac
+    ipset create "$route_set" hash:ip family inet timeout 86400 maxelem 16384 -exist || return 1
+    if link_exists; then
+        owned || return 1
+        ip -4 route replace default dev "$iface" metric 10 table "$route_table" || return 1
+    fi
+    if ! ip -4 rule show | grep -q "^$route_priority:"; then
+        ip -4 rule add pref "$route_priority" fwmark "$route_mark/0xffffffff" table "$route_table" || return 1
+    fi
+    rule_nat -C 2>/dev/null || rule_nat -A || return 1
+    # Apply only to unmarked traffic and the standard Keenetic LAN policy.
+    # Preserve marks already assigned by DNS routes and other policies.
+    for mark in 0x0 0xffffaaa; do
+        rule_match -C "$mark" 2>/dev/null || rule_match -A "$mark" || return 1
+    done
+    if link_exists; then
+        ip -4 route get 198.51.100.1 mark "$route_mark" | grep -q " dev $iface " || return 1
+    fi
+}
+
+route_disable() {
+    route_check || return 1
+    for mark in 0x0 0xffffaaa; do
+        if rule_match -C "$mark" 2>/dev/null; then
+            rule_match -D "$mark" || return 1
+        fi
+    done
+    if rule_nat -C 2>/dev/null; then
+        rule_nat -D || return 1
+    fi
+    if ip -4 rule show | grep -q "^$route_priority:"; then
+        ip -4 rule del pref "$route_priority" fwmark "$route_mark/0xffffffff" table "$route_table" || return 1
+    fi
+    if ip -4 route show table "$route_table" 2>/dev/null | grep -q "^default dev $iface "; then
+        ip -4 route del default dev "$iface" metric 10 table "$route_table" || return 1
+    fi
+    if ip -4 route show table "$route_table" 2>/dev/null | grep -q '^blackhole default'; then
+        ip -4 route del blackhole default metric 32767 table "$route_table" || return 1
+    fi
+    if ipset list "$route_set" -t >/dev/null 2>&1; then
+        ipset destroy "$route_set" || return 1
+    fi
+}
+
+case "${1:-}" in
+    check) check ;;
+    start) start ;;
+    stop) stop ;;
+    info) info ;;
+    probe) probe ;;
+    route-check) route_check ;;
+    route-enable) route_enable ;;
+    route-disable) route_disable ;;
+    *) die "Команды: check, start, stop, info, probe" ;;
+esac

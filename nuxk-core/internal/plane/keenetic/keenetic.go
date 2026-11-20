@@ -89,6 +89,9 @@ func (b *Backend) get(ctx context.Context, path string, v any) error {
 	// the answer itself stays out of the log: it is the router's config
 	slog.Debug("rci", "method", "GET", "path", path, "code", resp.StatusCode, "bytes", len(body), "took", time.Since(start).Round(time.Millisecond))
 	if resp.StatusCode != http.StatusOK {
+		if resp.StatusCode == http.StatusForbidden {
+			return fmt.Errorf("RCI %s: HTTP 403 — проверьте адрес RCI и права доступа агента", path)
+		}
 		return fmt.Errorf("RCI %s: HTTP %d", path, resp.StatusCode)
 	}
 	if len(bytes.TrimSpace(body)) == 0 {
@@ -115,6 +118,10 @@ func (b *Backend) post(ctx context.Context, body any) error {
 		return fmt.Errorf("RCI POST: %w", err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusForbidden {
+		slog.Debug("rci", "method", "POST", "code", resp.StatusCode, "took", time.Since(start).Round(time.Millisecond))
+		return errors.New("RCI POST: HTTP 403 — проверьте адрес RCI и права доступа агента")
+	}
 	ans, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	// nuxk posts only its own objects (nuxk-* groups, routes, its OpkgTun)
 	slog.Debug("rci", "method", "POST", "body", short(string(raw), 300), "code", resp.StatusCode,
@@ -359,6 +366,19 @@ func (b *Backend) ensureV6Deny(ctx context.Context, groups []string) error {
 // interface — so after a reboot it may be there before the agent runs (the
 // dns service takes it back if nuxk doesn't answer).
 func (b *Backend) NameServer(ctx context.Context, addr string, on bool) error {
+	return b.nameServer(ctx, addr, "", on)
+}
+
+// ScopedNameServer attaches the WARP forwarder for one name using the
+// firmware's per-domain DNS upstream, independently of global DNS settings.
+func (b *Backend) ScopedNameServer(ctx context.Context, addr, domain string, on bool) error {
+	if normalized := plane.Normalize([]string{domain}); len(normalized) != 1 || normalized[0] != domain {
+		return errors.New("DNS WARP: недопустимое доменное имя")
+	}
+	return b.nameServer(ctx, addr, domain, on)
+}
+
+func (b *Backend) nameServer(ctx context.Context, addr, domain string, on bool) error {
 	host, port, err := net.SplitHostPort(addr)
 	ip := net.ParseIP(host)
 	n, perr := strconv.Atoi(port)
@@ -366,10 +386,17 @@ func (b *Backend) NameServer(ctx context.Context, addr string, on bool) error {
 		return fmt.Errorf("refusing name-server %q: only nuxk's own, on this router's address", addr)
 	}
 	cmd := "ip name-server " + net.JoinHostPort(ip.String(), strconv.Itoa(n))
+	if domain != "" {
+		cmd += " " + domain
+	}
 	if !on {
 		cmd = "no " + cmd
 	}
-	return b.post(ctx, map[string]any{"parse": cmd})
+	err = b.post(ctx, map[string]any{"parse": cmd})
+	if domain != "" && !on && err != nil && noSuchServer(err) {
+		return nil
+	}
+	return err
 }
 
 // DNSHook adds nuxk's DNS forwarder to the DNS proxy (dns.Hook). Attach first
@@ -443,4 +470,10 @@ func (b *Backend) Interfaces(ctx context.Context) ([]Interface, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
+}
+
+// CheckPost checks permission to call RCI over POST without writing settings.
+// Individual commands can still fail and must be checked at apply time.
+func (b *Backend) CheckPost(ctx context.Context) error {
+	return b.post(ctx, map[string]any{"parse": "show version"})
 }

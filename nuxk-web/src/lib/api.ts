@@ -158,6 +158,8 @@ export async function req<T>(method: string, path: string, body?: unknown): Prom
 
 const v1 = (p: string) => `/api/v1${p}`;
 
+export type WarpTransportStatus = S['WarpTransportStatus'];
+
 export const api = {
   nfqwsFiles: (section: 'config' | 'lists' | 'scripts') =>
     req<{ name: string; group: string; read_only: boolean }[]>('GET', v1('/nfqws2/files?section=' + section)),
@@ -171,6 +173,9 @@ export const api = {
   logs: (after = 0) => req<LogEntry[]>('GET', v1(`/logs?after=${after}&limit=2000`)),
   logsDebug: () => req<LogDebug>('GET', v1('/logs/debug')),
   setLogsDebug: (on: boolean, minutes = 30) => req<LogDebug>('PUT', v1('/logs/debug'), { on, minutes }),
+  warpTransport: () => req<WarpTransportStatus>('GET', v1('/warp/transport')),
+  setWarpTransport: (transport: WarpTransportStatus['transport']) =>
+    req<WarpTransportStatus>('PUT', v1('/warp/transport'), { transport }),
 
   engineAction: (k: EngineKind, action: 'start' | 'stop' | 'restart') =>
     req<S['Ok']>('POST', v1(`/engines/${k}/${action}`)),

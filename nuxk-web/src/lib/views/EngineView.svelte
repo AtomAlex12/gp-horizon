@@ -1,7 +1,7 @@
 <script lang="ts">
   // One engine's page, laid out like the console: state card + actions on
   // the left, what the engine carries on the right, raw details below.
-  import { api, type EngineKind, type ListMode, type ProbeSites } from '../api';
+  import { api, type EngineKind, type ListMode, type ProbeSites, type WarpTransportStatus } from '../api';
   import { status, refresh, node } from '../status.svelte';
   import NfqwsWorkspace from '../NfqwsWorkspace.svelte';
   import NfqwsRouting from '../NfqwsRouting.svelte';
@@ -25,6 +25,53 @@
   let nfqwsTab = $state<'overview' | 'config' | 'lists' | 'logs' | 'scripts'>('overview');
   let busy = $state(false);
   let msg = $state<{ ok: boolean; text: string } | null>(null);
+  let warp = $state<WarpTransportStatus | null>(null);
+  let warpBusy = $state(false);
+  let warpError = $state('');
+  const changingWarp = $derived(kind === 'usque' && (warpBusy || warp?.pending === true));
+
+  $effect(() => {
+    if (kind !== 'usque') return;
+    let active = true;
+    let loading = false;
+    async function readWarp() {
+      if (loading || warpBusy) return;
+      loading = true;
+      try {
+        const next = await api.warpTransport();
+        if (!active || warpBusy) return;
+        const finished = warp?.pending && !next.pending;
+        warp = next;
+        if (finished) await refresh();
+      } catch {
+        // Earlier releases do not have the transport endpoint.
+      } finally {
+        loading = false;
+      }
+    }
+    const timer = setInterval(readWarp, 2000);
+    queueMicrotask(readWarp);
+    return () => {
+      active = false;
+      clearInterval(timer);
+    };
+  });
+
+  async function changeWarp(event: Event) {
+    const select = event.currentTarget as HTMLSelectElement;
+    const target = select.value as WarpTransportStatus['transport'];
+    if (!warp || target === warp.transport) return;
+    select.value = warp.transport;
+    warpBusy = true;
+    warpError = '';
+    try {
+      warp = await api.setWarpTransport(target);
+    } catch (err) {
+      warpError = err instanceof Error ? err.message : String(err);
+    } finally {
+      warpBusy = false;
+    }
+  }
 
   async function act(a: 'start' | 'stop' | 'restart') {
     busy = true;
@@ -146,10 +193,10 @@
       </dl>
       {#if e.last_error}<div class="err-text">{e.last_error}</div>{/if}
       <div class="row">
-        <button onclick={() => act('start')} disabled={busy || e.running}>Запуск</button>
-        <button class="warn" onclick={() => act('stop')} disabled={busy || (!e.running && e.want_run === false)}>Стоп</button>
-        <button class="ghost" onclick={() => act('restart')} disabled={busy || !e.running}>Рестарт</button>
-        <button class="ghost" onclick={probe} disabled={busy}>Проба</button>
+        <button onclick={() => act('start')} disabled={busy || changingWarp || e.running}>Запуск</button>
+        <button class="warn" onclick={() => act('stop')} disabled={busy || changingWarp || (!e.running && e.want_run === false)}>Стоп</button>
+        <button class="ghost" onclick={() => act('restart')} disabled={busy || changingWarp || !e.running}>Рестарт</button>
+        <button class="ghost" onclick={probe} disabled={busy || changingWarp}>Проба</button>
       </div>
       {#if msg}<p class={msg.ok ? 'ok-text' : 'err-text'}>{msg.text}</p>{/if}
     </section>
@@ -181,10 +228,24 @@
     {:else if kind === 'usque'}
       <section class="card">
         <div class="card-head"><h2>WARP</h2></div>
+        {#if warp}
+          <label>
+            Транспорт
+            <select value={warp.transport} onchange={changeWarp} disabled={busy || changingWarp || !warp.available}>
+              <option value="usque">USQUE / MASQUE</option>
+              <option value="amneziawg">AmneziaWG</option>
+            </select>
+          </label>
+          {#if changingWarp}<p role="status" class="hint">Переключение и проверка WARP…</p>{/if}
+          {#if !warp.available}<p class="hint">AmneziaWG не настроен на роутере.</p>{/if}
+          {#if warpError || warp.error}<p role="alert" class="err-text">{warpError || warp.error}</p>{/if}
+        {/if}
         <dl class="kv">
           <dt>туннель</dt><dd>{e.detail?.tunnel_state ?? '—'}</dd>
-          <dt>SNI</dt><dd class="mono">{e.detail?.sni || '—'}</dd>
-          <dt>HTTP/2</dt><dd>{e.detail?.http2 === '1' ? 'вкл.' : 'выкл.'}</dd>
+          {#if warp?.transport !== 'amneziawg'}
+            <dt>SNI</dt><dd class="mono">{e.detail?.sni || '—'}</dd>
+            <dt>HTTP/2</dt><dd>{e.detail?.http2 === '1' ? 'вкл.' : 'выкл.'}</dd>
+          {/if}
           <dt>колокация</dt><dd class="mono">{e.probe?.detail?.colo || '—'}</dd>
           <dt>выходной IP</dt><dd class="mono">{e.probe?.egress_ip || '—'}</dd>
           <dt>принято / отдано</dt><dd class="mono">{bytes(e.detail?.rx_bytes)} / {bytes(e.detail?.tx_bytes)}</dd>

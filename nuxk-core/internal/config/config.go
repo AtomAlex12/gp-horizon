@@ -46,8 +46,10 @@ type Config struct {
 	DNSRouter string // DNS_ROUTER; "" = DNSRouterAddr()
 	// SmartDNS (beta) in its place: the init script `nuxk dns` puts there
 	// (missing = not installed), and the RAM dir for its logs.
-	SmartDNSInit string // SMARTDNS_INIT; "off" = not offered
-	SmartDNSDir  string // SMARTDNS_DIR
+	SmartDNSInit  string // SMARTDNS_INIT; "off" = not offered
+	SmartDNSDir   string // SMARTDNS_DIR
+	WarpAWGAddr   string // WARP_AWG_DNS_ADDR; empty disables the experimental transport
+	WarpAWGDriver string // WARP_AWG_DRIVER; Entware helper
 }
 
 // PlaneConfig drives the routing plane (internal/plane). Off unless PLANE is
@@ -90,6 +92,7 @@ func Defaults() Config {
 		UpdateCommand: "/opt/bin/nuxk",
 		SmartDNSInit:  "/opt/etc/init.d/S53smartdns-nuxk",
 		SmartDNSDir:   "/tmp/smartdns-nuxk",
+		WarpAWGDriver: "/opt/libexec/nuxk/warp-awg-device",
 	}
 }
 
@@ -141,6 +144,10 @@ func Load(path string) (Config, error) {
 			cfg.Engines.Usque = v
 		case "ENGINE_XRAY":
 			cfg.Engines.Xray = v
+		case "WARP_AWG_DNS_ADDR":
+			cfg.WarpAWGAddr = v
+		case "WARP_AWG_DRIVER":
+			cfg.WarpAWGDriver = v
 		case "INFO_EVERY":
 			cfg.InfoEvery = seconds(v)
 		case "PROBE_EVERY":

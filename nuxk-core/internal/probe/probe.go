@@ -117,17 +117,25 @@ type Report struct {
 
 // Prober runs checks. The zero value probes direct only.
 type Prober struct {
-	Ifaces   map[Via]string // tunnel interface per path
-	Timeout  time.Duration  // per stage; 0 = 6s
-	Neutral  string         // SNI of the control handshake; "" = www.google.com
-	Samples  int            // tries per way; 0 = 5
-	Mark     uint32         // SO_MARK on direct sockets so nfqws2 leaves them alone; 0 = 0x40000000
-	NoFreeze bool           // skip the 64 KB upload test (tests)
+	Ifaces    map[Via]string // tunnel interface per path
+	WarpIface func() string  // dynamic WARP transport, if available
+	Timeout   time.Duration  // per stage; 0 = 6s
+	Neutral   string         // SNI of the control handshake; "" = www.google.com
+	Samples   int            // tries per way; 0 = 5
+	Mark      uint32         // SO_MARK on direct sockets so nfqws2 leaves them alone; 0 = 0x40000000
+	NoFreeze  bool           // skip the 64 KB upload test (tests)
 
 	// Test hooks. nil = the real network.
 	LookupIP func(ctx context.Context, host string) ([]net.IP, error)
 	Dial     func(ctx context.Context, via Via, addr string) (net.Conn, error)
 	Avail    func(via Via) string // "" = usable, else why not
+}
+
+func (p *Prober) iface(via Via) string {
+	if via == ViaWarp && p.WarpIface != nil {
+		return p.WarpIface()
+	}
+	return p.Ifaces[via]
 }
 
 func (p *Prober) stage() time.Duration {
@@ -247,7 +255,7 @@ func (p *Prober) dial(ctx context.Context, via Via, addr string) (net.Conn, erro
 	case via == ViaDirect:
 		d.Control = markControl(p.mark())
 	case tunnel(via):
-		d.Control = bindControl(p.Ifaces[via])
+		d.Control = bindControl(p.iface(via))
 	}
 	// ViaDesync: the default route with no mark. nfqws2's rules sit in mangle
 	// POSTROUTING, so the router's own traffic meets it like a LAN client's.
@@ -271,7 +279,7 @@ func (p *Prober) unavailable(via Via) string {
 	if via == ViaDesync {
 		return ""
 	}
-	name := p.Ifaces[via]
+	name := p.iface(via)
 	if name == "" {
 		return "интерфейс туннеля не задан"
 	}
@@ -291,7 +299,7 @@ func (p *Prober) Paths() []PathState {
 	out := []PathState{{Via: ViaDirect, Usable: why == "", Why: why}}
 	for _, via := range []Via{ViaVless, ViaWarp} {
 		why := p.unavailable(via)
-		out = append(out, PathState{Via: via, Iface: p.Ifaces[via], Usable: why == "", Why: why})
+		out = append(out, PathState{Via: via, Iface: p.iface(via), Usable: why == "", Why: why})
 	}
 	return out
 }
