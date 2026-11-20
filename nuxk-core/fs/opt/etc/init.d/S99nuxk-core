@@ -1,6 +1,6 @@
 #!/bin/sh
 
-PATH=/opt/sbin:/opt/bin:/opt/usr/sbin:/opt/usr/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PATH=/opt/sbin:/opt/bin:/opt/usr/sbin:/opt/usr/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 NAME="nuxk-core"
 BIN="/opt/usr/bin/nuxk-core"

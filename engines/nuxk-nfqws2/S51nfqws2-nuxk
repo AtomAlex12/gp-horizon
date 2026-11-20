@@ -106,6 +106,7 @@ probe_one() {
         return
     fi
     case $rc in
+    126 | 127) r=curl-unavailable ;;
     6) r=dns ;;
     7) r=connect ;;
     28)

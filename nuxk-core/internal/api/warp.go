@@ -20,7 +20,7 @@ func (d Deps) handleWarpTransport(w http.ResponseWriter, _ *http.Request) {
 		status = d.Warp.Status()
 		configured = d.Warp.ProfileConfigured()
 	}
-	installed := amneziawg.Installed()
+	installed := status.NativeInterface != "" || amneziawg.Installed()
 	status.AWGInstalled, status.ProfileConfigured = &installed, &configured
 	writeJSON(w, http.StatusOK, status)
 }

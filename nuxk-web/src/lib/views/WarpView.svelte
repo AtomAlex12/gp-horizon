@@ -22,7 +22,7 @@
   let requestNumber = 0;
   const selected = $derived(warp?.transport ?? (e?.detail?.transport === 'amneziawg' ? 'amneziawg' : 'usque'));
   const locked = $derived(operation !== null || warp?.pending === true);
-  const canImport = $derived(warp?.available === true && selected === 'usque');
+  const canImport = $derived(warp?.available === true && !warp.native_interface && selected === 'usque');
   const awgReady = $derived(warp?.available === true && warp.awg_installed !== false && warp.profile_configured !== false);
 
   $effect(() => {
@@ -171,27 +171,29 @@
 
   <section class="card transport">
     <div class="card-head">
-      <h2>AmneziaWG</h2>
+      <h2>{warp?.native_interface ? "AmneziaWG · Keenetic" : "AmneziaWG"}</h2>
       {#if warp?.awg_installed !== undefined}<span class="chip {warp.awg_installed ? 'ok' : ''}">{warp.awg_installed ? 'Установлен' : 'Не установлен'}</span>{/if}
       {@render transportState('amneziawg')}
     </div>
     <dl class="kv">
-      <dt>Интерфейс</dt><dd class="mono">awg0</dd>
-      <dt>Профиль</dt><dd class="mono">{warp?.profile_configured ? 'warp-awg.conf' : warp?.profile_configured === false ? 'Не добавлен' : '—'}</dd>
+      <dt>Интерфейс</dt><dd class="mono">{warp?.native_interface ?? "awg0"}</dd>
+      <dt>Профиль</dt><dd class="mono">{warp?.native_interface ? "Настраивается в KeeneticOS" : warp?.profile_configured ? 'warp-awg.conf' : warp?.available && warp.profile_configured === false ? 'Не добавлен' : '—'}</dd>
     </dl>
     <div class="row warp-actions">
+      {#if !warp?.native_interface}
       <button type="button" disabled={locked || !canImport} aria-expanded={importOpen} aria-controls="warp-profile-import"
         onclick={() => {
           if (importOpen) clearImport();
           else { importOpen = true; profileSaved = false; }
         }}>Импорт .conf</button>
+      {/if}
       {#if selected !== 'amneziawg'}
         <button type="button" class="ghost" disabled={locked || !awgReady} onclick={() => change('amneziawg')}>Переключить</button>
       {/if}
     </div>
     {#if selected === 'amneziawg'}
       {@render currentControls()}
-      <p class="hint">Для замены профиля сначала выберите USQUE.</p>
+      {#if !warp?.native_interface}<p class="hint">Для замены профиля сначала выберите USQUE.</p>{/if}
     {:else if warp && !warp.available}
       <p class="hint">На этом узле AmneziaWG ещё не настроен.</p>
     {:else if !warp}

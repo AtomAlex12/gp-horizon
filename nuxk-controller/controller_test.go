@@ -354,7 +354,7 @@ func TestAgentDownIsReported(t *testing.T) {
 }
 
 func TestIsTunnel(t *testing.T) {
-	for name, want := range map[string]bool{"opkgtun0": true, "tun-xray": true, "tun0": true, "tunl0": false, "eth3": false, "nwg0": false} {
+	for name, want := range map[string]bool{"opkgtun0": true, "tun-xray": true, "tun0": true, "tunl0": false, "eth3": false, "nwg0": true, "nwg": false, "nwg-other": false} {
 		if isTunnel(name) != want {
 			t.Errorf("isTunnel(%q) = %v", name, !want)
 		}

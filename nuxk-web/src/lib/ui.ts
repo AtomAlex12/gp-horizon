@@ -83,6 +83,7 @@ const PROBE_REASON: Record<string, string> = {
 };
 export function reasonText(r?: string | null): string {
   if (!r) return 'нет ответа';
+  if (r === "curl-unavailable" || r === "error_126" || r === "error_127" || r === "no-curl") return "curl на роутере не запускается";
   if (r.startsWith('error_')) return `ошибка curl ${r.slice(6)}`;
   return PROBE_REASON[r] ?? r;
 }

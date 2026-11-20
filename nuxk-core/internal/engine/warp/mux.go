@@ -19,6 +19,7 @@ type Status struct {
 	Pending           bool   `json:"pending"`
 	Error             string `json:"error,omitempty"`
 	AWGInstalled      *bool  `json:"awg_installed,omitempty"`
+	NativeInterface   string `json:"native_interface,omitempty"`
 	ProfileConfigured *bool  `json:"profile_configured,omitempty"`
 }
 
@@ -64,11 +65,17 @@ func (m *Mux) Status() Status {
 	defer m.mu.RUnlock()
 	s := m.state
 	s.Available = m.awg != nil
+	if native, ok := m.awg.(interface{ NativeInterface() string }); ok {
+		s.NativeInterface = native.NativeInterface()
+	}
 	return s
 }
 
 func (m *Mux) KernelInterface(usque string) string {
 	if m.Status().Transport == plane.WarpAWG {
+		if native, ok := m.awg.(interface{ KernelInterface() string }); ok {
+			return native.KernelInterface()
+		}
 		return plane.AWGDevice
 	}
 	return usque
@@ -107,6 +114,9 @@ func (m *Mux) Start(ctx context.Context) error {
 func (m *Mux) Recover(ctx context.Context) error {
 	m.action.Lock()
 	defer m.action.Unlock()
+	if m.Status().NativeInterface != "" && m.Status().Transport != plane.WarpAWG {
+		return nil
+	}
 	return m.stopInactive(ctx)
 }
 

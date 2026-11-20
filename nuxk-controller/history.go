@@ -28,6 +28,9 @@ type nfqueue struct {
 // isTunnel: the interfaces the WARP/VLESS engines create (awg0, opkgtunN, tun-xray…)
 // — not the kernel's own IPIP fallback tunl0, which never carries traffic.
 func isTunnel(name string) bool {
+	if suffix, ok := strings.CutPrefix(name, "nwg"); ok {
+		return suffix != "" && strings.Trim(suffix, "0123456789") == ""
+	}
 	return name == "awg0" || strings.HasPrefix(name, "opkgtun") || (strings.HasPrefix(name, "tun") && !strings.HasPrefix(name, "tunl"))
 }
 

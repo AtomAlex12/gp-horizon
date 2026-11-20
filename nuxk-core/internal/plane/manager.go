@@ -20,10 +20,11 @@ type Store interface {
 
 // Config is the plane's part of nuxk.conf.
 type Config struct {
-	Ifaces map[Mode]string // mode → route target (PLANE_IFACE_WARP / _VLESS)
-	Apply  bool            // PLANE_APPLY=1: change the router; otherwise plan only
-	V6Deny bool            // PLANE_V6=deny (default): refuse IPv6 to nuxk groups
-	Every  time.Duration   // reconcile period
+	WarpNativeIface string
+	Ifaces          map[Mode]string // mode → route target (PLANE_IFACE_WARP / _VLESS)
+	Apply           bool            // PLANE_APPLY=1: change the router; otherwise plan only
+	V6Deny          bool            // PLANE_V6=deny (default): refuse IPv6 to nuxk groups
+	Every           time.Duration   // reconcile period
 	// Desync pushes the DPI hostlist to nfqws2 (nil = no nfqws2 engine). An
 	// empty non-nil slice clears the list.
 	Desync func(ctx context.Context, domains []string) error
@@ -146,6 +147,7 @@ func (m *Manager) setDesiredLocked(d Desired) error {
 	}
 	d.ManageDesync = d.ManageDesync || prev.ManageDesync
 	d.WarpTransport = prev.WarpTransport
+	d.WarpNativeIface = prev.WarpNativeIface
 	if d.WarpTransport == WarpAWG && d.OnDown == OnDownBlock {
 		return ErrAWGBlockUnsupported
 	}
@@ -372,13 +374,18 @@ func (m *Manager) Reconcile(ctx context.Context) {
 		st.Desync = []string{}
 	}
 	want := Build(d, m.Cfg.Ifaces)
-	unavailableAWG := d.WarpTransport == WarpAWG && m.AWG == nil
+	legacyAWG := d.WarpTransport == WarpAWG && d.WarpNativeIface == ""
+	unavailableAWG := legacyAWG && m.AWG == nil || d.WarpNativeIface != "" && d.WarpNativeIface != m.Cfg.WarpNativeIface
 	if d.WarpTransport == WarpAWG {
-		want = withAWG(want)
-		if unavailableAWG {
-			st.Warnings = append(st.Warnings, "выбран AmneziaWG, но маршрутизация Entware недоступна")
+		iface := d.WarpNativeIface
+		if iface == "" {
+			iface = AWGDevice
 		}
-		st.Ifaces = map[Mode]string{ModeWarp: AWGDevice, ModeVless: m.Cfg.Ifaces[ModeVless]}
+		want = withAWG(want, iface)
+		if unavailableAWG {
+			st.Warnings = append(st.Warnings, "настройки выбранного транспорта WARP недоступны")
+		}
+		st.Ifaces = map[Mode]string{ModeWarp: iface, ModeVless: m.Cfg.Ifaces[ModeVless]}
 	}
 	st.Warnings = append(st.Warnings, InfraWarnings(d)...)
 	if obs.Interfaces != nil {
@@ -414,7 +421,7 @@ func (m *Manager) Reconcile(ctx context.Context) {
 		}
 	}
 	var awgErr error
-	if d.WarpTransport == WarpAWG && m.AWG != nil {
+	if legacyAWG && m.AWG != nil {
 		awgErr = m.AWG.Set(ctx, warpNames(want, conflicts), d.OnDown == OnDownBlock)
 	}
 	for i, op := range ops {
