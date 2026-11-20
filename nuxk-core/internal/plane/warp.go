@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -20,6 +21,7 @@ type WarpRouting interface {
 }
 
 func withAWG(want []Group) []Group {
+	want = slices.Clone(want)
 	for i := range want {
 		if want[i].Mode == ModeWarp {
 			want[i].Interface = AWGDevice

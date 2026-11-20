@@ -129,3 +129,34 @@ func TestWarpSwitchRefusesUnverifiedBlockPolicy(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestWarpRollbackRestoresFirmwareRouteAfterAWGBind(t *testing.T) {
+	ctx := context.Background()
+	old := Route{Group: warpGroup, Interface: "OpkgTun0", Auto: true}
+	b := &warpTestBackend{obs: Observed{
+		Groups: map[string][]string{warpGroup: {"example.org"}},
+		Routes: []Route{old},
+	}}
+	m := NewManager(b, &jsonStore{}, Config{Apply: true, Ifaces: map[Mode]string{ModeWarp: old.Interface}})
+	r := &warpTestRoutes{}
+	m.AWG = r
+	if err := m.SetDesired(Desired{Lists: []List{{Name: "WARP", Mode: ModeWarp, Domains: []string{"example.org"}}}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.SwitchWarp(ctx, WarpAWG, "opkgtun0",
+		func(prepare, bind, restore func(context.Context) error, _ func() error) error {
+			if err := prepare(ctx); err != nil {
+				return err
+			}
+			if err := bind(ctx); err != nil {
+				return err
+			}
+			return restore(ctx)
+		}); err != nil {
+		t.Fatal(err)
+	}
+	d, _ := m.Desired()
+	if !reflect.DeepEqual(b.obs.Routes, []Route{old}) || len(r.domains) != 0 || d.WarpTransport != "" {
+		t.Fatalf("previous routing not restored: %+v, AWG: %v, transport: %q", b.obs.Routes, r.domains, d.WarpTransport)
+	}
+}
