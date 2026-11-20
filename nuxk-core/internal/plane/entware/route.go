@@ -27,6 +27,7 @@ const (
 
 type scopedRCI interface {
 	ScopedNameServer(context.Context, string, string, bool) error
+	ScopedNameServers(context.Context, string) ([]string, error)
 }
 
 type Routing struct {
@@ -100,19 +101,11 @@ func (r *Routing) Set(ctx context.Context, names []string, block bool) error {
 			return err
 		}
 	}
-	for _, name := range names {
-		if err := r.RCI.ScopedNameServer(ctx, r.Addr, name, true); err != nil {
-			return err
-		}
+	added, err := r.reconcileDNS(ctx, names, previous)
+	if err != nil {
+		return err
 	}
-	for _, name := range previous {
-		if !slices.Contains(names, name) {
-			if err := r.RCI.ScopedNameServer(ctx, r.Addr, name, false); err != nil {
-				return err
-			}
-		}
-	}
-	if len(names) > 0 && checkDNS {
+	if len(names) > 0 && (checkDNS || added) {
 		if err := r.verify(ctx, names[0]); err != nil {
 			r.mu.Lock()
 			r.bound = false
@@ -133,6 +126,30 @@ func (r *Routing) Set(ctx context.Context, names []string, block bool) error {
 		return r.Store.SaveJSON(registration, journal{Active: true, Addr: r.Addr, Names: names})
 	}
 	return nil
+}
+
+func (r *Routing) reconcileDNS(ctx context.Context, names, previous []string) (bool, error) {
+	observed, err := r.RCI.ScopedNameServers(ctx, r.Addr)
+	if err != nil {
+		return false, err
+	}
+	added := false
+	for _, name := range names {
+		if !slices.Contains(observed, name) {
+			if err := r.RCI.ScopedNameServer(ctx, r.Addr, name, true); err != nil {
+				return added, err
+			}
+			added = true
+		}
+	}
+	for _, name := range previous {
+		if !slices.Contains(names, name) && slices.Contains(observed, name) {
+			if err := r.RCI.ScopedNameServer(ctx, r.Addr, name, false); err != nil {
+				return added, err
+			}
+		}
+	}
+	return added, nil
 }
 
 func (r *Routing) enable(ctx context.Context, names []string, block bool) error {

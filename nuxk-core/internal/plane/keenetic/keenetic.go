@@ -378,6 +378,28 @@ func (b *Backend) ScopedNameServer(ctx context.Context, addr, domain string, on 
 	return b.nameServer(ctx, addr, domain, on)
 }
 
+// ScopedNameServers reads the firmware's current registrations for an exact
+// local address and port so a reconcile can preserve working DNS bindings.
+func (b *Backend) ScopedNameServers(ctx context.Context, addr string) ([]string, error) {
+	var response struct {
+		Servers []struct {
+			Address string `json:"address"`
+			Port    int    `json:"port"`
+			Domain  string `json:"domain"`
+		} `json:"server"`
+	}
+	if err := b.get(ctx, "show/ip/name-server", &response); err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, server := range response.Servers {
+		if server.Domain != "" && net.JoinHostPort(server.Address, strconv.Itoa(server.Port)) == addr {
+			names = append(names, strings.ToLower(strings.TrimSuffix(server.Domain, ".")))
+		}
+	}
+	return names, nil
+}
+
 func (b *Backend) nameServer(ctx context.Context, addr, domain string, on bool) error {
 	host, port, err := net.SplitHostPort(addr)
 	ip := net.ParseIP(host)

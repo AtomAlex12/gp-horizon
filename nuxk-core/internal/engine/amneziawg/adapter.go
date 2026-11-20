@@ -135,7 +135,9 @@ func (a *Adapter) Probe(ctx context.Context, _ []string) (engine.Probe, error) {
 	if err != nil {
 		return engine.Probe{}, err
 	}
-	p := engine.Probe{TS: time.Now().Unix(), Detail: map[string]string{"warp": kv["warp"], "colo": kv["colo"]}}
+	p := engine.Probe{TS: time.Now().Unix(), Detail: map[string]string{
+		"transport": "amneziawg", "warp": kv["warp"], "colo": kv["colo"],
+	}}
 	ip, ipErr := netip.ParseAddr(kv["ip"])
 	p.OK = kv["ok"] == "1" && ipErr == nil && (kv["warp"] == "on" || kv["warp"] == "plus")
 	if p.OK {

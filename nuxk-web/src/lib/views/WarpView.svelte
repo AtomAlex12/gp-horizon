@@ -230,10 +230,16 @@
 
 {#if warp?.pending || operation === 'switch'}
   <p class="hint" role="status">Переключение и проверка WARP…</p>
-{:else if error || warp?.error || e?.last_error}
-  <p class="err-text" role="alert">{error || warp?.error || e?.last_error}</p>
+{:else if error || e?.last_error}
+  <p class="err-text" role="alert">{error || e?.last_error}</p>
 {:else if connectionNote}
   <p class="ok-text" role="status">{connectionNote}</p>
+{/if}
+
+{#if warp?.error && !warp.pending && operation !== 'switch'}
+  <p class="err-text" role="alert">
+    Не удалось переключиться на {warp.transport === 'amneziawg' ? 'USQUE / MASQUE' : 'AmneziaWG'}. {warp.error}
+  </p>
 {/if}
 
 <section class="card warp-domains">

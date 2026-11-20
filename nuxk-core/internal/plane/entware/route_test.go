@@ -3,11 +3,37 @@ package entware
 import (
 	"context"
 	"net"
+	"reflect"
 	"testing"
 	"time"
 
 	"nuxk.dev/horizon/core/internal/dns"
 )
+
+type recordedDNS struct{ changes []string }
+
+func (r *recordedDNS) ScopedNameServer(_ context.Context, _, name string, on bool) error {
+	if on {
+		r.changes = append(r.changes, "+"+name)
+	} else {
+		r.changes = append(r.changes, "-"+name)
+	}
+	return nil
+}
+
+func (r *recordedDNS) ScopedNameServers(context.Context, string) ([]string, error) {
+	return []string{"keep.example", "remove.example", "other.example"}, nil
+}
+
+func TestReconcileOnlyChangesMissingAndOwnedDNS(t *testing.T) {
+	rci := &recordedDNS{}
+	r := Routing{RCI: rci}
+	added, err := r.reconcileDNS(context.Background(), []string{"keep.example", "repair.example"},
+		[]string{"keep.example", "repair.example", "remove.example", "already-absent.example"})
+	if err != nil || !added || !reflect.DeepEqual(rci.changes, []string{"+repair.example", "-remove.example"}) {
+		t.Fatalf("repair = %v, changes = %v, error = %v", added, rci.changes, err)
+	}
+}
 
 func TestVerifyWaitsForScopedDNSAfterRouterReply(t *testing.T) {
 	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
