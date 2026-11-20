@@ -40,6 +40,29 @@ tags:
   - { name: suggest, description: "route suggestions: probe a domain, say why it doesn't open and which way out works" }
 
 paths:
+  /api/v1/warp/profile:
+    put:
+      tags: [engines]
+      operationId: setWarpProfile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [config]
+              properties:
+                config:
+                  type: string
+                  maxLength: 32768
+                  writeOnly: true
+                  description: WG or AWG configuration. Stored on the router without activating it.
+      responses:
+        "200":
+          description: Profile validated and saved
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Ok" }
   /api/v1/warp/transport:
     get:
       tags: [engines]
@@ -954,6 +977,8 @@ components:
         available: { type: boolean }
         pending: { type: boolean }
         error: { type: string }
+        awg_installed: { type: boolean }
+        profile_configured: { type: boolean }
     SuggestPath:
       type: object
       required: [via, result, tries, opened, acceptable]

@@ -4,6 +4,22 @@
  */
 
 export interface paths {
+    "/api/v1/warp/profile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["setWarpProfile"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/warp/transport": {
         parameters: {
             query?: never;
@@ -826,6 +842,8 @@ export interface components {
             available: boolean;
             pending: boolean;
             error?: string;
+            awg_installed?: boolean;
+            profile_configured?: boolean;
         };
         SuggestPath: {
             /**
@@ -1513,6 +1531,33 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    setWarpProfile: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description WG or AWG configuration. Stored on the router without activating it. */
+                    config: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Profile validated and saved */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Ok"];
+                };
+            };
+        };
+    };
     warpTransport: {
         parameters: {
             query?: never;

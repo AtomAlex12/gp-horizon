@@ -174,6 +174,7 @@ export const api = {
   logsDebug: () => req<LogDebug>('GET', v1('/logs/debug')),
   setLogsDebug: (on: boolean, minutes = 30) => req<LogDebug>('PUT', v1('/logs/debug'), { on, minutes }),
   warpTransport: () => req<WarpTransportStatus>('GET', v1('/warp/transport')),
+  setWarpProfile: (config: string) => req<S['Ok']>('PUT', v1('/warp/profile'), { config }),
   setWarpTransport: (transport: WarpTransportStatus['transport']) =>
     req<WarpTransportStatus>('PUT', v1('/warp/transport'), { transport }),
 

@@ -10,6 +10,9 @@
 
 ## [Unreleased]
 
+### Changed
+- **WARP.** Карточки USQUE и AmneziaWG, импорт WG / AWG из файла или текста и отдельное состояние AmneziaWG в «Системе».
+
 ### Added
 - **WARP.** Экспериментальный выбор USQUE / MASQUE или AmneziaWG в существующем разделе WARP. Для AmneziaWG используется Entware-интерфейс `awg0` и тот же список доменов.
 

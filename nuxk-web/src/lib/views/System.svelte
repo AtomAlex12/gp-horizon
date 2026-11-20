@@ -5,6 +5,7 @@
   import UpdateCard from '../UpdateCard.svelte';
   import ComponentsCard from '../ComponentsCard.svelte';
 
+  let { go }: { go: (tab: string) => void } = $props();
   const plane = $derived(planeOf(status.data));
   const i = $derived(node.info);
 
@@ -28,7 +29,7 @@
 
 <UpdateCard />
 
-<ComponentsCard />
+<ComponentsCard {go} />
 
 <div class="grid g2">
   <section class="card">

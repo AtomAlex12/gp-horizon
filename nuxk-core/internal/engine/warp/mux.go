@@ -10,12 +10,39 @@ import (
 )
 
 var ErrTransport = errors.New("неизвестный транспорт WARP")
+var ErrProfileBusy = errors.New("для замены профиля дождитесь конца операции и выберите USQUE")
+var ErrProfileUnavailable = errors.New("импорт профиля AmneziaWG недоступен на этом узле")
 
 type Status struct {
-	Transport string `json:"transport"`
-	Available bool   `json:"available"`
-	Pending   bool   `json:"pending"`
-	Error     string `json:"error,omitempty"`
+	Transport         string `json:"transport"`
+	Available         bool   `json:"available"`
+	Pending           bool   `json:"pending"`
+	Error             string `json:"error,omitempty"`
+	AWGInstalled      *bool  `json:"awg_installed,omitempty"`
+	ProfileConfigured *bool  `json:"profile_configured,omitempty"`
+}
+
+func (m *Mux) ProfileConfigured() bool {
+	adapter, ok := m.awg.(interface{ ProfileConfigured() bool })
+	return ok && adapter.ProfileConfigured()
+}
+
+func (m *Mux) SaveProfile(config string) error {
+	if !m.action.TryLock() {
+		return ErrProfileBusy
+	}
+	defer m.action.Unlock()
+	m.mu.RLock()
+	busy := m.state.Pending || m.state.Transport == plane.WarpAWG
+	m.mu.RUnlock()
+	if busy {
+		return ErrProfileBusy
+	}
+	adapter, ok := m.awg.(interface{ SaveProfile(string) error })
+	if !ok {
+		return ErrProfileUnavailable
+	}
+	return adapter.SaveProfile(config)
 }
 
 type Mux struct {

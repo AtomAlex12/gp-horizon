@@ -12,7 +12,7 @@ import (
 	"strings"
 )
 
-const maxProfileSize = 32 << 10
+const MaxProfileSize = 32 << 10
 
 type profile struct {
 	IPv4         netip.Prefix
@@ -36,7 +36,7 @@ func parseProfile(r io.Reader) (profile, error) {
 		size += len(s.Bytes()) + 1
 		raw, _, _ := strings.Cut(s.Text(), "#")
 		raw = strings.TrimSpace(raw)
-		if size > maxProfileSize {
+		if size > MaxProfileSize {
 			return profile{}, errors.New("профиль AmneziaWG слишком большой")
 		}
 		if raw == "" {

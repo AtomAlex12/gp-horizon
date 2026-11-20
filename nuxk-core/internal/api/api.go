@@ -77,6 +77,7 @@ var Routes = []Route{
 	{"GET /api/v1/engines", false, func(d Deps) http.HandlerFunc { return d.handleEngines }},
 	{"GET /api/v1/warp/transport", false, func(d Deps) http.HandlerFunc { return d.handleWarpTransport }},
 	{"PUT /api/v1/warp/transport", false, func(d Deps) http.HandlerFunc { return d.handleSetWarpTransport }},
+	{"PUT /api/v1/warp/profile", false, func(d Deps) http.HandlerFunc { return d.handleSetWarpProfile }},
 	{"GET /api/v1/engines/{kind}", false, func(d Deps) http.HandlerFunc { return d.handleEngine }},
 	{"POST /api/v1/engines/{kind}/{action}", false, func(d Deps) http.HandlerFunc { return d.handleEngineAction }},
 	{"PUT /api/v1/engines/{kind}/config", false, func(d Deps) http.HandlerFunc { return d.handleEngineConfig }},

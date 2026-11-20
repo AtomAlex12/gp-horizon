@@ -5,6 +5,7 @@
   import Dashboard from './lib/views/Dashboard.svelte';
   import Connections from './lib/views/Connections.svelte';
   import EngineView from './lib/views/EngineView.svelte';
+  import WarpView from './lib/views/WarpView.svelte';
   import Lists from './lib/views/Lists.svelte';
   import Decisions from './lib/views/Decisions.svelte';
   import Logs from './lib/views/Logs.svelte';
@@ -40,7 +41,7 @@
     lists: { label: 'Списки', icon: 'lists' },
     dns: { label: 'DNS', icon: 'dns' },
     nfqws2: { label: 'nfqws2', icon: 'nfqws2' },
-    usque: { label: 'usque (WARP)', icon: 'usque' },
+    usque: { label: 'WARP', icon: 'usque' },
     xray: { label: 'xray (VLESS)', icon: 'xray' },
     logs: { label: 'Логи', icon: 'logs' },
     plugins: { label: 'Плагины', icon: 'plugins' },
@@ -244,11 +245,13 @@
         {:else if !__LITE__ && tab === 'gpservice'}
           <GpGate {go} active={tab}>{#snippet api2()}<Gp2Data section='service' {go} />{/snippet}<GpData /></GpGate>
         {:else if tab === 'system'}
-          <System />
+          <System {go} />
         {:else if tab === 'dns'}
           <Dns />
-        {:else if tab === 'nfqws2' || tab === 'usque' || tab === 'xray'}
-          <EngineView kind={tab as EngineKind} {go} />
+        {:else if tab === 'usque'}
+          <WarpView {go} />
+        {:else if tab === 'nfqws2' || tab === 'xray'}
+          <EngineView kind={tab} {go} />
         {:else if SOON[tab]}
           <Soon title={TABS[tab].label} what={SOON[tab]} />
         {/if}
