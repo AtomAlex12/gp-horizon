@@ -74,6 +74,7 @@ P_NFQ_INIT=/opt/etc/init.d/S51nfqws2
 P_NFQ_LIST=/opt/etc/nfqws2/lists/user.list
 P_NFQ_FEED=/opt/etc/opkg/nfqws2-keenetic.conf
 P_USQUE=/opt/etc/init.d/S51usque
+P_AWG=/opt/libexec/nuxk/warp-awg-device
 P_XRAY=/opt/sbin/xray
 P_XRAY_INIT=/opt/etc/init.d/S52xray-nuxk
 P_SMARTDNS=/opt/sbin/smartdns
@@ -422,6 +423,7 @@ core_files() {
     echo "nuxk-core-$ARCH nuxk-web-lite-$VERSION.tar.gz S99nuxk-core S51nfqws2-nuxk nuxk-lite.sh"
     [ -x "$R$P_XRAY_INIT" ] && echo S52xray-nuxk
     [ -x "$R$P_SMARTDNS_INIT" ] && echo S53smartdns-nuxk
+    in_release warp-awg-device && echo warp-awg-device
     return 0
 }
 
@@ -429,12 +431,17 @@ core_files() {
 # $P_PREV. The `nuxk` command isn't kept: a newer one runs older agents.
 keep_prev() {
     [ -x "$R$P_BIN" ] || return 0
-    rm -rf "$R$P_PREV" && mkdir -p "$R$P_PREV" || return 0
-    cp -f "$R$P_BIN" "$R$P_PREV/nuxk-core"
+    rm -rf "$R$P_PREV" && mkdir -p "$R$P_PREV" || return 1
+    cp -f "$R$P_BIN" "$R$P_PREV/nuxk-core" || return 1
     [ -f "$R$P_INIT" ] && cp -f "$R$P_INIT" "$R$P_PREV/S99nuxk-core"
     [ -f "$R$P_SHIM" ] && cp -f "$R$P_SHIM" "$R$P_PREV/S51nfqws2-nuxk"
     [ -f "$R$P_XRAY_INIT" ] && cp -f "$R$P_XRAY_INIT" "$R$P_PREV/S52xray-nuxk"
     [ -f "$R$P_SMARTDNS_INIT" ] && cp -f "$R$P_SMARTDNS_INIT" "$R$P_PREV/S53smartdns-nuxk"
+    if [ -f "$R$P_AWG" ]; then
+        cp -p "$R$P_AWG" "$R$P_PREV/warp-awg-device" || return 1
+    else
+        : > "$R$P_PREV/no-warp-awg-device" || return 1
+    fi
     [ -d "$R$P_WEB" ] && cp -R "$R$P_WEB" "$R$P_PREV/web"
     return 0
 }
@@ -474,6 +481,11 @@ rollback() {
     for f in "S99nuxk-core:$P_INIT" "S51nfqws2-nuxk:$P_SHIM" "S52xray-nuxk:$P_XRAY_INIT" "S53smartdns-nuxk:$P_SMARTDNS_INIT"; do
         [ -f "$R$P_PREV/${f%%:*}" ] && cp -f "$R$P_PREV/${f%%:*}" "$R${f#*:}" && chmod 755 "$R${f#*:}"
     done
+    if [ -f "$R$P_PREV/warp-awg-device" ]; then
+        cp -p "$R$P_PREV/warp-awg-device" "$R$P_AWG.new" && mv -f "$R$P_AWG.new" "$R$P_AWG" || return 1
+    elif [ -f "$R$P_PREV/no-warp-awg-device" ]; then
+        rm -f "$R$P_AWG" || return 1
+    fi
     [ -d "$R$P_PREV/web" ] && rm -rf "$R$P_WEB" && cp -R "$R$P_PREV/web" "$R$P_WEB"
     # shellcheck disable=SC2086
     env $AGENT_ENV "$R$P_INIT" restart >/dev/null 2>&1
@@ -518,7 +530,9 @@ do_core() {
     # what runs now goes aside first: back by itself if the new one won't
     # start, or by hand with `nuxk rollback` (the same version again keeps
     # the older one there)
-    [ -n "$CORE_VER" ] && [ "$CORE_VER" != "$VERSION" ] && keep_prev
+    if [ -n "$CORE_VER" ] && [ "$CORE_VER" != "$VERSION" ]; then
+        keep_prev || die "не удалось сохранить предыдущую версию для отката"
+    fi
     # stop first: a running binary can't be overwritten on some filesystems
     [ -x "$R$P_INIT" ] && "$R$P_INIT" stop >/dev/null 2>&1
     mkdir -p "$R$(dirname $P_BIN)" "$R$(dirname $P_INIT)" "$R$(dirname $P_SHIM)" "$R$(dirname $P_SELF)" "$R$(dirname $P_WEB)"
@@ -530,6 +544,11 @@ do_core() {
     for f in "$@"; do
         cp -f "$TMP/${f%%:*}" "$R${f#*:}" && chmod 755 "$R${f#*:}" || undo "не записался ${f#*:}"
     done
+    if [ -f "$TMP/warp-awg-device" ]; then
+        mkdir -p "$R$(dirname "$P_AWG")" &&
+            cp -f "$TMP/warp-awg-device" "$R$P_AWG.new" &&
+            chmod 755 "$R$P_AWG.new" && mv -f "$R$P_AWG.new" "$R$P_AWG" || undo "не записался $P_AWG"
+    fi
     rm -rf "$R$P_WEB.new" && cp -R "$TMP/web" "$R$P_WEB.new" && rm -rf "$R$P_WEB" && mv "$R$P_WEB.new" "$R$P_WEB" || undo "веб не записался в $P_WEB"
     ok "$("$R$P_BIN" -version 2>/dev/null) · веб · адаптер nfqws2$xa · команда nuxk"
     [ -n "$CORE_VER" ] && [ "$CORE_VER" != "$VERSION" ] && note "прежняя версия $CORE_VER — в $P_PREV (вернуть: nuxk rollback)"
