@@ -29,7 +29,7 @@ link_exists() {
 
 remove_probe_route() {
     if ip -4 rule show | awk -v p="$priority:" -v d="$iface" -v t="$table" '
-        $1 == p && $0 ~ (" oif " d " ") && $0 ~ (" lookup " t "$") { found=1 }
+        $1 == p && $0 ~ (" oif " d " ") && $(NF-1) == "lookup" && $NF == t { found=1 }
         END { exit !found }
     '; then
         ip -4 rule del pref "$priority" oif "$iface" table "$table" || return 1
@@ -64,6 +64,10 @@ check() {
     for tool in amneziawg-go awg ip curl; do
         command -v "$tool" >/dev/null || die "AmneziaWG: нет утилиты $tool"
     done
+    case "$(ip -V 2>/dev/null)" in
+        *iproute2*) ;;
+        *) die "AmneziaWG: нужен Entware-пакет ip-full для отдельных таблиц маршрутизации" ;;
+    esac
     [ -c /dev/net/tun ] || die "AmneziaWG: недоступно устройство /dev/net/tun"
     if link_exists && ! owned; then
         die "AmneziaWG: awg0 занят другим процессом"
@@ -100,8 +104,9 @@ start() {
         fi
         sleep 1
     done
-    # Feed the config directly from stdin and discard errors that quote it.
-    if ! awg setconf "$iface" /dev/stdin >/dev/null 2>&1 ||
+    # Entware's /dev may omit /dev/stdin; procfs exposes the same descriptor.
+    # Discard awg errors, which can quote a config line containing a secret.
+    if ! awg setconf "$iface" /proc/self/fd/0 >/dev/null 2>&1 ||
         ! ip -4 address add "$address" dev "$iface" ||
         ! ip link set dev "$iface" mtu "$mtu" up ||
         ! ip -4 route add default dev "$iface" table "$table" ||
@@ -142,13 +147,36 @@ route_priority=28278
 route_mark=0x3a4e0000
 route_set=NUXK_WARP_AWG4
 
+addrtype_loaded() {
+    grep -qx addrtype /proc/net/ip_tables_matches 2>/dev/null
+}
+
+load_addrtype() {
+    if command -v modprobe >/dev/null; then
+        modprobe xt_addrtype 2>/dev/null && return 0
+    fi
+    module=/lib/modules/$(uname -r)/xt_addrtype.ko
+    [ -f "$module" ] || return 1
+    if command -v insmod >/dev/null; then
+        insmod "$module" 2>/dev/null
+    else
+        busybox insmod "$module" 2>/dev/null
+    fi
+}
+
+require_addrtype() {
+    addrtype_loaded && return 0
+    load_addrtype || :
+    addrtype_loaded || die "Маршрутизация WARP: недоступен штатный модуль xt_addrtype"
+}
+
 route_check() {
     for tool in ip ipset iptables; do
         command -v "$tool" >/dev/null || die "Маршрутизация WARP: нет утилиты $tool"
     done
     rules=$(ip -4 rule show) || return 1
     if printf '%s\n' "$rules" | awk -v p="$route_priority:" -v m="$route_mark" -v t="$route_table" '
-        $1 == p && !($0 ~ (" fwmark " m "( |/0xffffffff )") && $0 ~ (" lookup " t "$")) { conflict=1 }
+        $1 == p && !($0 ~ (" fwmark " m "( |/0xffffffff )") && $(NF-1) == "lookup" && $NF == t) { conflict=1 }
         END { exit !conflict }
     '; then
         die "Маршрутизация WARP: занят приоритет таблицы"
@@ -172,7 +200,7 @@ rule_nat() {
 
 route_enable() {
     read -r policy || return 1
-    route_check || return 1
+    route_check && require_addrtype || return 1
     case "$policy" in
         block)
             ip -4 route replace blackhole default metric 32767 table "$route_table" || return 1
@@ -233,7 +261,7 @@ case "${1:-}" in
     stop) stop ;;
     info) info ;;
     probe) probe ;;
-    route-check) route_check ;;
+    route-check) route_check && require_addrtype ;;
     route-enable) route_enable ;;
     route-disable) route_disable ;;
     *) die "Команды: check, start, stop, info, probe" ;;

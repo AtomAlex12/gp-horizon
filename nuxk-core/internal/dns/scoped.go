@@ -15,10 +15,11 @@ type RouteAnswer func(context.Context, []netip.Addr, uint32) error
 // StartScoped listens separately from the optional system-wide protected DNS.
 // The caller owns the per-domain registration with the firmware. Only local
 // requests for accepted names receive answers.
-func StartScoped(addr string, paths func() []Path, covers func(string) bool, route RouteAnswer) (func(), error) {
+func StartScoped(addr string, paths func() []Path, covers func(string) bool, route RouteAnswer, verified func(string)) (func(), error) {
 	s := New(Options{Listen: addr, Paths: paths}, nil)
 	s.scoped = func(q []byte) []byte {
-		if binary.BigEndian.Uint16(q[4:6]) != 1 || !covers(QName(q)) {
+		name := QName(q)
+		if binary.BigEndian.Uint16(q[4:6]) != 1 || !covers(name) {
 			return ServFail(q)
 		}
 		switch QType(q) {
@@ -53,6 +54,9 @@ func StartScoped(addr string, paths func() []Path, covers func(string) bool, rou
 			if err := route(ctx, ipv4, answer.AddrTTL); err != nil {
 				return ServFail(q)
 			}
+		}
+		if verified != nil && (answer.Rcode == RcodeNoError || answer.Rcode == RcodeNXDomain) {
+			verified(name)
 		}
 		return resp
 	}

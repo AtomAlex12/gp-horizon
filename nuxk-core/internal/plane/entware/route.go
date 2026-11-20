@@ -4,6 +4,7 @@ package entware
 import (
 	"context"
 	"crypto/rand"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"net"
@@ -40,7 +41,7 @@ type Routing struct {
 	cancel     func()
 	block      bool
 	verifyName string
-	verified   bool
+	verifyDone chan struct{}
 	bound      bool
 }
 
@@ -149,7 +150,7 @@ func (r *Routing) enable(ctx context.Context, names []string, block bool) error 
 	defer r.mu.Unlock()
 	r.names, r.block = names, block
 	if r.cancel == nil {
-		closeDNS, err := dns.StartScoped(r.Addr, r.paths, r.covers, record)
+		closeDNS, err := dns.StartScoped(r.Addr, r.paths, r.covers, record, r.verifiedAnswer)
 		if err != nil {
 			return err
 		}
@@ -185,11 +186,8 @@ func (r *Routing) paths() []dns.Path {
 }
 
 func (r *Routing) covers(name string) bool {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if name == r.verifyName && name != "" {
-		r.verified = true
-	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	for _, domain := range r.names {
 		if name == domain || strings.HasSuffix(name, "."+domain) {
 			return true
@@ -198,29 +196,54 @@ func (r *Routing) covers(name string) bool {
 	return false
 }
 
-// Verify that a fresh WARP query actually traverses the scoped listener.
-// A successful RCI response alone does not confirm how Keenetic selected DNS.
+func (r *Routing) verifiedAnswer(name string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if name == r.verifyName && r.verifyDone != nil {
+		close(r.verifyDone)
+		r.verifyDone = nil
+	}
+}
+
+// Keenetic applies DNS registrations asynchronously and can answer the client
+// before the scoped forwarder finishes. Try fresh names after a missed probe.
 func (r *Routing) verify(ctx context.Context, domain string) error {
+	var err error
+	for range 3 {
+		probe, cancel := context.WithTimeout(ctx, 2500*time.Millisecond)
+		err = r.verifyOnce(probe, domain)
+		cancel()
+		if err == nil {
+			return nil
+		}
+		if ctx.Err() != nil {
+			break
+		}
+	}
+	return err
+}
+
+func (r *Routing) verifyOnce(ctx context.Context, domain string) error {
 	var nonce [4]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
 		return err
 	}
 	name := fmt.Sprintf("nuxk-%x.%s", nonce, domain)
-	query, err := dns.Query(1, name, dns.TypeA)
+	id := binary.BigEndian.Uint16(nonce[:])
+	query, err := dns.Query(id, name, dns.TypeA)
 	if err != nil {
 		return errors.New("DNS WARP: не удалось создать проверочный запрос")
 	}
+	done := make(chan struct{})
 	r.mu.Lock()
-	r.verifyName, r.verified = name, false
+	r.verifyName, r.verifyDone = name, done
 	r.mu.Unlock()
 	defer func() {
 		r.mu.Lock()
-		r.verifyName, r.verified = "", false
+		r.verifyName, r.verifyDone = "", nil
 		r.mu.Unlock()
 	}()
 
-	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
-	defer cancel()
 	c, err := (&net.Dialer{}).DialContext(ctx, "udp4", r.RouterDNS)
 	if err != nil {
 		return fmt.Errorf("DNS WARP: DNS Keenetic недоступен: %w", err)
@@ -237,13 +260,16 @@ func (r *Routing) verify(ctx context.Context, domain string) error {
 		return fmt.Errorf("DNS WARP: Keenetic не ответил на проверочный запрос: %w", err)
 	}
 	parsed, err := dns.Parse(response[:n])
-	r.mu.RLock()
-	verified := r.verified
-	r.mu.RUnlock()
-	if err != nil || !verified || (parsed.Rcode != dns.RcodeNoError && parsed.Rcode != dns.RcodeNXDomain) {
-		return errors.New("DNS WARP: Keenetic не использовал выделенный DNS или обработчик не получил ответ")
+	if err != nil || binary.BigEndian.Uint16(response[:2]) != id || dns.QName(response[:n]) != name ||
+		(parsed.Rcode != dns.RcodeNoError && parsed.Rcode != dns.RcodeNXDomain) {
+		return errors.New("DNS WARP: Keenetic вернул ошибку в ответ на проверочный запрос")
 	}
-	return nil
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return errors.New("DNS WARP: выделенный DNS не подтвердил ответ на проверочный запрос")
+	}
 }
 
 func record(ctx context.Context, addrs []netip.Addr, ttl uint32) error {
